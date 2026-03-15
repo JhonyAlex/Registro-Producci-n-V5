@@ -1,16 +1,17 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { LayoutDashboard, PlusCircle, List, User, Trash2, Lock, AlertCircle, Filter, X, Cloud, WifiOff, CloudOff, Edit, ChevronDown, ChevronUp, Calendar, Monitor, XCircle, FileDown, FileUp, AlertTriangle, Clock, ChevronLeft, ChevronRight, Database, LogOut } from 'lucide-react';
+import { LayoutDashboard, PlusCircle, List, User, Trash2, Lock, AlertCircle, Filter, X, Cloud, WifiOff, CloudOff, Edit, ChevronDown, ChevronUp, Calendar, Monitor, XCircle, FileDown, FileUp, AlertTriangle, Clock, ChevronLeft, ChevronRight, Database, LogOut, Users } from 'lucide-react';
 import ShiftForm from './components/ShiftForm';
 import Dashboard from './components/Dashboard';
 import Login from './components/Login';
 import Register from './components/Register';
 import WaitingRoom from './components/WaitingRoom';
+import AdminUsers from './components/AdminUsers';
 import { useAuth } from './context/AuthContext';
 import { subscribeToRecords, clearAllRecords, deleteRecord, exportToExcel, exportAllData, importAllData, reconnectDatabase } from './services/storageService';
 import { ProductionRecord, FilterState } from './types';
 import { MACHINES, BOSSES } from './constants';
 
-type View = 'dashboard' | 'entry' | 'list';
+type View = 'dashboard' | 'entry' | 'list' | 'admin';
 type DeleteMode = 'all' | 'single';
 
 const ITEMS_PER_PAGE = 15;
@@ -320,6 +321,15 @@ const AppContent: React.FC = () => {
           <NavItem view="dashboard" icon={LayoutDashboard} label="Dashboard" />
           <NavItem view="list" icon={List} label="Historial" />
           
+          {(user?.role === 'admin' || user?.role === 'jefe_planta') && (
+            <>
+              <div className="mt-8 mb-2 px-4">
+                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Administración</h3>
+              </div>
+              <NavItem view="admin" icon={Users} label="Usuarios" />
+            </>
+          )}
+          
           <div className="mt-8 mb-2 px-4">
             <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Datos</h3>
           </div>
@@ -398,6 +408,10 @@ const AppContent: React.FC = () => {
                 </button>
               </div>
             </div>
+          )}
+
+          {currentView === 'admin' && (
+            <AdminUsers />
           )}
 
           {(currentView === 'dashboard' || currentView === 'list') && (
@@ -740,19 +754,15 @@ const AppContent: React.FC = () => {
         <NavItem view="entry" icon={PlusCircle} label="Registro" mobileOnly />
         <NavItem view="dashboard" icon={LayoutDashboard} label="Data" mobileOnly />
         <NavItem view="list" icon={List} label="Historial" mobileOnly />
+        {(user?.role === 'admin' || user?.role === 'jefe_planta') && (
+          <NavItem view="admin" icon={Users} label="Usuarios" mobileOnly />
+        )}
         <button
           onClick={exportAllData}
           className="flex flex-col items-center gap-1 py-1 px-1 justify-center rounded-lg transition-all w-auto text-slate-500 hover:bg-slate-100 hover:text-slate-800"
         >
           <Database className="w-6 h-6" />
           <span className="text-[10px]">Exportar</span>
-        </button>
-        <button
-          onClick={handleImportClick}
-          className="flex flex-col items-center gap-1 py-1 px-1 justify-center rounded-lg transition-all w-auto text-slate-500 hover:bg-slate-100 hover:text-slate-800"
-        >
-          <FileUp className="w-6 h-6" />
-          <span className="text-[10px]">Importar</span>
         </button>
       </nav>
 
