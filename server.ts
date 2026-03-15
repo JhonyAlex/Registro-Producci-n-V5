@@ -375,7 +375,8 @@ app.get('/api/records', authenticate, requireDB, async (req, res) => {
         visibleNames = visibleNames.concat(visibleUsersResult.rows.map(r => r.name));
       }
 
-      query += ' WHERE operator = ANY($1)';
+      // Non-admin users can see records linked to their name either as operator or shift lead.
+      query += ' WHERE operator = ANY($1) OR boss = ANY($1)';
       params.push(visibleNames);
     }
 
