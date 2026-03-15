@@ -9,7 +9,7 @@ import AdminUsers from './components/AdminUsers';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { subscribeToRecords, clearAllRecords, deleteRecord, exportToExcel, exportAllData, importAllData, reconnectDatabase } from './services/storageService';
 import { ProductionRecord, FilterState } from './types';
-import { MACHINES, BOSSES } from './constants';
+import { MACHINES } from './constants';
 
 type View = 'dashboard' | 'entry' | 'list' | 'admin';
 type DeleteMode = 'all' | 'single';
@@ -75,6 +75,11 @@ const AppContent: React.FC = () => {
   const uniqueOperators = useMemo(() => {
     const ops = new Set(records.map(r => r.operator).filter(Boolean));
     return Array.from(ops).sort();
+  }, [records]);
+
+  const uniqueBosses = useMemo(() => {
+    const bosses = new Set(records.map(r => r.boss).filter(Boolean));
+    return Array.from(bosses).sort();
   }, [records]);
 
   // Filter Logic
@@ -516,7 +521,7 @@ const AppContent: React.FC = () => {
                           onChange={e => setFilters({...filters, boss: e.target.value})}
                         >
                           <option value="">Todos</option>
-                          {BOSSES.map(b => <option key={b} value={b}>{b}</option>)}
+                          {uniqueBosses.map(b => <option key={b} value={b}>{b}</option>)}
                         </select>
                         <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                       </div>

@@ -247,6 +247,31 @@ app.get('/api/auth/me', authenticate, async (req, res) => {
   });
 });
 
+app.get('/api/users/assignment-options', authenticate, requireDB, async (_req, res) => {
+  try {
+    const operatorsResult = await pool.query(
+      `SELECT id, operator_code, name, role
+       FROM users
+       WHERE status = 'active' AND role IN ('operario', 'jefe_turno')
+       ORDER BY name ASC`
+    );
+
+    const bossesResult = await pool.query(
+      `SELECT id, operator_code, name, role
+       FROM users
+       WHERE status = 'active' AND role = 'jefe_turno'
+       ORDER BY name ASC`
+    );
+
+    res.json({
+      operators: operatorsResult.rows,
+      bosses: bossesResult.rows,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Error fetching assignment options' });
+  }
+});
+
 // --- ADMIN ROUTES ---
 app.get('/api/admin/users', authenticate, requireRole(['admin', 'jefe_planta']), async (req, res) => {
   try {
@@ -284,6 +309,52 @@ app.post('/api/admin/users/:id/unlock', authenticate, requireRole(['admin', 'jef
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Error unlocking user' });
+  }
+});
+
+app.delete('/api/admin/users/:id', authenticate, requireRole(['admin']), async (req, res) => {
+  const admin = (req as any).user;
+  const { id } = req.params;
+
+  if (admin.id === id) {
+    return res.status(400).json({ error: 'No puedes eliminar tu propia cuenta mientras estás autenticado.' });
+  }
+
+  try {
+    const targetResult = await pool.query(
+      'SELECT id, operator_code, name, role, status FROM users WHERE id = $1',
+      [id]
+    );
+    const targetUser = targetResult.rows[0];
+
+    if (!targetUser) {
+      return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+
+    if (targetUser.role === 'admin') {
+      const adminCountResult = await pool.query(
+        "SELECT COUNT(*)::int AS count FROM users WHERE role = 'admin'"
+      );
+      const adminCount = adminCountResult.rows[0]?.count ?? 0;
+
+      if (adminCount <= 1) {
+        return res.status(400).json({ error: 'No puedes eliminar al último administrador del sistema.' });
+      }
+    }
+
+    await pool.query('DELETE FROM users WHERE id = $1', [id]);
+    await logAudit(admin.id, 'user_deleted', {
+      target_user_id: targetUser.id,
+      target_operator_code: targetUser.operator_code,
+      target_name: targetUser.name,
+      target_role: targetUser.role,
+      target_status: targetUser.status,
+    }, req.ip || '');
+
+    io.emit('user_deleted', { userId: targetUser.id });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Error deleting user' });
   }
 });
 

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { CheckCircle, Unlock, ShieldAlert, UserCheck, Clock, Ban, Users, RefreshCw } from 'lucide-react';
+import { CheckCircle, Unlock, ShieldAlert, UserCheck, Clock, Ban, Users, RefreshCw, Trash2, AlertTriangle } from 'lucide-react';
 import { io } from 'socket.io-client';
+import { useAuth } from '../context/AuthContext';
 
 interface AdminUser {
   id: string;
@@ -14,10 +15,13 @@ interface AdminUser {
 }
 
 const AdminUsers: React.FC = () => {
+  const { user: currentUser } = useAuth();
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [userToDelete, setUserToDelete] = useState<AdminUser | null>(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState('');
 
   const fetchUsers = async () => {
     try {
@@ -39,9 +43,13 @@ const AdminUsers: React.FC = () => {
     socket.on('new_pending_user', () => {
       fetchUsers();
     });
+    socket.on('user_deleted', () => {
+      fetchUsers();
+    });
 
     return () => {
       socket.off('new_pending_user');
+      socket.off('user_deleted');
     };
   }, []);
 
@@ -75,6 +83,52 @@ const AdminUsers: React.FC = () => {
         const data = await res.json();
         throw new Error(data.error || 'Error al desbloquear usuario');
       }
+      await fetchUsers();
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const closeDeleteModal = () => {
+    setUserToDelete(null);
+    setDeleteConfirmation('');
+  };
+
+  const openDeleteModal = (adminUser: AdminUser) => {
+    if (currentUser?.id === adminUser.id) {
+      alert('No puedes eliminar tu propia cuenta mientras estás autenticado.');
+      return;
+    }
+
+    setUserToDelete(adminUser);
+    setDeleteConfirmation('');
+  };
+
+  const handleDelete = async () => {
+    if (!userToDelete) {
+      return;
+    }
+
+    if (deleteConfirmation.trim() !== userToDelete.operator_code) {
+      alert('Debes escribir exactamente el código del operario para confirmar el borrado.');
+      return;
+    }
+
+    setActionLoading(userToDelete.id);
+    try {
+      const res = await fetch(`/api/admin/users/${userToDelete.id}`, {
+        method: 'DELETE',
+        credentials: 'include'
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Error al eliminar usuario');
+      }
+
+      closeDeleteModal();
       await fetchUsers();
     } catch (err: any) {
       alert(err.message);
@@ -122,6 +176,14 @@ const AdminUsers: React.FC = () => {
     return labels[role] || role;
   };
 
+  const isOnlyAdmin = (adminUser: AdminUser) => {
+    if (adminUser.role !== 'admin') {
+      return false;
+    }
+
+    return users.filter((user) => user.role === 'admin').length === 1;
+  };
+
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center bg-slate-50">
@@ -142,7 +204,7 @@ const AdminUsers: React.FC = () => {
               <Users className="w-6 h-6 text-blue-600" />
               Gestión de Usuarios
             </h2>
-            <p className="text-slate-500 mt-1">Administra los accesos, aprueba nuevos registros y desbloquea cuentas.</p>
+            <p className="text-slate-500 mt-1">Administra los accesos, aprueba nuevos registros, desbloquea cuentas y elimina usuarios con confirmación explícita.</p>
           </div>
           <button 
             onClick={fetchUsers}
@@ -228,6 +290,21 @@ const AdminUsers: React.FC = () => {
                               Sin acciones
                             </span>
                           )}
+                          <button
+                            onClick={() => openDeleteModal(u)}
+                            disabled={actionLoading === u.id || currentUser?.id === u.id || isOnlyAdmin(u)}
+                            className="flex items-center gap-1 px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            title={
+                              currentUser?.id === u.id
+                                ? 'No puedes eliminar tu propia cuenta'
+                                : isOnlyAdmin(u)
+                                  ? 'No puedes eliminar al último administrador'
+                                  : 'Eliminar Usuario'
+                            }
+                          >
+                            <Trash2 className="w-4 h-4" />
+                            <span className="hidden sm:inline">Eliminar</span>
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -237,6 +314,64 @@ const AdminUsers: React.FC = () => {
             </table>
           </div>
         </div>
+
+        {userToDelete && (
+          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden border border-slate-200">
+              <div className="p-6 border-b border-slate-200 bg-red-50">
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center text-red-600 flex-shrink-0">
+                    <AlertTriangle className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-900">Confirmar eliminación de usuario</h3>
+                    <p className="text-sm text-slate-600 mt-1">
+                      Esta acción eliminará la cuenta, sus permisos y sus relaciones de visibilidad.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-6 space-y-4">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700 space-y-1">
+                  <p><span className="font-semibold">Nombre:</span> {userToDelete.name}</p>
+                  <p><span className="font-semibold">Código:</span> {userToDelete.operator_code}</p>
+                  <p><span className="font-semibold">Rol:</span> {getRoleLabel(userToDelete.role)}</p>
+                  <p><span className="font-semibold">Estado:</span> {userToDelete.status}</p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    Escribe <span className="font-bold text-slate-900">{userToDelete.operator_code}</span> para confirmar
+                  </label>
+                  <input
+                    type="text"
+                    value={deleteConfirmation}
+                    onChange={(e) => setDeleteConfirmation(e.target.value)}
+                    className="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                    placeholder="Código del operario"
+                  />
+                </div>
+              </div>
+
+              <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-3">
+                <button
+                  onClick={closeDeleteModal}
+                  className="px-4 py-2 rounded-lg text-slate-600 font-medium hover:bg-slate-200 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleDelete}
+                  disabled={actionLoading === userToDelete.id || deleteConfirmation.trim() !== userToDelete.operator_code}
+                  className="px-4 py-2 rounded-lg bg-red-600 text-white font-medium hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Eliminar usuario
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

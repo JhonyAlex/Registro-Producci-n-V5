@@ -31,7 +31,7 @@ export interface ProductionRecord {
   changesCount: number;
   changesComment: string;
   shift: ShiftType;
-  boss: BossType;
+  boss: string;
   operator: string; // New field
 }
 

@@ -1,13 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Save, Calendar, CheckCircle, X, ChevronDown, MessageSquare, Trash2, RotateCcw, Settings, Edit2, Users, Cloud } from 'lucide-react';
-import { MachineType, ShiftType, BossType, ProductionRecord } from '../types';
+import { MachineType, ShiftType, ProductionRecord } from '../types';
 import { MACHINES, SHIFTS, BOSSES } from '../constants';
+import { useAuth } from '../context/AuthContext';
 import { 
   saveRecord, 
   deleteCustomComment, 
   renameCustomComment,
-  deleteCustomOperator,
-  renameCustomOperator,
   subscribeToSettings
 } from '../services/storageService';
 
@@ -19,11 +18,29 @@ interface ShiftFormProps {
 
 const STORAGE_KEY = 'pigmea_form_defaults_v1';
 
+interface AssignableUser {
+  id: string;
+  operator_code: string;
+  name: string;
+  role: string;
+}
+
+const formatShortName = (fullName: string): string => {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '';
+  if (parts.length === 1) return parts[0];
+  return `${parts[0]} ${parts[1][0].toUpperCase()}.`;
+};
+
 const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onCancelEdit }) => {
+  const { user } = useAuth();
+  const isOperatorRole = user?.role === 'operario';
+  const canSelectOperator = user?.role === 'admin' || user?.role === 'jefe_turno';
+
   const [formData, setFormData] = useState({
     date: new Date().toISOString().split('T')[0],
     shift: ShiftType.MORNING,
-    boss: BossType.MARTIN,
+    boss: BOSSES[0] || '',
     machine: MachineType.WH1,
   });
 
@@ -33,10 +50,8 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
   
   // Custom Operator Field State
   const [operatorInput, setOperatorInput] = useState('');
-  const [availableOperators, setAvailableOperators] = useState<string[]>([]);
-  const [filteredOperators, setFilteredOperators] = useState<string[]>([]);
-  const [showOperatorSuggestions, setShowOperatorSuggestions] = useState(false);
-  const operatorDropdownRef = useRef<HTMLDivElement>(null);
+  const [assignableOperators, setAssignableOperators] = useState<AssignableUser[]>([]);
+  const [availableBosses, setAvailableBosses] = useState<AssignableUser[]>([]);
 
   // Custom Comment Field State
   const [commentInput, setCommentInput] = useState('');
@@ -46,7 +61,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Management Modal State (Generic for Comments and Operators)
-  type ModalMode = 'comments' | 'operators';
+  type ModalMode = 'comments';
   const [showManageModal, setShowManageModal] = useState(false);
   const [manageMode, setManageMode] = useState<ModalMode>('comments');
   const [editingItemOldName, setEditingItemOldName] = useState<string | null>(null);
@@ -115,12 +130,40 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
 
   // Subscribe to real-time updates for Comments and Operators
   useEffect(() => {
-    const unsubscribe = subscribeToSettings((comments, operators) => {
+      const unsubscribe = subscribeToSettings((comments) => {
       setAvailableComments(comments);
-      setAvailableOperators(operators);
     });
     return () => unsubscribe();
   }, []);
+
+  useEffect(() => {
+    const loadAssignmentOptions = async () => {
+      try {
+        const res = await fetch('/api/users/assignment-options', { credentials: 'include' });
+        if (!res.ok) return;
+        const data = await res.json();
+        const operators: AssignableUser[] = Array.isArray(data.operators) ? data.operators : [];
+        const bosses: AssignableUser[] = Array.isArray(data.bosses) ? data.bosses : [];
+
+        setAssignableOperators(operators);
+        setAvailableBosses(bosses);
+
+        if (!editingRecord) {
+          setFormData((prev) => {
+            if (prev.boss) return prev;
+            if (bosses.length > 0) {
+              return { ...prev, boss: bosses[0].name };
+            }
+            return prev;
+          });
+        }
+      } catch (err) {
+        console.error('Error loading assignment options', err);
+      }
+    };
+
+    loadAssignmentOptions();
+  }, [editingRecord]);
 
   // Filter logic for Comments
   useEffect(() => {
@@ -134,26 +177,11 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
     }
   }, [commentInput, availableComments]);
 
-  // Filter logic for Operators
-  useEffect(() => {
-    if (!operatorInput) {
-      setFilteredOperators(availableOperators);
-    } else {
-      const lowerInput = operatorInput.toLowerCase();
-      setFilteredOperators(availableOperators.filter(o => 
-        o.toLowerCase().includes(lowerInput)
-      ));
-    }
-  }, [operatorInput, availableOperators]);
-
   // Click outside to close dropdowns
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setShowSuggestions(false);
-      }
-      if (operatorDropdownRef.current && !operatorDropdownRef.current.contains(event.target as Node)) {
-        setShowOperatorSuggestions(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -191,22 +219,6 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
     setShowSuggestions(false);
   };
 
-  // --- Operator Handlers ---
-  const clearOperator = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setOperatorInput('');
-    setFilteredOperators(availableOperators);
-  };
-
-  const handleOperatorFocus = () => {
-    setShowOperatorSuggestions(true);
-  };
-
-  const selectOperator = (op: string) => {
-    setOperatorInput(op);
-    setShowOperatorSuggestions(false);
-  };
-
   // --- Management Handlers (Generic) ---
 
   const openManageModal = (mode: ModalMode) => {
@@ -217,14 +229,8 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
   };
 
   const handleDeleteItem = async (item: string) => {
-    if (manageMode === 'comments') {
-      if (confirm(`¿Borrar "${item}" de la lista de incidencias?\n\nNota: Los registros históricos NO se borrarán.`)) {
-        await deleteCustomComment(item);
-      }
-    } else {
-      if (confirm(`¿Borrar "${item}" de la lista de operarios?\n\nNota: Los registros históricos NO se borrarán.`)) {
-        await deleteCustomOperator(item);
-      }
+    if (confirm(`¿Borrar "${item}" de la lista de incidencias?\n\nNota: Los registros históricos NO se borrarán.`)) {
+      await deleteCustomComment(item);
     }
   };
 
@@ -238,13 +244,8 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
     
     if (tempItemName !== editingItemOldName) {
       if (confirm(`¿Renombrar "${editingItemOldName}" a "${tempItemName}"?\n\nEsto actualizará TODOS los registros históricos.`)) {
-        if (manageMode === 'comments') {
-          await renameCustomComment(editingItemOldName, tempItemName);
-          if (commentInput === editingItemOldName) setCommentInput(tempItemName);
-        } else {
-          await renameCustomOperator(editingItemOldName, tempItemName);
-          if (operatorInput === editingItemOldName) setOperatorInput(tempItemName);
-        }
+        await renameCustomComment(editingItemOldName, tempItemName);
+        if (commentInput === editingItemOldName) setCommentInput(tempItemName);
       }
     }
     setEditingItemOldName(null);
@@ -254,6 +255,20 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!metersInput) return;
+
+    const selectedOperatorName = canSelectOperator
+      ? operatorInput
+      : (user?.name || '');
+
+    if (!selectedOperatorName) {
+      alert('Debe seleccionar un operario válido.');
+      return;
+    }
+
+    if (!formData.boss) {
+      alert('Debe seleccionar un jefe de turno.');
+      return;
+    }
 
     const id = editingRecord ? editingRecord.id : crypto.randomUUID();
     const timestamp = editingRecord ? editingRecord.timestamp : Date.now();
@@ -268,7 +283,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
       meters: parseInt(metersInput),
       changesCount: changesInput === '' ? 0 : parseInt(changesInput),
       changesComment: commentInput,
-      operator: operatorInput
+      operator: selectedOperatorName
     };
 
     // Save Logic
@@ -349,12 +364,16 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
             <div className="relative">
               <select
                 value={formData.boss}
-                onChange={e => setFormData({ ...formData, boss: e.target.value as BossType })}
+                onChange={e => setFormData({ ...formData, boss: e.target.value })}
                 className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none appearance-none font-medium"
               >
-                {BOSSES.map(boss => (
-                  <option key={boss} value={boss}>{boss}</option>
-                ))}
+                {availableBosses.length > 0
+                  ? availableBosses.map((bossUser) => (
+                      <option key={bossUser.id} value={bossUser.name}>{bossUser.name}</option>
+                    ))
+                  : BOSSES.map((boss) => (
+                      <option key={boss} value={boss}>{boss}</option>
+                    ))}
               </select>
               <div className="absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none">
                 <ChevronDown className="w-4 h-4 text-slate-500" />
@@ -362,83 +381,33 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
             </div>
           </div>
 
-          <div className="relative" ref={operatorDropdownRef}>
+          {canSelectOperator && (
+          <div className="relative">
               <div className="flex justify-between items-center mb-2">
                 <label className="block text-sm font-semibold text-slate-700 flex items-center gap-2">
                   <Users className="w-4 h-4 text-slate-400" /> Operario
                 </label>
-                <button 
-                  type="button" 
-                  onClick={() => openManageModal('operators')}
-                  className="text-xs text-blue-600 font-bold flex items-center gap-1 hover:underline bg-blue-50 px-2 py-1 rounded"
-                >
-                  <Settings className="w-3 h-3" /> Config
-                </button>
               </div>
               <div className="relative w-full">
-                <div className="relative">
-                  <input
-                    type="text"
-                    placeholder="Nombre del operario..."
-                    value={operatorInput}
-                    onChange={e => {
-                      setOperatorInput(e.target.value);
-                      setShowOperatorSuggestions(true);
-                    }}
-                    onFocus={handleOperatorFocus}
-                    className="w-full pl-4 pr-10 py-3 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
-                    autoComplete="off"
-                  />
-                  <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center">
-                    {operatorInput && (
-                      <button type="button" onClick={clearOperator} className="p-1 text-slate-400 hover:text-red-500 transition-colors mr-1">
-                        <X className="w-4 h-4" />
-                      </button>
-                    )}
-                    <div className={`pointer-events-none text-slate-400 p-1 transition-transform duration-200 ${showOperatorSuggestions ? 'rotate-180' : ''}`}>
-                        <ChevronDown className="w-4 h-4" />
-                    </div>
-                  </div>
+                <select
+                  value={operatorInput}
+                  onChange={(e) => setOperatorInput(e.target.value)}
+                  disabled={!canSelectOperator}
+                  className="w-full px-4 py-3 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium appearance-none disabled:bg-slate-100 disabled:text-slate-500"
+                >
+                  <option value="">Selecciona operario</option>
+                  {assignableOperators.map((operatorUser) => (
+                    <option key={operatorUser.id} value={operatorUser.name}>
+                      {formatShortName(operatorUser.name)}
+                    </option>
+                  ))}
+                </select>
+                <div className="absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none">
+                  <ChevronDown className="w-4 h-4 text-slate-500" />
                 </div>
-
-                {showOperatorSuggestions && (
-                  <div className="absolute z-50 w-full bottom-full mb-2 bg-white border border-slate-200 rounded-xl shadow-xl max-h-60 overflow-y-auto animate-fade-in origin-bottom">
-                    {filteredOperators.length > 0 ? (
-                      <div className="divide-y divide-slate-50">
-                        {filteredOperators.map((op, index) => (
-                          <div
-                            key={index}
-                            onClick={() => selectOperator(op)}
-                            className="w-full text-left px-4 py-3.5 hover:bg-blue-50 active:bg-blue-100 text-slate-700 font-medium transition-colors flex items-center justify-between group touch-target cursor-pointer"
-                          >
-                            <div className="flex items-center gap-3 overflow-hidden">
-                              <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 shrink-0"></span>
-                              <span className="truncate">{op}</span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => selectOperator(operatorInput)}
-                        className="w-full px-4 py-4 text-left hover:bg-blue-50 transition-colors flex items-center gap-3 group"
-                      >
-                          <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-colors">
-                            <Plus className="w-5 h-5" />
-                          </div>
-                          <div>
-                            <p className="text-slate-500 text-xs font-medium">No encontrado en la lista</p>
-                            <p className="text-blue-700 font-bold text-sm break-words">
-                              Crear "{operatorInput}"
-                            </p>
-                          </div>
-                      </button>
-                    )}
-                  </div>
-                )}
               </div>
             </div>
+          )}
         </div>
 
         {/* Machine Selection */}
@@ -631,7 +600,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
             </div>
 
             <div className="overflow-y-auto flex-1 p-2 space-y-1">
-              {(manageMode === 'comments' ? availableComments : availableOperators).map((item, index) => {
+              {availableComments.map((item, index) => {
                  const isEditing = editingItemOldName === item;
                  
                  return (
