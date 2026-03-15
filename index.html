@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Registro Jefe de turnos</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      /* Mobile optimization tweaks */
+      input, select, textarea, button {
+        font-size: 16px; /* Prevents iOS zoom on focus */
+      }
+      .touch-target {
+        min-height: 44px;
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@18.2.0",
+    "react/": "https://esm.sh/react@18.2.0/",
+    "react-dom": "https://esm.sh/react-dom@18.2.0",
+    "react-dom/": "https://esm.sh/react-dom@18.2.0/",
+    "recharts": "https://esm.sh/recharts@2.12.2?external=react,react-dom",
+    "lucide-react": "https://esm.sh/lucide-react@0.263.1?external=react",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs",
+    "jspdf": "https://esm.sh/jspdf@2.5.1",
+    "jspdf-autotable": "https://esm.sh/jspdf-autotable@3.8.2",
+    "html2canvas": "https://esm.sh/html2canvas@1.4.1",
+    "@google/genai": "https://esm.sh/@google/genai@latest"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+  <body class="bg-slate-50 text-slate-900 antialiased">
+    <div id="root"></div>
+  <script type="module" src="/index.tsx"></script>
+</body>
+</html>
