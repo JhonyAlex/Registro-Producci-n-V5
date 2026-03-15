@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Save, Calendar, CheckCircle, X, ChevronDown, MessageSquare, Trash2, RotateCcw, Settings, Edit2, Users, Cloud } from 'lucide-react';
 import { MachineType, ShiftType, ProductionRecord } from '../types';
-import { MACHINES, SHIFTS, BOSSES } from '../constants';
+import { MACHINES, SHIFTS } from '../constants';
 import { useAuth } from '../context/AuthContext';
 import { 
   saveRecord, 
@@ -40,7 +40,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
   const [formData, setFormData] = useState({
     date: new Date().toISOString().split('T')[0],
     shift: ShiftType.MORNING,
-    boss: BOSSES[0] || '',
+    boss: '',
     machine: MachineType.WH1,
   });
 
@@ -150,10 +150,19 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
 
         if (!editingRecord) {
           setFormData((prev) => {
-            if (prev.boss) return prev;
+            if (bosses.length === 0) {
+              return { ...prev, boss: '' };
+            }
+
+            const selectedBossExists = bosses.some((bossUser) => bossUser.name === prev.boss);
+            if (selectedBossExists) {
+              return prev;
+            }
+
             if (bosses.length > 0) {
               return { ...prev, boss: bosses[0].name };
             }
+
             return prev;
           });
         }
@@ -367,13 +376,12 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
                 onChange={e => setFormData({ ...formData, boss: e.target.value })}
                 className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none appearance-none font-medium"
               >
-                {availableBosses.length > 0
-                  ? availableBosses.map((bossUser) => (
-                      <option key={bossUser.id} value={bossUser.name}>{bossUser.name}</option>
-                    ))
-                  : BOSSES.map((boss) => (
-                      <option key={boss} value={boss}>{boss}</option>
-                    ))}
+                <option value="" disabled>
+                  {availableBosses.length > 0 ? 'Selecciona jefe de turno' : 'Sin jefes de turno registrados'}
+                </option>
+                {availableBosses.map((bossUser) => (
+                  <option key={bossUser.id} value={bossUser.name}>{bossUser.name}</option>
+                ))}
               </select>
               <div className="absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none">
                 <ChevronDown className="w-4 h-4 text-slate-500" />
