@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { LayoutDashboard, PlusCircle, List, User, Trash2, Lock, AlertCircle, Filter, X, Cloud, WifiOff, CloudOff, Edit, ChevronDown, ChevronUp, Calendar, Monitor, XCircle, FileDown, FileUp, AlertTriangle, Clock, ChevronLeft, ChevronRight, Database, LogOut, Users, History } from 'lucide-react';
+import { LayoutDashboard, PlusCircle, List, User, Trash2, Lock, AlertCircle, Filter, X, Cloud, WifiOff, CloudOff, Edit, ChevronDown, ChevronUp, Calendar, Monitor, XCircle, FileDown, FileUp, AlertTriangle, Clock, ChevronLeft, ChevronRight, Database, LogOut, Users, History, ShieldCheck } from 'lucide-react';
 import ShiftForm from './components/ShiftForm';
 import Dashboard from './components/Dashboard';
 import Login from './components/Login';
@@ -7,18 +7,27 @@ import Register from './components/Register';
 import WaitingRoom from './components/WaitingRoom';
 import AdminUsers from './components/AdminUsers';
 import AuditLogs from './components/AuditLogs';
+import RolePermissionsMatrix from './components/RolePermissionsMatrix';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { subscribeToRecords, clearAllRecords, deleteRecord, exportToExcel, exportAllData, importAllData, reconnectDatabase } from './services/storageService';
 import { ProductionRecord, FilterState } from './types';
 import { MACHINES, BOSSES } from './constants';
 
-type View = 'dashboard' | 'entry' | 'list' | 'admin' | 'audit';
+type View = 'dashboard' | 'entry' | 'list' | 'admin' | 'audit' | 'permissions';
 type DeleteMode = 'all' | 'single';
 
 const ITEMS_PER_PAGE = 15;
 
 const AppContent: React.FC = () => {
   const { user, logout } = useAuth();
+  const hasPermission = (permissionKey: string) => {
+    if (user?.role === 'admin') return true;
+    return Boolean(user?.permissions?.some((perm) => perm.key === permissionKey));
+  };
+  const canAccessUsers = (user?.role === 'admin' || user?.role === 'jefe_planta') && hasPermission('admin.users.read');
+  const canAccessAudit = (user?.role === 'admin' || user?.role === 'jefe_planta') && hasPermission('admin.audit.read');
+  const canAccessPermissionsMatrix = user?.role === 'admin';
+
   const [currentView, setCurrentView] = useState<View>('entry');
   const [records, setRecords] = useState<ProductionRecord[]>([]);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -322,13 +331,14 @@ const AppContent: React.FC = () => {
           <NavItem view="dashboard" icon={LayoutDashboard} label="Dashboard" />
           <NavItem view="list" icon={List} label="Historial" />
           
-          {(user?.role === 'admin' || user?.role === 'jefe_planta') && (
+          {(canAccessUsers || canAccessAudit || canAccessPermissionsMatrix) && (
             <>
               <div className="mt-8 mb-2 px-4">
                 <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Administración</h3>
               </div>
-              <NavItem view="admin" icon={Users} label="Usuarios" />
-              <NavItem view="audit" icon={History} label="Actividad" />
+              {canAccessUsers && <NavItem view="admin" icon={Users} label="Usuarios" />}
+              {canAccessAudit && <NavItem view="audit" icon={History} label="Actividad" />}
+              {canAccessPermissionsMatrix && <NavItem view="permissions" icon={ShieldCheck} label="Permisos" />}
             </>
           )}
           
@@ -412,12 +422,16 @@ const AppContent: React.FC = () => {
             </div>
           )}
 
-          {currentView === 'admin' && (
+          {currentView === 'admin' && canAccessUsers && (
             <AdminUsers />
           )}
 
-          {currentView === 'audit' && (
+          {currentView === 'audit' && canAccessAudit && (
             <AuditLogs />
+          )}
+
+          {currentView === 'permissions' && canAccessPermissionsMatrix && (
+            <RolePermissionsMatrix />
           )}
 
           {(currentView === 'dashboard' || currentView === 'list') && (
@@ -760,10 +774,11 @@ const AppContent: React.FC = () => {
         <NavItem view="entry" icon={PlusCircle} label="Registro" mobileOnly />
         <NavItem view="dashboard" icon={LayoutDashboard} label="Data" mobileOnly />
         <NavItem view="list" icon={List} label="Historial" mobileOnly />
-        {(user?.role === 'admin' || user?.role === 'jefe_planta') && (
+        {(canAccessUsers || canAccessAudit || canAccessPermissionsMatrix) && (
           <>
-            <NavItem view="admin" icon={Users} label="Usuarios" mobileOnly />
-            <NavItem view="audit" icon={History} label="Actividad" mobileOnly />
+            {canAccessUsers && <NavItem view="admin" icon={Users} label="Usuarios" mobileOnly />}
+            {canAccessAudit && <NavItem view="audit" icon={History} label="Actividad" mobileOnly />}
+            {canAccessPermissionsMatrix && <NavItem view="permissions" icon={ShieldCheck} label="Permisos" mobileOnly />}
           </>
         )}
         <button

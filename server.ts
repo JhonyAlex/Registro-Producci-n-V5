@@ -79,6 +79,14 @@ async function initDB() {
         UNIQUE(user_id, module, action)
       );
 
+      CREATE TABLE IF NOT EXISTS role_permissions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        role VARCHAR(50) NOT NULL,
+        permission_key VARCHAR(255) NOT NULL,
+        allowed BOOLEAN NOT NULL DEFAULT FALSE,
+        UNIQUE(role, permission_key)
+      );
+
       CREATE TABLE IF NOT EXISTS user_visibility (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         observer_id UUID REFERENCES users(id) ON DELETE CASCADE,
@@ -95,6 +103,19 @@ async function initDB() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
+
+    for (const role of APP_ROLES) {
+      for (const key of PERMISSION_KEYS) {
+        const allowed = DEFAULT_ROLE_PERMISSIONS[role].includes(key);
+        await pool.query(
+          `INSERT INTO role_permissions (role, permission_key, allowed)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (role, permission_key) DO NOTHING`,
+          [role, key, allowed]
+        );
+      }
+    }
+
     console.log('Database tables initialized in PostgreSQL.');
     isDbConnected = true;
   } catch (err) {
@@ -117,6 +138,45 @@ const requireDB = (req: express.Request, res: express.Response, next: express.Ne
 const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-key-change-in-production';
 const SESSION_TIMEOUT_MINUTES = parseInt(process.env.SESSION_TIMEOUT_MINUTES || '30');
 const MAX_FAILED_ATTEMPTS = 3;
+
+const APP_ROLES = ['admin', 'jefe_planta', 'jefe_turno', 'operario'] as const;
+type AppRole = typeof APP_ROLES[number];
+
+const PERMISSION_KEYS = [
+  'records.read',
+  'records.write',
+  'records.delete',
+  'records.delete_all',
+  'settings.read',
+  'settings.manage',
+  'admin.users.read',
+  'admin.users.approve',
+  'admin.users.unlock',
+  'admin.users.delete',
+  'admin.audit.read',
+  'backup.export',
+  'backup.import'
+] as const;
+
+const DEFAULT_ROLE_PERMISSIONS: Record<AppRole, string[]> = {
+  admin: [...PERMISSION_KEYS],
+  jefe_planta: [
+    'records.read',
+    'records.write',
+    'records.delete',
+    'records.delete_all',
+    'settings.read',
+    'settings.manage',
+    'admin.users.read',
+    'admin.users.approve',
+    'admin.users.unlock',
+    'admin.audit.read',
+    'backup.export',
+    'backup.import'
+  ],
+  jefe_turno: ['records.read', 'records.write', 'settings.read'],
+  operario: ['records.read', 'records.write', 'settings.read']
+};
 
 // Helper to log audit events
 async function logAudit(userId: string | null, action: string, details: any, ipAddress: string | null = null) {
@@ -171,6 +231,54 @@ export const requireRole = (roles: string[]) => {
       return res.status(403).json({ error: 'Permisos insuficientes' });
     }
     next();
+  };
+};
+
+const splitPermissionKey = (permissionKey: string) => {
+  const parts = permissionKey.split('.');
+  return {
+    module: parts.slice(0, -1).join('.') || 'general',
+    action: parts[parts.length - 1] || 'access'
+  };
+};
+
+const getRolePermissions = async (role: string) => {
+  if (role === 'admin') return new Set<string>(PERMISSION_KEYS);
+
+  const result = await pool.query(
+    'SELECT permission_key FROM role_permissions WHERE role = $1 AND allowed = TRUE',
+    [role]
+  );
+
+  return new Set<string>(result.rows.map((r: any) => r.permission_key));
+};
+
+export const requirePermission = (permissionKey: string) => {
+  return async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ error: 'No autorizado' });
+
+    if (user.role === 'admin') {
+      return next();
+    }
+
+    try {
+      const result = await pool.query(
+        `SELECT allowed
+         FROM role_permissions
+         WHERE role = $1 AND permission_key = $2
+         LIMIT 1`,
+        [user.role, permissionKey]
+      );
+
+      if (result.rows[0]?.allowed !== true) {
+        return res.status(403).json({ error: 'Permiso denegado' });
+      }
+
+      next();
+    } catch (err) {
+      return res.status(500).json({ error: 'Error validando permisos' });
+    }
   };
 };
 
@@ -290,7 +398,15 @@ app.get('/api/auth/me', authenticate, async (req, res) => {
   const user = (req as any).user;
   
   // Fetch permissions and visibility
-  const permsResult = await pool.query('SELECT module, action FROM permissions WHERE user_id = $1', [user.id]);
+  const rolePermissions = await getRolePermissions(user.role);
+  const permissions = Array.from(rolePermissions).map((permissionKey) => {
+    const parsed = splitPermissionKey(permissionKey);
+    return {
+      key: permissionKey,
+      module: parsed.module,
+      action: parsed.action
+    };
+  });
   const visResult = await pool.query('SELECT target_id FROM user_visibility WHERE observer_id = $1', [user.id]);
   
   res.json({
@@ -299,23 +415,23 @@ app.get('/api/auth/me', authenticate, async (req, res) => {
       operator_code: user.operator_code,
       name: user.name,
       role: user.role,
-      permissions: permsResult.rows,
+      permissions,
       visible_users: visResult.rows.map(r => r.target_id)
     }
   });
 });
 
 // --- ADMIN ROUTES ---
-app.get('/api/admin/users', authenticate, requireRole(['admin', 'jefe_planta']), async (req, res) => {
+app.get('/api/admin/users', authenticate, requireRole(['admin', 'jefe_planta']), requirePermission('admin.users.read'), async (req, res) => {
   try {
-    const result = await pool.query('SELECT id, operator_code, name, role, status, created_at, last_login FROM users ORDER BY created_at DESC');
+    const result = await pool.query('SELECT id, operator_code, name, role, status, failed_attempts, created_at, last_login FROM users ORDER BY created_at DESC');
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: 'Error fetching users' });
   }
 });
 
-app.post('/api/admin/users/:id/approve', authenticate, requireRole(['admin', 'jefe_planta']), async (req, res) => {
+app.post('/api/admin/users/:id/approve', authenticate, requireRole(['admin', 'jefe_planta']), requirePermission('admin.users.approve'), async (req, res) => {
   const admin = (req as any).user;
   const { id } = req.params;
   try {
@@ -331,7 +447,7 @@ app.post('/api/admin/users/:id/approve', authenticate, requireRole(['admin', 'je
   }
 });
 
-app.post('/api/admin/users/:id/unlock', authenticate, requireRole(['admin', 'jefe_planta', 'jefe_turno']), async (req, res) => {
+app.post('/api/admin/users/:id/unlock', authenticate, requireRole(['admin', 'jefe_planta']), requirePermission('admin.users.unlock'), async (req, res) => {
   const admin = (req as any).user;
   const { id } = req.params;
   try {
@@ -345,7 +461,44 @@ app.post('/api/admin/users/:id/unlock', authenticate, requireRole(['admin', 'jef
   }
 });
 
-app.get('/api/admin/audit-logs', authenticate, requireRole(['admin', 'jefe_planta']), async (req, res) => {
+app.delete('/api/admin/users/:id', authenticate, requireRole(['admin']), requirePermission('admin.users.delete'), async (req, res) => {
+  const admin = (req as any).user;
+  const { id } = req.params;
+
+  try {
+    if (admin.id === id) {
+      return res.status(400).json({ error: 'No puedes eliminar tu propio usuario.' });
+    }
+
+    const targetResult = await pool.query('SELECT id, operator_code, name, role, status FROM users WHERE id = $1', [id]);
+    const targetUser = targetResult.rows[0];
+    if (!targetUser) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+    if (targetUser.role === 'admin') {
+      const adminsCountResult = await pool.query("SELECT COUNT(*)::int AS total FROM users WHERE role = 'admin'");
+      const adminsCount = adminsCountResult.rows[0]?.total || 0;
+      if (adminsCount <= 1) {
+        return res.status(400).json({ error: 'No se puede eliminar el último administrador del sistema.' });
+      }
+    }
+
+    await pool.query('DELETE FROM users WHERE id = $1', [id]);
+    await logAudit(admin.id, 'user_deleted', {
+      target_user_id: targetUser.id,
+      target_operator_code: targetUser.operator_code,
+      target_name: targetUser.name,
+      target_role: targetUser.role,
+      target_status: targetUser.status
+    }, req.ip || '');
+
+    io.emit('user_deleted', { userId: id });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Error deleting user' });
+  }
+});
+
+app.get('/api/admin/audit-logs', authenticate, requireRole(['admin', 'jefe_planta']), requirePermission('admin.audit.read'), async (req, res) => {
   const {
     q = '',
     action = '',
@@ -449,8 +602,67 @@ app.get('/api/admin/audit-logs', authenticate, requireRole(['admin', 'jefe_plant
   }
 });
 
+app.get('/api/admin/role-permissions', authenticate, requireRole(['admin']), async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT role, permission_key, allowed FROM role_permissions ORDER BY role ASC, permission_key ASC'
+    );
+
+    const matrix: Record<string, Record<string, boolean>> = {};
+    for (const role of APP_ROLES) {
+      matrix[role] = {};
+      for (const key of PERMISSION_KEYS) {
+        matrix[role][key] = DEFAULT_ROLE_PERMISSIONS[role].includes(key);
+      }
+    }
+
+    for (const row of result.rows) {
+      if (!matrix[row.role]) continue;
+      matrix[row.role][row.permission_key] = row.allowed === true;
+    }
+
+    res.json({
+      roles: APP_ROLES,
+      permissionKeys: PERMISSION_KEYS,
+      matrix
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Error fetching role permissions' });
+  }
+});
+
+app.put('/api/admin/role-permissions/:role', authenticate, requireRole(['admin']), async (req, res) => {
+  const admin = (req as any).user;
+  const role = req.params.role as AppRole;
+  const incoming = req.body?.permissions as Record<string, boolean>;
+
+  if (!APP_ROLES.includes(role)) return res.status(400).json({ error: 'Rol inválido' });
+  if (role === 'admin') return res.status(400).json({ error: 'El rol admin no puede modificarse en esta matriz.' });
+  if (!incoming || typeof incoming !== 'object') return res.status(400).json({ error: 'Formato inválido de permisos' });
+
+  try {
+    await pool.query('BEGIN');
+    for (const key of PERMISSION_KEYS) {
+      await pool.query(
+        `INSERT INTO role_permissions (role, permission_key, allowed)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (role, permission_key)
+         DO UPDATE SET allowed = EXCLUDED.allowed`,
+        [role, key, incoming[key] === true]
+      );
+    }
+    await pool.query('COMMIT');
+
+    await logAudit(admin.id, 'role_permissions_updated', { role, permissions: incoming }, req.ip || '');
+    res.json({ success: true });
+  } catch (err) {
+    await pool.query('ROLLBACK');
+    res.status(500).json({ error: 'Error updating role permissions' });
+  }
+});
+
 // --- RECORDS ---
-app.get('/api/records', authenticate, requireDB, async (req, res) => {
+app.get('/api/records', authenticate, requirePermission('records.read'), requireDB, async (req, res) => {
   const user = (req as any).user;
   try {
     let query = 'SELECT id, timestamp, date, machine, meters, changescount as "changesCount", changescomment as "changesComment", shift, boss, operator FROM production_records';
@@ -483,7 +695,7 @@ app.get('/api/records', authenticate, requireDB, async (req, res) => {
   }
 });
 
-app.post('/api/records', authenticate, requireDB, async (req, res) => {
+app.post('/api/records', authenticate, requirePermission('records.write'), requireDB, async (req, res) => {
   const user = (req as any).user;
   const { id, timestamp, date, machine, meters, changesCount, changesComment, shift, boss, operator } = req.body;
   try {
@@ -564,7 +776,7 @@ app.post('/api/records', authenticate, requireDB, async (req, res) => {
   }
 });
 
-app.delete('/api/records/:id', authenticate, requireDB, async (req, res) => {
+app.delete('/api/records/:id', authenticate, requirePermission('records.delete'), requireDB, async (req, res) => {
   const user = (req as any).user;
   try {
     const existingRecordResult = await pool.query(
@@ -602,7 +814,7 @@ app.delete('/api/records/:id', authenticate, requireDB, async (req, res) => {
   }
 });
 
-app.delete('/api/records', authenticate, requireDB, async (req, res) => {
+app.delete('/api/records', authenticate, requirePermission('records.delete_all'), requireDB, async (req, res) => {
   const user = (req as any).user;
   try {
     await pool.query('DELETE FROM production_records');
@@ -615,7 +827,7 @@ app.delete('/api/records', authenticate, requireDB, async (req, res) => {
 });
 
 // --- SETTINGS (COMMENTS) ---
-app.get('/api/settings/comments', authenticate, requireDB, async (req, res) => {
+app.get('/api/settings/comments', authenticate, requirePermission('settings.read'), requireDB, async (req, res) => {
   try {
     const result = await pool.query('SELECT name FROM custom_comments ORDER BY name ASC');
     res.json(result.rows.map((row: any) => row.name));
@@ -624,7 +836,7 @@ app.get('/api/settings/comments', authenticate, requireDB, async (req, res) => {
   }
 });
 
-app.post('/api/settings/comments', authenticate, requireDB, async (req, res) => {
+app.post('/api/settings/comments', authenticate, requirePermission('settings.manage'), requireDB, async (req, res) => {
   const user = (req as any).user;
   try {
     const skipAudit = Boolean(req.body?.skipAudit);
@@ -642,7 +854,7 @@ app.post('/api/settings/comments', authenticate, requireDB, async (req, res) => 
   }
 });
 
-app.delete('/api/settings/comments/:name', authenticate, requireDB, async (req, res) => {
+app.delete('/api/settings/comments/:name', authenticate, requirePermission('settings.manage'), requireDB, async (req, res) => {
   const user = (req as any).user;
   try {
     const deleteResult = await pool.query('DELETE FROM custom_comments WHERE name = $1 RETURNING name', [req.params.name]);
@@ -656,7 +868,7 @@ app.delete('/api/settings/comments/:name', authenticate, requireDB, async (req, 
   }
 });
 
-app.put('/api/settings/comments/:oldName', authenticate, requireDB, async (req, res) => {
+app.put('/api/settings/comments/:oldName', authenticate, requirePermission('settings.manage'), requireDB, async (req, res) => {
   const user = (req as any).user;
   const { oldName } = req.params;
   const { newName } = req.body;
@@ -677,7 +889,7 @@ app.put('/api/settings/comments/:oldName', authenticate, requireDB, async (req, 
 });
 
 // --- SETTINGS (OPERATORS) ---
-app.get('/api/settings/operators', authenticate, requireDB, async (req, res) => {
+app.get('/api/settings/operators', authenticate, requirePermission('settings.read'), requireDB, async (req, res) => {
   try {
     const result = await pool.query('SELECT name FROM custom_operators ORDER BY name ASC');
     res.json(result.rows.map((row: any) => row.name));
@@ -686,7 +898,7 @@ app.get('/api/settings/operators', authenticate, requireDB, async (req, res) => 
   }
 });
 
-app.post('/api/settings/operators', authenticate, requireDB, async (req, res) => {
+app.post('/api/settings/operators', authenticate, requirePermission('settings.manage'), requireDB, async (req, res) => {
   const user = (req as any).user;
   try {
     const skipAudit = Boolean(req.body?.skipAudit);
@@ -704,7 +916,7 @@ app.post('/api/settings/operators', authenticate, requireDB, async (req, res) =>
   }
 });
 
-app.delete('/api/settings/operators/:name', authenticate, requireDB, async (req, res) => {
+app.delete('/api/settings/operators/:name', authenticate, requirePermission('settings.manage'), requireDB, async (req, res) => {
   const user = (req as any).user;
   try {
     const deleteResult = await pool.query('DELETE FROM custom_operators WHERE name = $1 RETURNING name', [req.params.name]);
@@ -718,7 +930,7 @@ app.delete('/api/settings/operators/:name', authenticate, requireDB, async (req,
   }
 });
 
-app.put('/api/settings/operators/:oldName', authenticate, requireDB, async (req, res) => {
+app.put('/api/settings/operators/:oldName', authenticate, requirePermission('settings.manage'), requireDB, async (req, res) => {
   const user = (req as any).user;
   const { oldName } = req.params;
   const { newName } = req.body;
@@ -739,7 +951,7 @@ app.put('/api/settings/operators/:oldName', authenticate, requireDB, async (req,
 });
 
 // --- IMPORT / EXPORT ---
-app.get('/api/export', authenticate, requireRole(['admin', 'jefe_planta']), requireDB, async (req, res) => {
+app.get('/api/export', authenticate, requireRole(['admin', 'jefe_planta']), requirePermission('backup.export'), requireDB, async (req, res) => {
   const user = (req as any).user;
   try {
     const records = await pool.query('SELECT id, timestamp, date, machine, meters, changescount as "changesCount", changescomment as "changesComment", shift, boss, operator FROM production_records');
@@ -757,7 +969,7 @@ app.get('/api/export', authenticate, requireRole(['admin', 'jefe_planta']), requ
   }
 });
 
-app.post('/api/import', authenticate, requireRole(['admin', 'jefe_planta']), requireDB, async (req, res) => {
+app.post('/api/import', authenticate, requireRole(['admin', 'jefe_planta']), requirePermission('backup.import'), requireDB, async (req, res) => {
   const user = (req as any).user;
   const { records, comments, operators } = req.body;
   try {

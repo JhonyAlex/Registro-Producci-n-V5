@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { CheckCircle, Unlock, ShieldAlert, UserCheck, Clock, Ban, Users, RefreshCw } from 'lucide-react';
+import { CheckCircle, Unlock, ShieldAlert, UserCheck, Clock, Ban, Users, RefreshCw, Trash2 } from 'lucide-react';
 import { io } from 'socket.io-client';
+import { useAuth } from '../context/AuthContext';
 
 interface AdminUser {
   id: string;
@@ -14,6 +15,12 @@ interface AdminUser {
 }
 
 const AdminUsers: React.FC = () => {
+  const { user: currentUser } = useAuth();
+  const hasPermission = (permissionKey: string) => {
+    if (currentUser?.role === 'admin') return true;
+    return Boolean(currentUser?.permissions?.some((perm) => perm.key === permissionKey));
+  };
+
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -74,6 +81,28 @@ const AdminUsers: React.FC = () => {
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.error || 'Error al desbloquear usuario');
+      }
+      await fetchUsers();
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleDeleteUser = async (id: string, name: string) => {
+    const confirmed = window.confirm(`¿Eliminar al usuario ${name}? Esta acción no se puede deshacer.`);
+    if (!confirmed) return;
+
+    setActionLoading(id);
+    try {
+      const res = await fetch(`/api/admin/users/${id}`, {
+        method: 'DELETE',
+        credentials: 'include'
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Error al eliminar usuario');
       }
       await fetchUsers();
     } catch (err: any) {
@@ -201,7 +230,7 @@ const AdminUsers: React.FC = () => {
                       </td>
                       <td className="p-4 text-right">
                         <div className="flex items-center justify-end gap-2">
-                          {u.status === 'pending' && (
+                          {u.status === 'pending' && hasPermission('admin.users.approve') && (
                             <button
                               onClick={() => handleApprove(u.id)}
                               disabled={actionLoading === u.id}
@@ -212,7 +241,7 @@ const AdminUsers: React.FC = () => {
                               <span className="hidden sm:inline">Aprobar</span>
                             </button>
                           )}
-                          {u.status === 'locked' && (
+                          {u.status === 'locked' && hasPermission('admin.users.unlock') && (
                             <button
                               onClick={() => handleUnlock(u.id)}
                               disabled={actionLoading === u.id}
@@ -223,7 +252,18 @@ const AdminUsers: React.FC = () => {
                               <span className="hidden sm:inline">Desbloquear</span>
                             </button>
                           )}
-                          {u.status === 'active' && (
+                          {hasPermission('admin.users.delete') && currentUser?.id !== u.id && (
+                            <button
+                              onClick={() => handleDeleteUser(u.id, u.name)}
+                              disabled={actionLoading === u.id}
+                              className="flex items-center gap-1 px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 font-medium rounded-lg transition-colors disabled:opacity-50"
+                              title="Eliminar Usuario"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                              <span className="hidden sm:inline">Eliminar</span>
+                            </button>
+                          )}
+                          {u.status === 'active' && !(hasPermission('admin.users.delete') && currentUser?.id !== u.id) && (
                             <span className="text-sm text-slate-400 italic px-2">
                               Sin acciones
                             </span>

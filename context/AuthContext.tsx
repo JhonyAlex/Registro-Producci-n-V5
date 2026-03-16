@@ -7,6 +7,8 @@ export interface User {
   name: string;
   role: string;
   status?: string;
+  permissions?: Array<{ key: string; module: string; action: string }>;
+  visible_users?: string[];
 }
 
 interface AuthContextType {
