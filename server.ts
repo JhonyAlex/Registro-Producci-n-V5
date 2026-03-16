@@ -345,6 +345,112 @@ app.post('/api/admin/users/:id/unlock', authenticate, requireRole(['admin', 'jef
   }
 });
 
+app.get('/api/admin/audit-logs', authenticate, requireRole(['admin', 'jefe_planta']), async (req, res) => {
+  const {
+    q = '',
+    action = '',
+    userId = '',
+    startDate = '',
+    endDate = '',
+    page = '1',
+    pageSize = '25'
+  } = req.query as Record<string, string>;
+
+  const parsedPage = Math.max(parseInt(page || '1', 10) || 1, 1);
+  const parsedPageSize = Math.min(Math.max(parseInt(pageSize || '25', 10) || 25, 1), 100);
+  const offset = (parsedPage - 1) * parsedPageSize;
+
+  const conditions: string[] = [];
+  const params: any[] = [];
+
+  if (action) {
+    params.push(action);
+    conditions.push(`a.action = $${params.length}`);
+  }
+
+  if (userId) {
+    params.push(userId);
+    conditions.push(`a.user_id = $${params.length}`);
+  }
+
+  if (startDate) {
+    params.push(`${startDate} 00:00:00`);
+    conditions.push(`a.created_at >= $${params.length}`);
+  }
+
+  if (endDate) {
+    params.push(`${endDate} 23:59:59`);
+    conditions.push(`a.created_at <= $${params.length}`);
+  }
+
+  if (q) {
+    params.push(`%${q}%`);
+    const termParam = `$${params.length}`;
+    conditions.push(`(
+      COALESCE(u.name, '') ILIKE ${termParam}
+      OR COALESCE(u.operator_code, '') ILIKE ${termParam}
+      OR a.action ILIKE ${termParam}
+      OR COALESCE(a.details::text, '') ILIKE ${termParam}
+      OR COALESCE(a.ip_address, '') ILIKE ${termParam}
+    )`);
+  }
+
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  try {
+    const countResult = await pool.query(
+      `SELECT COUNT(*)::int AS total
+       FROM audit_logs a
+       LEFT JOIN users u ON u.id = a.user_id
+       ${whereClause}`,
+      params
+    );
+
+    const total = countResult.rows[0]?.total || 0;
+
+    const logsResult = await pool.query(
+      `SELECT
+         a.id,
+         a.user_id,
+         a.action,
+         a.details,
+         a.ip_address,
+         a.created_at,
+         u.name AS user_name,
+         u.operator_code AS user_operator_code,
+         u.role AS user_role
+       FROM audit_logs a
+       LEFT JOIN users u ON u.id = a.user_id
+       ${whereClause}
+       ORDER BY a.created_at DESC
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, parsedPageSize, offset]
+    );
+
+    const actionsResult = await pool.query('SELECT DISTINCT action FROM audit_logs ORDER BY action ASC');
+    const usersResult = await pool.query(
+      `SELECT DISTINCT u.id, u.name, u.operator_code, u.role
+       FROM audit_logs a
+       INNER JOIN users u ON u.id = a.user_id
+       ORDER BY u.name ASC`
+    );
+
+    res.json({
+      logs: logsResult.rows,
+      total,
+      page: parsedPage,
+      pageSize: parsedPageSize,
+      totalPages: Math.max(Math.ceil(total / parsedPageSize), 1),
+      filters: {
+        actions: actionsResult.rows.map((r: any) => r.action),
+        users: usersResult.rows
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Error fetching audit logs' });
+  }
+});
+
 // --- RECORDS ---
 app.get('/api/records', authenticate, requireDB, async (req, res) => {
   const user = (req as any).user;
@@ -379,7 +485,8 @@ app.get('/api/records', authenticate, requireDB, async (req, res) => {
   }
 });
 
-app.post('/api/records', requireDB, async (req, res) => {
+app.post('/api/records', authenticate, requireDB, async (req, res) => {
+  const user = (req as any).user;
   const { id, timestamp, date, machine, meters, changesCount, changesComment, shift, boss, operator } = req.body;
   try {
     await pool.query(
@@ -391,6 +498,12 @@ app.post('/api/records', requireDB, async (req, res) => {
        boss = EXCLUDED.boss, operator = EXCLUDED.operator`,
       [id, timestamp, date, machine, meters, changesCount, changesComment, shift, boss, operator]
     );
+    await logAudit(
+      user.id,
+      'record_upserted',
+      { record_id: id, date, machine, shift, operator, meters, changesCount },
+      req.ip || ''
+    );
     io.emit('records_changed');
     res.json({ success: true });
   } catch (err) {
@@ -398,9 +511,11 @@ app.post('/api/records', requireDB, async (req, res) => {
   }
 });
 
-app.delete('/api/records/:id', requireDB, async (req, res) => {
+app.delete('/api/records/:id', authenticate, requireDB, async (req, res) => {
+  const user = (req as any).user;
   try {
     await pool.query('DELETE FROM production_records WHERE id = $1', [req.params.id]);
+    await logAudit(user.id, 'record_deleted', { record_id: req.params.id }, req.ip || '');
     io.emit('records_changed');
     res.json({ success: true });
   } catch (err) {
@@ -408,9 +523,11 @@ app.delete('/api/records/:id', requireDB, async (req, res) => {
   }
 });
 
-app.delete('/api/records', requireDB, async (req, res) => {
+app.delete('/api/records', authenticate, requireDB, async (req, res) => {
+  const user = (req as any).user;
   try {
     await pool.query('DELETE FROM production_records');
+    await logAudit(user.id, 'records_cleared', {}, req.ip || '');
     io.emit('records_changed');
     res.json({ success: true });
   } catch (err) {
@@ -419,7 +536,7 @@ app.delete('/api/records', requireDB, async (req, res) => {
 });
 
 // --- SETTINGS (COMMENTS) ---
-app.get('/api/settings/comments', requireDB, async (req, res) => {
+app.get('/api/settings/comments', authenticate, requireDB, async (req, res) => {
   try {
     const result = await pool.query('SELECT name FROM custom_comments ORDER BY name ASC');
     res.json(result.rows.map((row: any) => row.name));
@@ -428,9 +545,11 @@ app.get('/api/settings/comments', requireDB, async (req, res) => {
   }
 });
 
-app.post('/api/settings/comments', requireDB, async (req, res) => {
+app.post('/api/settings/comments', authenticate, requireDB, async (req, res) => {
+  const user = (req as any).user;
   try {
     await pool.query('INSERT INTO custom_comments (name) VALUES ($1) ON CONFLICT DO NOTHING', [req.body.name]);
+    await logAudit(user.id, 'comment_added', { name: req.body.name }, req.ip || '');
     io.emit('settings_changed');
     res.json({ success: true });
   } catch (err) {
@@ -438,9 +557,11 @@ app.post('/api/settings/comments', requireDB, async (req, res) => {
   }
 });
 
-app.delete('/api/settings/comments/:name', requireDB, async (req, res) => {
+app.delete('/api/settings/comments/:name', authenticate, requireDB, async (req, res) => {
+  const user = (req as any).user;
   try {
     await pool.query('DELETE FROM custom_comments WHERE name = $1', [req.params.name]);
+    await logAudit(user.id, 'comment_deleted', { name: req.params.name }, req.ip || '');
     io.emit('settings_changed');
     res.json({ success: true });
   } catch (err) {
@@ -448,7 +569,8 @@ app.delete('/api/settings/comments/:name', requireDB, async (req, res) => {
   }
 });
 
-app.put('/api/settings/comments/:oldName', requireDB, async (req, res) => {
+app.put('/api/settings/comments/:oldName', authenticate, requireDB, async (req, res) => {
+  const user = (req as any).user;
   const { oldName } = req.params;
   const { newName } = req.body;
   try {
@@ -457,6 +579,7 @@ app.put('/api/settings/comments/:oldName', requireDB, async (req, res) => {
     await pool.query('INSERT INTO custom_comments (name) VALUES ($1) ON CONFLICT DO NOTHING', [newName]);
     await pool.query('UPDATE production_records SET changescomment = $1 WHERE changescomment = $2', [newName, oldName]);
     await pool.query('COMMIT');
+    await logAudit(user.id, 'comment_renamed', { oldName, newName }, req.ip || '');
     io.emit('settings_changed');
     io.emit('records_changed');
     res.json({ success: true });
@@ -467,7 +590,7 @@ app.put('/api/settings/comments/:oldName', requireDB, async (req, res) => {
 });
 
 // --- SETTINGS (OPERATORS) ---
-app.get('/api/settings/operators', requireDB, async (req, res) => {
+app.get('/api/settings/operators', authenticate, requireDB, async (req, res) => {
   try {
     const result = await pool.query('SELECT name FROM custom_operators ORDER BY name ASC');
     res.json(result.rows.map((row: any) => row.name));
@@ -476,9 +599,11 @@ app.get('/api/settings/operators', requireDB, async (req, res) => {
   }
 });
 
-app.post('/api/settings/operators', requireDB, async (req, res) => {
+app.post('/api/settings/operators', authenticate, requireDB, async (req, res) => {
+  const user = (req as any).user;
   try {
     await pool.query('INSERT INTO custom_operators (name) VALUES ($1) ON CONFLICT DO NOTHING', [req.body.name]);
+    await logAudit(user.id, 'operator_added', { name: req.body.name }, req.ip || '');
     io.emit('settings_changed');
     res.json({ success: true });
   } catch (err) {
@@ -486,9 +611,11 @@ app.post('/api/settings/operators', requireDB, async (req, res) => {
   }
 });
 
-app.delete('/api/settings/operators/:name', requireDB, async (req, res) => {
+app.delete('/api/settings/operators/:name', authenticate, requireDB, async (req, res) => {
+  const user = (req as any).user;
   try {
     await pool.query('DELETE FROM custom_operators WHERE name = $1', [req.params.name]);
+    await logAudit(user.id, 'operator_deleted', { name: req.params.name }, req.ip || '');
     io.emit('settings_changed');
     res.json({ success: true });
   } catch (err) {
@@ -496,7 +623,8 @@ app.delete('/api/settings/operators/:name', requireDB, async (req, res) => {
   }
 });
 
-app.put('/api/settings/operators/:oldName', requireDB, async (req, res) => {
+app.put('/api/settings/operators/:oldName', authenticate, requireDB, async (req, res) => {
+  const user = (req as any).user;
   const { oldName } = req.params;
   const { newName } = req.body;
   try {
@@ -505,6 +633,7 @@ app.put('/api/settings/operators/:oldName', requireDB, async (req, res) => {
     await pool.query('INSERT INTO custom_operators (name) VALUES ($1) ON CONFLICT DO NOTHING', [newName]);
     await pool.query('UPDATE production_records SET operator = $1 WHERE operator = $2', [newName, oldName]);
     await pool.query('COMMIT');
+    await logAudit(user.id, 'operator_renamed', { oldName, newName }, req.ip || '');
     io.emit('settings_changed');
     io.emit('records_changed');
     res.json({ success: true });
@@ -515,7 +644,8 @@ app.put('/api/settings/operators/:oldName', requireDB, async (req, res) => {
 });
 
 // --- IMPORT / EXPORT ---
-app.get('/api/export', requireDB, async (req, res) => {
+app.get('/api/export', authenticate, requireRole(['admin', 'jefe_planta']), requireDB, async (req, res) => {
+  const user = (req as any).user;
   try {
     const records = await pool.query('SELECT id, timestamp, date, machine, meters, changescount as "changesCount", changescomment as "changesComment", shift, boss, operator FROM production_records');
     const comments = await pool.query('SELECT name FROM custom_comments');
@@ -526,12 +656,14 @@ app.get('/api/export', requireDB, async (req, res) => {
       comments: comments.rows.map((r: any) => r.name),
       operators: operators.rows.map((r: any) => r.name)
     });
+    await logAudit(user.id, 'backup_exported', { records: records.rowCount }, req.ip || '');
   } catch (err) {
     res.status(500).json({ error: 'Failed to export data' });
   }
 });
 
-app.post('/api/import', requireDB, async (req, res) => {
+app.post('/api/import', authenticate, requireRole(['admin', 'jefe_planta']), requireDB, async (req, res) => {
+  const user = (req as any).user;
   const { records, comments, operators } = req.body;
   try {
     await pool.query('BEGIN');
@@ -563,6 +695,16 @@ app.post('/api/import', requireDB, async (req, res) => {
     }
     
     await pool.query('COMMIT');
+    await logAudit(
+      user.id,
+      'backup_imported',
+      {
+        records: Array.isArray(records) ? records.length : 0,
+        comments: Array.isArray(comments) ? comments.length : 0,
+        operators: Array.isArray(operators) ? operators.length : 0
+      },
+      req.ip || ''
+    );
     io.emit('records_changed');
     io.emit('settings_changed');
     res.json({ success: true });

@@ -1,17 +1,18 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { LayoutDashboard, PlusCircle, List, User, Trash2, Lock, AlertCircle, Filter, X, Cloud, WifiOff, CloudOff, Edit, ChevronDown, ChevronUp, Calendar, Monitor, XCircle, FileDown, FileUp, AlertTriangle, Clock, ChevronLeft, ChevronRight, Database, LogOut, Users } from 'lucide-react';
+import { LayoutDashboard, PlusCircle, List, User, Trash2, Lock, AlertCircle, Filter, X, Cloud, WifiOff, CloudOff, Edit, ChevronDown, ChevronUp, Calendar, Monitor, XCircle, FileDown, FileUp, AlertTriangle, Clock, ChevronLeft, ChevronRight, Database, LogOut, Users, History } from 'lucide-react';
 import ShiftForm from './components/ShiftForm';
 import Dashboard from './components/Dashboard';
 import Login from './components/Login';
 import Register from './components/Register';
 import WaitingRoom from './components/WaitingRoom';
 import AdminUsers from './components/AdminUsers';
+import AuditLogs from './components/AuditLogs';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { subscribeToRecords, clearAllRecords, deleteRecord, exportToExcel, exportAllData, importAllData, reconnectDatabase } from './services/storageService';
 import { ProductionRecord, FilterState } from './types';
 import { MACHINES, BOSSES } from './constants';
 
-type View = 'dashboard' | 'entry' | 'list' | 'admin';
+type View = 'dashboard' | 'entry' | 'list' | 'admin' | 'audit';
 type DeleteMode = 'all' | 'single';
 
 const ITEMS_PER_PAGE = 15;
@@ -327,6 +328,7 @@ const AppContent: React.FC = () => {
                 <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Administración</h3>
               </div>
               <NavItem view="admin" icon={Users} label="Usuarios" />
+              <NavItem view="audit" icon={History} label="Actividad" />
             </>
           )}
           
@@ -412,6 +414,10 @@ const AppContent: React.FC = () => {
 
           {currentView === 'admin' && (
             <AdminUsers />
+          )}
+
+          {currentView === 'audit' && (
+            <AuditLogs />
           )}
 
           {(currentView === 'dashboard' || currentView === 'list') && (
@@ -755,7 +761,10 @@ const AppContent: React.FC = () => {
         <NavItem view="dashboard" icon={LayoutDashboard} label="Data" mobileOnly />
         <NavItem view="list" icon={List} label="Historial" mobileOnly />
         {(user?.role === 'admin' || user?.role === 'jefe_planta') && (
-          <NavItem view="admin" icon={Users} label="Usuarios" mobileOnly />
+          <>
+            <NavItem view="admin" icon={Users} label="Usuarios" mobileOnly />
+            <NavItem view="audit" icon={History} label="Actividad" mobileOnly />
+          </>
         )}
         <button
           onClick={exportAllData}
