@@ -119,7 +119,7 @@ const SESSION_TIMEOUT_MINUTES = parseInt(process.env.SESSION_TIMEOUT_MINUTES || 
 const MAX_FAILED_ATTEMPTS = 3;
 
 // Helper to log audit events
-async function logAudit(userId: string | null, action: string, details: any, ipAddress: string) {
+async function logAudit(userId: string | null, action: string, details: any, ipAddress: string | null = null) {
   try {
     await pool.query(
       'INSERT INTO audit_logs (user_id, action, details, ip_address) VALUES ($1, $2, $3, $4)',
@@ -391,7 +391,6 @@ app.get('/api/admin/audit-logs', authenticate, requireRole(['admin', 'jefe_plant
       OR COALESCE(u.operator_code, '') ILIKE ${termParam}
       OR a.action ILIKE ${termParam}
       OR COALESCE(a.details::text, '') ILIKE ${termParam}
-      OR COALESCE(a.ip_address, '') ILIKE ${termParam}
     )`);
   }
 
@@ -414,7 +413,6 @@ app.get('/api/admin/audit-logs', authenticate, requireRole(['admin', 'jefe_plant
          a.user_id,
          a.action,
          a.details,
-         a.ip_address,
          a.created_at,
          u.name AS user_name,
          u.operator_code AS user_operator_code,
@@ -489,6 +487,13 @@ app.post('/api/records', authenticate, requireDB, async (req, res) => {
   const user = (req as any).user;
   const { id, timestamp, date, machine, meters, changesCount, changesComment, shift, boss, operator } = req.body;
   try {
+    const existingRecordResult = await pool.query(
+      `SELECT id, date, machine, meters, changescount as "changesCount", changescomment as "changesComment", shift, boss, operator
+       FROM production_records WHERE id = $1`,
+      [id]
+    );
+    const existingRecord = existingRecordResult.rows[0] || null;
+
     await pool.query(
       `INSERT INTO production_records (id, timestamp, date, machine, meters, changesCount, changesComment, shift, boss, operator)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
@@ -498,12 +503,37 @@ app.post('/api/records', authenticate, requireDB, async (req, res) => {
        boss = EXCLUDED.boss, operator = EXCLUDED.operator`,
       [id, timestamp, date, machine, meters, changesCount, changesComment, shift, boss, operator]
     );
-    await logAudit(
-      user.id,
-      'record_upserted',
-      { record_id: id, date, machine, shift, operator, meters, changesCount },
-      req.ip || ''
-    );
+
+    const currentSnapshot = { date, machine, shift, boss, operator, meters, changesCount, changesComment };
+    if (existingRecord) {
+      await logAudit(
+        user.id,
+        'record_updated',
+        {
+          record_id: id,
+          before: {
+            date: existingRecord.date,
+            machine: existingRecord.machine,
+            shift: existingRecord.shift,
+            boss: existingRecord.boss,
+            operator: existingRecord.operator,
+            meters: existingRecord.meters,
+            changesCount: existingRecord.changesCount,
+            changesComment: existingRecord.changesComment
+          },
+          after: currentSnapshot
+        },
+        req.ip || ''
+      );
+    } else {
+      await logAudit(
+        user.id,
+        'record_created',
+        { record_id: id, ...currentSnapshot },
+        req.ip || ''
+      );
+    }
+
     io.emit('records_changed');
     res.json({ success: true });
   } catch (err) {
@@ -514,8 +544,34 @@ app.post('/api/records', authenticate, requireDB, async (req, res) => {
 app.delete('/api/records/:id', authenticate, requireDB, async (req, res) => {
   const user = (req as any).user;
   try {
+    const existingRecordResult = await pool.query(
+      `SELECT id, date, machine, meters, changescount as "changesCount", changescomment as "changesComment", shift, boss, operator
+       FROM production_records WHERE id = $1`,
+      [req.params.id]
+    );
+    const existingRecord = existingRecordResult.rows[0] || null;
+
     await pool.query('DELETE FROM production_records WHERE id = $1', [req.params.id]);
-    await logAudit(user.id, 'record_deleted', { record_id: req.params.id }, req.ip || '');
+    await logAudit(
+      user.id,
+      'record_deleted',
+      existingRecord
+        ? {
+            record_id: req.params.id,
+            deleted: {
+              date: existingRecord.date,
+              machine: existingRecord.machine,
+              shift: existingRecord.shift,
+              boss: existingRecord.boss,
+              operator: existingRecord.operator,
+              meters: existingRecord.meters,
+              changesCount: existingRecord.changesCount,
+              changesComment: existingRecord.changesComment
+            }
+          }
+        : { record_id: req.params.id },
+      req.ip || ''
+    );
     io.emit('records_changed');
     res.json({ success: true });
   } catch (err) {

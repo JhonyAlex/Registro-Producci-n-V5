@@ -6,7 +6,6 @@ interface AuditLog {
   user_id: string | null;
   action: string;
   details: Record<string, any> | null;
-  ip_address: string | null;
   created_at: string;
   user_name: string | null;
   user_operator_code: string | null;
@@ -53,7 +52,8 @@ const actionLabel = (action: string) => {
     user_approved: 'Usuario aprobado',
     user_unlocked: 'Usuario desbloqueado',
     account_locked: 'Cuenta bloqueada',
-    record_upserted: 'Registro creado/actualizado',
+    record_created: 'Registro creado',
+    record_updated: 'Registro editado',
     record_deleted: 'Registro eliminado',
     records_cleared: 'Registros eliminados',
     comment_added: 'Comentario agregado',
@@ -70,11 +70,54 @@ const actionLabel = (action: string) => {
 
 const formatDetails = (details: Record<string, any> | null) => {
   if (!details || Object.keys(details).length === 0) return '-';
-  try {
-    return JSON.stringify(details);
-  } catch {
-    return '-';
+
+  const textIfAny = (value: any) => (value === null || value === undefined || value === '' ? '-' : String(value));
+  const recordInfo = (src: any) => {
+    if (!src) return '';
+    return `fecha ${textIfAny(src.date)}, máquina ${textIfAny(src.machine)}, turno ${textIfAny(src.shift)}, operario ${textIfAny(src.operator)}, metros ${textIfAny(src.meters)}, cambios ${textIfAny(src.changesCount)}`;
+  };
+
+  switch (details.action || '') {
+    default:
+      break;
   }
+
+  if (details.before && details.after) {
+    return `Antes: ${recordInfo(details.before)} | Después: ${recordInfo(details.after)}`;
+  }
+
+  if (details.deleted) {
+    return `Eliminado: ${recordInfo(details.deleted)}`;
+  }
+
+  if (details.record_id) {
+    const summary = recordInfo(details);
+    return `ID ${details.record_id}${summary ? ` | ${summary}` : ''}`;
+  }
+
+  if (details.target_user_id) return `Usuario objetivo: ${details.target_user_id}`;
+  if (details.oldName && details.newName) return `De "${details.oldName}" a "${details.newName}"`;
+  if (details.name) return `Nombre: ${details.name}`;
+  if (details.reason) return `Motivo: ${details.reason}`;
+
+  const pairs = Object.entries(details).map(([key, value]) => `${key}: ${textIfAny(value)}`);
+  return pairs.length > 0 ? pairs.join(' | ') : '-';
+};
+
+const formatDetailsByAction = (action: string, details: Record<string, any> | null) => {
+  if (!details || Object.keys(details).length === 0) return '-';
+
+  if (action === 'record_created') {
+    return `Registro creado. ${formatDetails(details)}`;
+  }
+  if (action === 'record_updated') {
+    return `Registro editado. ${formatDetails(details)}`;
+  }
+  if (action === 'record_deleted') {
+    return `Registro eliminado. ${formatDetails(details)}`;
+  }
+
+  return formatDetails(details);
 };
 
 const AuditLogs: React.FC = () => {
@@ -185,7 +228,7 @@ const AuditLogs: React.FC = () => {
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') applySearch();
                     }}
-                    placeholder="Usuario, acción, IP, detalles"
+                    placeholder="Usuario, acción o detalles"
                     className="w-full pl-9 pr-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                   />
                 </div>
@@ -297,13 +340,12 @@ const AuditLogs: React.FC = () => {
                   <th className="p-4 font-bold">Rol</th>
                   <th className="p-4 font-bold">Qué hizo</th>
                   <th className="p-4 font-bold">Detalles</th>
-                  <th className="p-4 font-bold">IP</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {!loading && logs.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="p-8 text-center text-slate-500">No hay registros para los filtros aplicados.</td>
+                    <td colSpan={5} className="p-8 text-center text-slate-500">No hay registros para los filtros aplicados.</td>
                   </tr>
                 )}
 
@@ -323,9 +365,8 @@ const AuditLogs: React.FC = () => {
                       </span>
                     </td>
                     <td className="p-4 text-slate-600 max-w-md">
-                      <div className="line-clamp-2" title={formatDetails(log.details)}>{formatDetails(log.details)}</div>
+                      <div className="line-clamp-3" title={formatDetailsByAction(log.action, log.details)}>{formatDetailsByAction(log.action, log.details)}</div>
                     </td>
-                    <td className="p-4 text-slate-500 font-mono text-xs">{log.ip_address || '-'}</td>
                   </tr>
                 ))}
               </tbody>
