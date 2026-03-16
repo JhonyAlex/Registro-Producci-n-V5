@@ -6,7 +6,7 @@ import Login from './components/Login';
 import Register from './components/Register';
 import WaitingRoom from './components/WaitingRoom';
 import AdminUsers from './components/AdminUsers';
-import { useAuth } from './context/AuthContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { subscribeToRecords, clearAllRecords, deleteRecord, exportToExcel, exportAllData, importAllData, reconnectDatabase } from './services/storageService';
 import { ProductionRecord, FilterState } from './types';
 import { MACHINES, BOSSES } from './constants';
