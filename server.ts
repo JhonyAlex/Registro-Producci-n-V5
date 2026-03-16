@@ -373,19 +373,20 @@ app.delete('/api/admin/users/:id', authenticate, requireRole(['admin']), async (
 
 // --- RECORDS ---
 
-// Helper: build visibility WHERE clause and params for non-admin users
-async function buildVisibilityClause(user: any): Promise<{ where: string; params: any[] }> {
-  if (user.role === 'admin') {
+// Helper: build visibility WHERE clause and params based on role
+function buildVisibilityClause(user: any): { where: string; params: any[] } {
+  // Admin and plant managers see everything
+  if (user.role === 'admin' || user.role === 'jefe_planta') {
     return { where: '', params: [] };
   }
-  const visResult = await pool.query('SELECT target_id FROM user_visibility WHERE observer_id = $1', [user.id]);
-  const visibleUserIds = visResult.rows.map((r: any) => r.target_id);
-  let visibleNames = [user.name];
-  if (visibleUserIds.length > 0) {
-    const visibleUsersResult = await pool.query('SELECT name FROM users WHERE id = ANY($1)', [visibleUserIds]);
-    visibleNames = visibleNames.concat(visibleUsersResult.rows.map((r: any) => r.name));
+
+  // Shift boss sees only records where they appear as boss
+  if (user.role === 'jefe_turno') {
+    return { where: 'boss = $1', params: [user.name] };
   }
-  return { where: '(operator = ANY($1) OR boss = ANY($1))', params: [visibleNames] };
+
+  // Operario sees only their own records
+  return { where: 'operator = $1', params: [user.name] };
 }
 
 // Helper: append filter query params (startDate, endDate, machine, boss, operator)
@@ -429,7 +430,7 @@ app.get('/api/records', authenticate, requireDB, async (req, res) => {
     const limit = Math.min(200, Math.max(1, parseInt((req.query.limit as string) || '15', 10)));
     const offset = (page - 1) * limit;
 
-    const vis = await buildVisibilityClause(user);
+    const vis = buildVisibilityClause(user);
     const { where, params } = appendFilterClauses(vis.where, vis.params, req.query as any);
 
     const whereClause = where ? `WHERE ${where}` : '';
@@ -469,7 +470,7 @@ app.get('/api/records', authenticate, requireDB, async (req, res) => {
 app.get('/api/records/stats', authenticate, requireDB, async (req, res) => {
   const user = (req as any).user;
   try {
-    const vis = await buildVisibilityClause(user);
+    const vis = buildVisibilityClause(user);
     const { where, params } = appendFilterClauses(vis.where, vis.params, req.query as any);
     const whereClause = where ? `WHERE ${where}` : '';
 
