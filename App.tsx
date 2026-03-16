@@ -70,7 +70,7 @@ const AppContent: React.FC = () => {
 
   const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
-  const enforceSessionPolicy = async (meta?: { authError?: boolean; dbUnavailable?: boolean }, message?: string) => {
+  const enforceSessionPolicy = async (meta?: { authError?: boolean; authMessage?: string; dbUnavailable?: boolean }, message?: string) => {
     if (isHandlingSessionTermination.current) {
       return;
     }
@@ -78,7 +78,10 @@ const AppContent: React.FC = () => {
     if (meta?.authError) {
       isHandlingSessionTermination.current = true;
       setDbError(message || 'Sesión no válida o expirada.');
-      const notice = 'Tu sesión expiró o fue cerrada en otro dispositivo. Debes iniciar sesión nuevamente.';
+      const isDisplaced = meta.authMessage === 'Sesión cerrada por un nuevo inicio de sesión.';
+      const notice = isDisplaced
+        ? 'Tu sesión fue cerrada porque se inició sesión con esta cuenta en otro dispositivo o navegador.'
+        : 'Tu sesión expiró o fue cerrada. Debes iniciar sesión nuevamente.';
       showSystemToast(notice, 'warning');
       sessionStorage.setItem('auth_notice', notice);
       await wait(900);
@@ -122,7 +125,7 @@ const AppContent: React.FC = () => {
       if (isAuthError) msg = 'Sesión no válida o expirada.';
       if (isDbUnavailable) msg = 'Servicio no disponible (Offline).';
       setDbError(msg);
-      await enforceSessionPolicy({ authError: isAuthError, dbUnavailable: isDbUnavailable }, msg);
+      await enforceSessionPolicy({ authError: isAuthError, authMessage: isAuthError ? error.message : undefined, dbUnavailable: isDbUnavailable }, msg);
     }
   };
 
@@ -164,7 +167,7 @@ const AppContent: React.FC = () => {
     });
 
     const handleSessionStateEvent = async (event: Event) => {
-      const customEvent = event as CustomEvent<{ authError?: boolean; dbUnavailable?: boolean }>;
+      const customEvent = event as CustomEvent<{ authError?: boolean; authMessage?: string; dbUnavailable?: boolean }>;
       await enforceSessionPolicy(customEvent.detail);
     };
     window.addEventListener('app-session-state', handleSessionStateEvent as EventListener);

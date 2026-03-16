@@ -1,46 +1,9 @@
 (index):64 cdn.tailwindcss.com should not be used in production. To use Tailwind CSS in production, install it as a PostCSS plugin or use the Tailwind CLI: https://tailwindcss.com/docs/installation
 (anonymous) @ (index):64
-(anonymous) @ (index):64
-index-DZFMzy6s.js:40 ReferenceError: AuthProvider is not defined
-    at A1e (index-DZFMzy6s.js:439:11657)
-    at uh (index-DZFMzy6s.js:38:20401)
-    at _E (index-DZFMzy6s.js:40:45184)
-    at bE (index-DZFMzy6s.js:40:40742)
-    at JR (index-DZFMzy6s.js:40:40670)
-    at i1 (index-DZFMzy6s.js:40:40523)
-    at g2 (index-DZFMzy6s.js:40:36776)
-    at mE (index-DZFMzy6s.js:40:35718)
-    at E (index-DZFMzy6s.js:25:1625)
-    at MessagePort.I (index-DZFMzy6s.js:25:1991)
-Zy @ index-DZFMzy6s.js:40
-H_.g.callback @ index-DZFMzy6s.js:40
-Qc @ index-DZFMzy6s.js:38
-pE @ index-DZFMzy6s.js:40
-dE @ index-DZFMzy6s.js:40
-$R @ index-DZFMzy6s.js:40
-e7 @ index-DZFMzy6s.js:40
-Yc @ index-DZFMzy6s.js:40
-mE @ index-DZFMzy6s.js:40
-E @ index-DZFMzy6s.js:25
-I @ index-DZFMzy6s.js:25
-index-DZFMzy6s.js:439 Uncaught ReferenceError: AuthProvider is not defined
-    at A1e (index-DZFMzy6s.js:439:11657)
-    at uh (index-DZFMzy6s.js:38:20401)
-    at _E (index-DZFMzy6s.js:40:45184)
-    at bE (index-DZFMzy6s.js:40:40742)
-    at JR (index-DZFMzy6s.js:40:40670)
-    at i1 (index-DZFMzy6s.js:40:40523)
-    at g2 (index-DZFMzy6s.js:40:36776)
-    at mE (index-DZFMzy6s.js:40:35718)
-    at E (index-DZFMzy6s.js:25:1625)
-    at MessagePort.I (index-DZFMzy6s.js:25:1991)
-A1e @ index-DZFMzy6s.js:439
-uh @ index-DZFMzy6s.js:38
-_E @ index-DZFMzy6s.js:40
-bE @ index-DZFMzy6s.js:40
-JR @ index-DZFMzy6s.js:40
-i1 @ index-DZFMzy6s.js:40
-g2 @ index-DZFMzy6s.js:40
-mE @ index-DZFMzy6s.js:40
-E @ index-DZFMzy6s.js:25
-I @ index-DZFMzy6s.js:25
+index-BNM2_oXU.js:337 API Error: Error: Sesión cerrada por un nuevo inicio de sesión.
+    at Ma (index-BNM2_oXU.js:337:67905)
+    at async n (index-BNM2_oXU.js:337:69968)
+n @ index-BNM2_oXU.js:337
+index-BNM2_oXU.js:337 API Error: TypeError: A.sort is not a function
+    at n (index-BNM2_oXU.js:337:69991)
+n @ index-BNM2_oXU.js:337

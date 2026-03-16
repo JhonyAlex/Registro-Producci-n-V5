@@ -44,6 +44,7 @@ const fetchJson = async (url: string, options?: RequestInit) => {
       window.dispatchEvent(new CustomEvent('app-session-state', {
         detail: {
           authError: res.status === 401,
+          authMessage: errorData.error as string | undefined,
           dbUnavailable: error.message === 'Database unavailable',
         },
       }));
