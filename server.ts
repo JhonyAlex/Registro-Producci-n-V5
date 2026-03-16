@@ -881,8 +881,17 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
+    const assetsPath = path.join(distPath, 'assets');
+
+    // Hashed assets can be cached aggressively.
+    app.use('/assets', express.static(assetsPath, { immutable: true, maxAge: '1y' }));
+
+    // Other static files may change between deploys.
+    app.use(express.static(distPath, { maxAge: '1h' }));
+
+    // Always serve the SPA shell without cache to avoid stale bundle references.
     app.get('*all', (req, res) => {
+      res.setHeader('Cache-Control', 'no-store');
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
