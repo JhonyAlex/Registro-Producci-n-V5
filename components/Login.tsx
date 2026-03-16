@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Lock, User, AlertCircle } from 'lucide-react';
 
@@ -7,7 +7,16 @@ const Login: React.FC<{ onSwitchToRegister: () => void }> = ({ onSwitchToRegiste
   const [operatorCode, setOperatorCode] = useState('');
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const savedNotice = sessionStorage.getItem('auth_notice');
+    if (savedNotice) {
+      setNotice(savedNotice);
+      sessionStorage.removeItem('auth_notice');
+    }
+  }, []);
 
   const handleNumberClick = (num: string) => {
     if (pin.length < 6) {
@@ -48,6 +57,13 @@ const Login: React.FC<{ onSwitchToRegister: () => void }> = ({ onSwitchToRegiste
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-6">
+          {notice && (
+            <div className="bg-amber-50 border border-amber-200 text-amber-700 px-4 py-3 rounded-lg flex items-center gap-2 text-sm">
+              <AlertCircle className="w-5 h-5 flex-shrink-0" />
+              <span>{notice}</span>
+            </div>
+          )}
+
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-lg flex items-center gap-2 text-sm">
               <AlertCircle className="w-5 h-5 flex-shrink-0" />

@@ -32,6 +32,7 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
       role VARCHAR(50) NOT NULL,
       status VARCHAR(50) NOT NULL DEFAULT 'pending',
       failed_attempts INTEGER DEFAULT 0,
+      session_version INTEGER NOT NULL DEFAULT 0,
       name VARCHAR(255) NOT NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       last_login TIMESTAMP,

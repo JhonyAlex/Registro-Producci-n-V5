@@ -7,6 +7,7 @@ export interface User {
   name: string;
   role: string;
   status?: string;
+  session_timeout_minutes?: number;
 }
 
 interface AuthContextType {
@@ -19,6 +20,7 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const DEFAULT_SESSION_TIMEOUT_MINUTES = 30;
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
@@ -29,7 +31,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const res = await fetch('/api/auth/me', { credentials: 'include' });
       if (res.ok) {
         const data = await res.json();
-        setUser(data.user);
+        const timeoutMinutes = data.session_timeout_minutes || data.user?.session_timeout_minutes || DEFAULT_SESSION_TIMEOUT_MINUTES;
+        setUser({ ...data.user, session_timeout_minutes: timeoutMinutes });
       } else {
         setUser(null);
       }
@@ -53,7 +56,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Error en login');
-    setUser(data.user);
+    const timeoutMinutes = data.session_timeout_minutes || data.user?.session_timeout_minutes || DEFAULT_SESSION_TIMEOUT_MINUTES;
+    setUser({ ...data.user, session_timeout_minutes: timeoutMinutes });
   };
 
   const register = async (data: { operator_code: string, pin: string, name: string, role: string }) => {
@@ -80,6 +84,45 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     setUser(null);
   };
+
+  useEffect(() => {
+    if (!user) {
+      return;
+    }
+
+    const timeoutMinutes = user.session_timeout_minutes || DEFAULT_SESSION_TIMEOUT_MINUTES;
+    const timeoutMs = timeoutMinutes * 60 * 1000;
+    let timeoutId: number | undefined;
+
+    const closeSessionByInactivity = async () => {
+      try {
+        await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+      } catch (e) {
+        console.error(e);
+      }
+      sessionStorage.setItem('auth_notice', 'Sesión cerrada por inactividad.');
+      setUser(null);
+    };
+
+    const resetInactivityTimer = () => {
+      if (timeoutId) {
+        window.clearTimeout(timeoutId);
+      }
+      timeoutId = window.setTimeout(closeSessionByInactivity, timeoutMs);
+    };
+
+    const activityEvents: Array<keyof WindowEventMap> = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll'];
+    activityEvents.forEach((eventName) => window.addEventListener(eventName, resetInactivityTimer, { passive: true }));
+
+    resetInactivityTimer();
+
+    return () => {
+      activityEvents.forEach((eventName) => window.removeEventListener(eventName, resetInactivityTimer));
+      if (timeoutId) {
+        window.clearTimeout(timeoutId);
+      }
+    };
+  }, [user]);
 
   return (
     <AuthContext.Provider value={{ user, loading, login, register, logout, checkAuth }}>

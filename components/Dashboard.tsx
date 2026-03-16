@@ -4,13 +4,15 @@ import {
   Cell, PieChart, Pie, Legend, AreaChart, Area
 } from 'recharts';
 import { FileText, Table, Activity, AlertTriangle, Users, CalendarRange, Layers, Info, Loader2, Download, TrendingUp } from 'lucide-react';
-import { ProductionRecord } from '../types';
-import { exportToExcel, subscribeToSettings } from '../services/storageService';
+import { FilterState, DashboardStats } from '../types';
+import { exportFilteredToExcel, subscribeToSettings } from '../services/storageService';
+import { emitAppNotification } from '../services/notificationService';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 
 interface DashboardProps {
-  records: ProductionRecord[];
+  stats: DashboardStats | null;
+  filters: FilterState;
 }
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#6366f1', '#14b8a6', '#f43f5e'];
@@ -26,7 +28,7 @@ const InfoTooltip: React.FC<{ text: string }> = ({ text }) => (
   </div>
 );
 
-const Dashboard: React.FC<DashboardProps> = ({ records }) => {
+const Dashboard: React.FC<DashboardProps> = ({ stats, filters }) => {
   // Ref for PDF capture
   const dashboardRef = useRef<HTMLDivElement>(null);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
@@ -42,144 +44,54 @@ const Dashboard: React.FC<DashboardProps> = ({ records }) => {
     return () => unsubscribe();
   }, []);
 
-  // 1. Calculate Summary Metrics based on FILTERED records
-  const summary = useMemo(() => {
-    const totalRecords = records.length;
-    
-    if (totalRecords === 0) {
-      return {
-        totalMeters: 0,
-        avgMeters: 0,
-        totalChanges: 0,
-        avgChanges: 0,
-        efficiency: 0,
-        count: 0
-      };
-    }
+  // Loading / no-data shortcut state derived from stats prop
+  const isLoading = stats === null;
 
-    const totalMeters = records.reduce((acc, r) => acc + r.meters, 0);
-    const avgMeters = Math.round(totalMeters / totalRecords);
+  // Summary from server — used throughout
+  const summary = stats?.summary ?? { count: 0, totalMeters: 0, avgMeters: 0, totalChanges: 0, avgChanges: 0, efficiency: 0 };
 
-    const totalChanges = records.reduce((acc, r) => acc + r.changesCount, 0);
-    const avgChanges = (totalChanges / totalRecords).toFixed(1);
+  // Chart data directly from server aggregations
+  const machineData  = stats?.byMachine  ?? [];
+  const operatorData = stats?.byOperator ?? [];
+  const shiftData    = stats?.byShift    ?? [];
+  const bossData     = stats?.byBoss     ?? [];
+  const trendData    = useMemo(() =>
+    (stats?.byDate ?? []).map(d => ({ date: d.name, value: d.value })),
+  [stats?.byDate]);
 
-    // Calculate dynamic efficiency based on filtered set
-    // Assuming target 5000m per shift as roughly 100%
-    const efficiency = Math.min(100, Math.round((avgMeters / 5000) * 100));
-
-    return {
-      totalMeters,
-      avgMeters,
-      totalChanges,
-      avgChanges,
-      efficiency,
-      count: totalRecords
-    };
-  }, [records]);
-
-  // 2. Machine Performance Data
-  const machineData = useMemo(() => {
-    const grouped: Record<string, number> = {};
-    records.forEach(r => {
-      grouped[r.machine] = (grouped[r.machine] || 0) + r.meters;
-    });
-    return Object.entries(grouped)
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value);
-  }, [records]);
-
-  // 3. Operator Performance Data
-  const operatorData = useMemo(() => {
-    const grouped: Record<string, number> = {};
-    records.forEach(r => {
-      if (r.operator) {
-        grouped[r.operator] = (grouped[r.operator] || 0) + r.meters;
-      }
-    });
-    return Object.entries(grouped)
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 10); // Top 10
-  }, [records]);
-
-  // 4. Shift Distribution
-  const shiftData = useMemo(() => {
-    const grouped: Record<string, number> = {};
-    records.forEach(r => {
-      grouped[r.shift] = (grouped[r.shift] || 0) + r.meters;
-    });
-    return Object.entries(grouped).map(([name, value]) => ({ name, value }));
-  }, [records]);
-
-  // 5. Boss Performance
-  const bossData = useMemo(() => {
-    const grouped: Record<string, number> = {};
-    records.forEach(r => {
-      grouped[r.boss] = (grouped[r.boss] || 0) + r.meters;
-    });
-    return Object.entries(grouped).map(([name, value]) => ({ name, value }));
-  }, [records]);
-
-  // 6. Incident/Comment Analytics (Normalized and Synchronized)
+  // Incident/Comment Analytics — normalize and merge server-grouped items
   const incidentsData = useMemo(() => {
-    const groups: Record<string, { count: number, displayName: string }> = {};
+    if (!stats) return [];
 
-    // Map normalized keys to canonical names from the settings
     const canonicalMap: Record<string, string> = {};
     availableComments.forEach(c => {
-        const key = c.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-        canonicalMap[key] = c;
+      const key = c.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+      canonicalMap[key] = c;
     });
 
-    records.forEach(r => {
-      if (r.changesComment && r.changesComment.trim().length > 1) {
-        const rawComment = r.changesComment.trim();
-        const normalizedKey = rawComment
-          .normalize("NFD")
-          .replace(/[\u0300-\u036f]/g, "")
-          .toLowerCase();
-
-        // Use canonical name if available (exact match from settings), otherwise use the raw comment
-        const canonicalName = canonicalMap[normalizedKey];
-        
-        if (!groups[normalizedKey]) {
-          groups[normalizedKey] = { 
-            count: 0, 
-            displayName: canonicalName || rawComment 
-          };
-        } else {
-            // If we found a canonical name later or it wasn't set correctly, update it
-            if (canonicalName) {
-                groups[normalizedKey].displayName = canonicalName;
-            }
-        }
-        groups[normalizedKey].count += 1;
+    const groups: Record<string, { count: number; displayName: string }> = {};
+    stats.byComment.forEach(item => {
+      if (!item.name || item.name.trim().length <= 1) return;
+      const raw = item.name.trim();
+      const normalizedKey = raw.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+      const canonicalName = canonicalMap[normalizedKey];
+      if (!groups[normalizedKey]) {
+        groups[normalizedKey] = { count: 0, displayName: canonicalName || raw };
+      } else if (canonicalName) {
+        groups[normalizedKey].displayName = canonicalName;
       }
+      groups[normalizedKey].count += item.value;
     });
 
     return Object.values(groups)
-      .map((item) => ({ name: item.displayName, value: item.count }))
+      .map(g => ({ name: g.displayName, value: g.count }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 5);
-  }, [records, availableComments]);
-
-  // 7. Time Trend Data (Date vs Meters)
-  const trendData = useMemo(() => {
-    const grouped: Record<string, number> = {};
-    records.forEach(r => {
-      // Aggregate by date
-      grouped[r.date] = (grouped[r.date] || 0) + r.meters;
-    });
-    
-    return Object.entries(grouped)
-      .map(([date, value]) => ({ date, value }))
-      .sort((a, b) => a.date.localeCompare(b.date)); // Sort chronologically
-  }, [records]);
+  }, [stats?.byComment, availableComments]);
 
   // Determine chart min-width based on data points to allow scrolling
   const chartMinWidth = Math.max(trendData.length * 50, 600); 
 
-  // Handle PDF Generation using html2canvas for faithful visual reproduction
   const handleExportDashboardPDF = async () => {
     if (!dashboardRef.current || isGeneratingPdf) return;
     
@@ -235,11 +147,22 @@ const Dashboard: React.FC<DashboardProps> = ({ records }) => {
 
     } catch (error) {
       console.error("Error generating PDF:", error);
-      alert("Error generando el PDF visual. Intente desde un navegador de escritorio.");
+      emitAppNotification('Error generando el PDF visual. Intente desde un navegador de escritorio.', 'error');
     } finally {
       setIsGeneratingPdf(false);
     }
   };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-32">
+        <div className="text-center text-slate-400">
+          <Loader2 className="w-10 h-10 animate-spin mx-auto mb-3 text-blue-400" />
+          <p className="text-sm font-medium">Cargando datos del dashboard...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4 md:space-y-6 pb-24 md:pb-20">
@@ -255,7 +178,7 @@ const Dashboard: React.FC<DashboardProps> = ({ records }) => {
         </div>
         <div className="flex gap-2 w-full md:w-auto">
           <button 
-            onClick={() => exportToExcel(records)}
+            onClick={() => exportFilteredToExcel(filters)}
             className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2.5 rounded-lg transition-colors text-xs md:text-sm font-bold shadow-sm active:scale-95 transform duration-100"
           >
             <Table className="w-4 h-4" /> Excel

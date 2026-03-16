@@ -9,6 +9,7 @@ import {
   renameCustomComment,
   subscribeToSettings
 } from '../services/storageService';
+import { emitAppNotification } from '../services/notificationService';
 
 interface ShiftFormProps {
   onRecordSaved: () => void;
@@ -270,12 +271,12 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
       : (user?.name || '');
 
     if (!selectedOperatorName) {
-      alert('Debe seleccionar un operario válido.');
+      emitAppNotification('Debe seleccionar un operario válido.', 'warning');
       return;
     }
 
     if (!formData.boss) {
-      alert('Debe seleccionar un jefe de turno.');
+      emitAppNotification('Debe seleccionar un jefe de turno.', 'warning');
       return;
     }
 

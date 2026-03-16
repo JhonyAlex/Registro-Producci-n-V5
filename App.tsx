@@ -6,9 +6,11 @@ import Login from './components/Login';
 import Register from './components/Register';
 import WaitingRoom from './components/WaitingRoom';
 import AdminUsers from './components/AdminUsers';
+import SystemToast, { SystemToastData } from './components/SystemToast';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import { subscribeToRecords, clearAllRecords, deleteRecord, exportToExcel, exportAllData, importAllData, reconnectDatabase } from './services/storageService';
-import { ProductionRecord, FilterState } from './types';
+import { clearAllRecords, deleteRecord, exportAllData, importAllData, reconnectDatabase, fetchRecordsPage, fetchDashboardStats, onRecordsChanged, exportFilteredToExcel, subscribeToSettings } from './services/storageService';
+import { AppNotificationKind } from './services/notificationService';
+import { ProductionRecord, FilterState, PaginatedRecordsResponse, DashboardStats } from './types';
 import { MACHINES } from './constants';
 
 type View = 'dashboard' | 'entry' | 'list' | 'admin';
@@ -20,10 +22,18 @@ const AppContent: React.FC = () => {
   const { user, logout } = useAuth();
   const isAdmin = user?.role === 'admin';
   const [currentView, setCurrentView] = useState<View>('entry');
-  const [records, setRecords] = useState<ProductionRecord[]>([]);
+  const [recentRecords, setRecentRecords] = useState<ProductionRecord[]>([]);
+  const [pageData, setPageData] = useState<PaginatedRecordsResponse>({ records: [], total: 0, page: 1, totalPages: 0 });
+  const [dashboardStats, setDashboardStats] = useState<DashboardStats | null>(null);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [dbError, setDbError] = useState('');
+  const [systemToast, setSystemToast] = useState<SystemToastData | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const isHandlingSessionTermination = useRef(false);
+  const toastTimeoutRef = useRef<number | null>(null);
+  const filtersRef = useRef<FilterState>({ startDate: '', endDate: '', machine: '', boss: '', operator: '' });
+  const currentPageRef = useRef(1);
+  const loadDataRef = useRef<() => Promise<void>>(async () => {});
   
   // Edit Mode State
   const [editingRecord, setEditingRecord] = useState<ProductionRecord | null>(null);
@@ -46,19 +56,127 @@ const AppContent: React.FC = () => {
   const [deleteMode, setDeleteMode] = useState<DeleteMode>('all');
   const [deleteAllStep, setDeleteAllStep] = useState<1 | 2>(1); // 1: Export Warning, 2: Final Confirmation
   const [recordToDelete, setRecordToDelete] = useState<string | null>(null);
+
+  const showSystemToast = (message: string, kind: SystemToastData['kind'] = 'warning') => {
+    setSystemToast({ message, kind });
+    if (toastTimeoutRef.current) {
+      window.clearTimeout(toastTimeoutRef.current);
+    }
+    toastTimeoutRef.current = window.setTimeout(() => {
+      setSystemToast(null);
+      toastTimeoutRef.current = null;
+    }, 3200);
+  };
+
+  const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+  const enforceSessionPolicy = async (meta?: { authError?: boolean; dbUnavailable?: boolean }, message?: string) => {
+    if (isHandlingSessionTermination.current) {
+      return;
+    }
+
+    if (meta?.authError) {
+      isHandlingSessionTermination.current = true;
+      setDbError(message || 'Sesión no válida o expirada.');
+      const notice = 'Tu sesión expiró o fue cerrada en otro dispositivo. Debes iniciar sesión nuevamente.';
+      showSystemToast(notice, 'warning');
+      sessionStorage.setItem('auth_notice', notice);
+      await wait(900);
+      await logout();
+      return;
+    }
+
+    if (meta?.dbUnavailable) {
+      isHandlingSessionTermination.current = true;
+      setDbError('Conexión con base de datos perdida. Intentando reconectar...');
+      const reconnected = await reconnectDatabase();
+      if (reconnected) {
+        setDbError('');
+        showSystemToast('Conexión restablecida correctamente.', 'success');
+        isHandlingSessionTermination.current = false;
+        return;
+      }
+
+      const notice = 'No se pudo reconectar con la base de datos. La sesión se cerró por seguridad.';
+      showSystemToast(notice, 'error');
+      sessionStorage.setItem('auth_notice', notice);
+      await wait(900);
+      await logout();
+    }
+  };
   
+  // --- Data loading ---
+  const loadData = async (f: FilterState, page: number) => {
+    try {
+      const [pd, stats] = await Promise.all([
+        fetchRecordsPage(f, page, ITEMS_PER_PAGE),
+        fetchDashboardStats(f),
+      ]);
+      setPageData(pd);
+      setDashboardStats(stats);
+      setDbError('');
+    } catch (error: any) {
+      const isAuthError = error.status === 401;
+      const isDbUnavailable = error.message === 'Database unavailable';
+      let msg = 'Error de conexión con la base de datos.';
+      if (isAuthError) msg = 'Sesión no válida o expirada.';
+      if (isDbUnavailable) msg = 'Servicio no disponible (Offline).';
+      setDbError(msg);
+      await enforceSessionPolicy({ authError: isAuthError, dbUnavailable: isDbUnavailable }, msg);
+    }
+  };
+
+  const loadRecentRecords = async () => {
+    try {
+      const pd = await fetchRecordsPage(
+        { startDate: '', endDate: '', machine: '', boss: '', operator: '' },
+        1, 3
+      );
+      setRecentRecords(pd.records);
+    } catch { /* silent */ }
+  };
+
+  // Keep refs in sync so the stable WS callback always has latest state
+  useEffect(() => { filtersRef.current = filters; }, [filters]);
+  useEffect(() => { currentPageRef.current = currentPage; }, [currentPage]);
+  loadDataRef.current = () => loadData(filtersRef.current, currentPageRef.current);
+
+  // Fetch page data whenever filters or page changes
+  useEffect(() => {
+    loadData(filters, currentPage);
+  }, [filters, currentPage]);
+
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filters]);
+
+  // Load unfiltered recent records once on mount
+  useEffect(() => {
+    loadRecentRecords();
+  }, []);
+
   // Real-time synchronization
   useEffect(() => {
-    const unsubscribe = subscribeToRecords(
-      (updatedRecords) => {
-        setRecords(updatedRecords);
-        // If we get data, we are connected
-        if (dbError && dbError.includes('Offline')) setDbError(''); 
-      },
-      (errorMsg) => {
-        setDbError(errorMsg);
+    const unsubscribe = onRecordsChanged(() => {
+      loadDataRef.current();
+      loadRecentRecords();
+    });
+
+    const handleSessionStateEvent = async (event: Event) => {
+      const customEvent = event as CustomEvent<{ authError?: boolean; dbUnavailable?: boolean }>;
+      await enforceSessionPolicy(customEvent.detail);
+    };
+    window.addEventListener('app-session-state', handleSessionStateEvent as EventListener);
+
+    const handleAppNotificationEvent = (event: Event) => {
+      const customEvent = event as CustomEvent<{ message?: string; kind?: AppNotificationKind }>;
+      const { message, kind } = customEvent.detail || {};
+      if (message) {
+        showSystemToast(message, kind || 'warning');
       }
-    );
+    };
+    window.addEventListener('app-notification', handleAppNotificationEvent as EventListener);
 
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
@@ -67,50 +185,35 @@ const AppContent: React.FC = () => {
 
     return () => {
       unsubscribe();
+      window.removeEventListener('app-session-state', handleSessionStateEvent as EventListener);
+      window.removeEventListener('app-notification', handleAppNotificationEvent as EventListener);
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      if (toastTimeoutRef.current) {
+        window.clearTimeout(toastTimeoutRef.current);
+      }
     };
   }, []);
 
-  // Calculate unique operators from existing records for the filter dropdown
-  const uniqueOperators = useMemo(() => {
-    const ops = new Set(records.map(r => r.operator).filter(Boolean));
-    return Array.from(ops).sort();
-  }, [records]);
-
-  const uniqueBosses = useMemo(() => {
-    const bosses = new Set(records.map(r => r.boss).filter(Boolean));
-    return Array.from(bosses).sort();
-  }, [records]);
-
-  // Filter Logic
-  const filteredRecords = useMemo(() => {
-    return records.filter(r => {
-      const matchDate = (!filters.startDate || r.date >= filters.startDate) && 
-                        (!filters.endDate || r.date <= filters.endDate);
-      const matchMachine = !filters.machine || r.machine === filters.machine;
-      const matchBoss = !filters.boss || r.boss === filters.boss;
-      const matchOperator = !filters.operator || r.operator === filters.operator;
-      return matchDate && matchMachine && matchBoss && matchOperator;
-    });
-  }, [records, filters]);
-
-  // Reset pagination when filters change
+  // Operators from settings (always the full list regardless of filters)
+  const [availableOperators, setAvailableOperators] = useState<string[]>([]);
   useEffect(() => {
-    setCurrentPage(1);
-  }, [filters]);
+    const unsub = subscribeToSettings((_comments, operators) => setAvailableOperators(operators));
+    return () => unsub();
+  }, []);
+  const uniqueOperators = availableOperators;
 
-  // Pagination Logic
-  const totalPages = Math.ceil(filteredRecords.length / ITEMS_PER_PAGE);
-  const paginatedRecords = useMemo(() => {
-    const start = (currentPage - 1) * ITEMS_PER_PAGE;
-    return filteredRecords.slice(start, start + ITEMS_PER_PAGE);
-  }, [filteredRecords, currentPage]);
+  // Bosses from latest stats (changes with filters — good drill-down UX)
+  const uniqueBosses = useMemo(() =>
+    dashboardStats?.byBoss.map(b => b.name).sort() ?? [],
+  [dashboardStats]);
+
+  // Server handles filtering and pagination; totals come from API response
+  const totalPages = pageData.totalPages;
 
   const goToPage = (page: number) => {
     if (page >= 1 && page <= totalPages) {
       setCurrentPage(page);
-      // Scroll to top of list container if needed, or just top of window
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
@@ -153,8 +256,10 @@ const AppContent: React.FC = () => {
     setShowDeleteModal(true);
   };
 
-  const handleExportAndContinue = () => {
-    exportToExcel(records);
+  const handleExportAndContinue = async () => {
+    try {
+      await exportFilteredToExcel({ startDate: '', endDate: '', machine: '', boss: '', operator: '' });
+    } catch { /* proceed even if export fails */ }
     setDeleteAllStep(2);
   };
 
@@ -175,6 +280,7 @@ const AppContent: React.FC = () => {
 
   const clearFilters = () => {
     setFilters({ startDate: '', endDate: '', machine: '', boss: '', operator: '' });
+    setCurrentPage(1);
     setShowFilters(false);
   };
 
@@ -231,6 +337,7 @@ const AppContent: React.FC = () => {
       startDate: formatDate(start),
       endDate: formatDate(end)
     }));
+    setCurrentPage(1);
   };
 
   const changeView = (view: View) => {
@@ -274,10 +381,10 @@ const AppContent: React.FC = () => {
     
     try {
       await importAllData(file);
-      alert('Datos importados correctamente. La página se recargará.');
-      window.location.reload();
+      showSystemToast('Datos importados correctamente. Recargando datos...', 'success');
+      window.setTimeout(() => window.location.reload(), 700);
     } catch (err) {
-      alert('Error al importar los datos. Verifique el formato del archivo.');
+      showSystemToast('Error al importar los datos. Verifique el formato del archivo.', 'error');
     }
     
     if (fileInputRef.current) {
@@ -309,6 +416,8 @@ const AppContent: React.FC = () => {
         accept=".json" 
         className="hidden" 
       />
+
+      <SystemToast toast={systemToast} />
       
       <aside className="hidden md:flex bg-white border-r border-slate-200 w-64 flex-shrink-0 z-20 h-screen sticky top-0 flex-col">
         <div className="p-6 border-b border-slate-100 flex items-center gap-3">
@@ -607,7 +716,7 @@ const AppContent: React.FC = () => {
                      </span>
                   </div>
                   <div className="bg-white rounded-xl shadow-sm border border-slate-200 divide-y divide-slate-100">
-                    {records.slice(0, 3).map(r => (
+                    {recentRecords.slice(0, 3).map(r => (
                       <div key={r.id} className="p-4 flex justify-between items-center cursor-pointer hover:bg-slate-50 transition-colors" onClick={() => handleEdit(r)}>
                         <div>
                           <span className="font-bold text-slate-800 block">{r.machine}</span>
@@ -619,7 +728,7 @@ const AppContent: React.FC = () => {
                         </div>
                       </div>
                     ))}
-                    {records.length === 0 && (
+                    {recentRecords.length === 0 && (
                       <div className="p-4 text-center text-slate-400 italic text-sm">Sin registros hoy</div>
                     )}
                   </div>
@@ -630,7 +739,7 @@ const AppContent: React.FC = () => {
 
           {currentView === 'dashboard' && (
             <div className="animate-fade-in">
-              <Dashboard records={filteredRecords} />
+              <Dashboard stats={dashboardStats} filters={filters} />
             </div>
           )}
 
@@ -641,7 +750,7 @@ const AppContent: React.FC = () => {
                   <h2 className="text-2xl font-bold text-slate-900">Historial</h2>
                   <div className="flex items-center gap-2 mt-1">
                     <span className="text-sm bg-slate-200 px-3 py-1 rounded-full text-slate-600 font-medium inline-block">
-                      {filteredRecords.length} registros totales
+                      {pageData.total} registros totales
                     </span>
                     <span className="text-xs text-slate-400">
                       (Página {currentPage} de {totalPages || 1})
@@ -649,7 +758,7 @@ const AppContent: React.FC = () => {
                   </div>
                 </div>
                 
-                {records.length > 0 && (
+                {pageData.total > 0 && (
                   <button 
                     onClick={initiateDeleteAll}
                     className="flex items-center gap-2 text-red-600 bg-red-50 hover:bg-red-100 px-4 py-2 rounded-lg transition-colors text-sm font-bold border border-red-100"
@@ -676,7 +785,7 @@ const AppContent: React.FC = () => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {paginatedRecords.map((r) => (
+                      {pageData.records.map((r) => (
                         <tr 
                           key={r.id} 
                           onClick={() => handleEdit(r)}
@@ -729,9 +838,9 @@ const AppContent: React.FC = () => {
                       ))}
                     </tbody>
                   </table>
-                  {paginatedRecords.length === 0 && (
+                  {pageData.records.length === 0 && (
                     <div className="p-12 text-center text-slate-400">
-                      {records.length > 0 ? 'No hay resultados con los filtros actuales.' : 'Base de datos vacía.'}
+                      {activeFiltersCount > 0 ? 'No hay resultados con los filtros actuales.' : 'Base de datos vacía.'}
                     </div>
                   )}
                 </div>
@@ -799,7 +908,7 @@ const AppContent: React.FC = () => {
                    </div>
                    <h3 className="text-lg font-bold text-slate-900">Advertencia de Seguridad</h3>
                    <p className="text-sm text-slate-600 mt-2">
-                     Estás a punto de borrar <strong>TODA</strong> la base de datos ({records.length} registros).
+                     Estás a punto de borrar <strong>TODA</strong> la base de datos ({pageData.total} registros).
                    </p>
                    <p className="text-sm text-slate-500 mt-1">
                      Se recomienda encarecidamente descargar una copia de seguridad en Excel antes de continuar.

@@ -83,6 +83,10 @@ export const authenticate = async (req: express.Request, res: express.Response, 
     const user = userResult.rows[0];
 
     if (!user) return res.status(401).json({ error: 'Usuario no encontrado' });
+    if (decoded.sessionVersion !== user.session_version) {
+      res.clearCookie('token');
+      return res.status(401).json({ error: 'Sesión cerrada por un nuevo inicio de sesión.' });
+    }
     if (user.status === 'locked') return res.status(403).json({ error: 'Cuenta bloqueada. Contacte a un administrador.' });
     if (user.status === 'pending') return res.status(403).json({ error: 'Cuenta pendiente de aprobación.' });
 
@@ -193,10 +197,15 @@ app.post('/api/auth/login', requireDB, async (req, res) => {
     }
 
     // Success
-    await pool.query('UPDATE users SET failed_attempts = 0, last_login = CURRENT_TIMESTAMP, last_activity = CURRENT_TIMESTAMP WHERE id = $1', [user.id]);
+    const loginUpdateResult = await pool.query(
+      'UPDATE users SET failed_attempts = 0, last_login = CURRENT_TIMESTAMP, last_activity = CURRENT_TIMESTAMP, session_version = session_version + 1 WHERE id = $1 RETURNING session_version',
+      [user.id]
+    );
     await logAudit(user.id, 'login_success', {}, req.ip || '');
 
-    const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: '12h' });
+    const sessionVersion = loginUpdateResult.rows[0]?.session_version ?? user.session_version;
+
+    const token = jwt.sign({ id: user.id, role: user.role, sessionVersion }, JWT_SECRET, { expiresIn: '12h' });
     
     res.cookie('token', token, {
       httpOnly: true,
@@ -211,8 +220,10 @@ app.post('/api/auth/login', requireDB, async (req, res) => {
         id: user.id,
         operator_code: user.operator_code,
         name: user.name,
-        role: user.role
-      }
+        role: user.role,
+        session_timeout_minutes: SESSION_TIMEOUT_MINUTES,
+      },
+      session_timeout_minutes: SESSION_TIMEOUT_MINUTES,
     });
   } catch (err) {
     res.status(500).json({ error: 'Error en el login' });
@@ -241,9 +252,11 @@ app.get('/api/auth/me', authenticate, async (req, res) => {
       operator_code: user.operator_code,
       name: user.name,
       role: user.role,
+      session_timeout_minutes: SESSION_TIMEOUT_MINUTES,
       permissions: permsResult.rows,
       visible_users: visResult.rows.map(r => r.target_id)
-    }
+    },
+    session_timeout_minutes: SESSION_TIMEOUT_MINUTES,
   });
 });
 
@@ -359,41 +372,182 @@ app.delete('/api/admin/users/:id', authenticate, requireRole(['admin']), async (
 });
 
 // --- RECORDS ---
+
+// Helper: build visibility WHERE clause and params for non-admin users
+async function buildVisibilityClause(user: any): Promise<{ where: string; params: any[] }> {
+  if (user.role === 'admin') {
+    return { where: '', params: [] };
+  }
+  const visResult = await pool.query('SELECT target_id FROM user_visibility WHERE observer_id = $1', [user.id]);
+  const visibleUserIds = visResult.rows.map((r: any) => r.target_id);
+  let visibleNames = [user.name];
+  if (visibleUserIds.length > 0) {
+    const visibleUsersResult = await pool.query('SELECT name FROM users WHERE id = ANY($1)', [visibleUserIds]);
+    visibleNames = visibleNames.concat(visibleUsersResult.rows.map((r: any) => r.name));
+  }
+  return { where: '(operator = ANY($1) OR boss = ANY($1))', params: [visibleNames] };
+}
+
+// Helper: append filter query params (startDate, endDate, machine, boss, operator)
+function appendFilterClauses(
+  existingWhere: string,
+  existingParams: any[],
+  query: Record<string, any>
+): { where: string; params: any[] } {
+  const conditions: string[] = existingWhere ? [existingWhere] : [];
+  const params = [...existingParams];
+
+  const add = (col: string, val: string) => {
+    params.push(val);
+    conditions.push(`${col} = $${params.length}`);
+  };
+  const addGte = (col: string, val: string) => {
+    params.push(val);
+    conditions.push(`${col} >= $${params.length}`);
+  };
+  const addLte = (col: string, val: string) => {
+    params.push(val);
+    conditions.push(`${col} <= $${params.length}`);
+  };
+
+  if (query.startDate) addGte('date', query.startDate as string);
+  if (query.endDate) addLte('date', query.endDate as string);
+  if (query.machine) add('machine', query.machine as string);
+  if (query.boss) add('boss', query.boss as string);
+  if (query.operator) add('operator', query.operator as string);
+
+  return {
+    where: conditions.length > 0 ? conditions.join(' AND ') : '',
+    params,
+  };
+}
+
 app.get('/api/records', authenticate, requireDB, async (req, res) => {
   const user = (req as any).user;
   try {
-    let query = 'SELECT id, timestamp, date, machine, meters, changescount as "changesCount", changescomment as "changesComment", shift, boss, operator FROM production_records';
-    let params: any[] = [];
+    const page = Math.max(1, parseInt((req.query.page as string) || '1', 10));
+    const limit = Math.min(200, Math.max(1, parseInt((req.query.limit as string) || '15', 10)));
+    const offset = (page - 1) * limit;
 
-    if (user.role !== 'admin') {
-      const visResult = await pool.query('SELECT target_id FROM user_visibility WHERE observer_id = $1', [user.id]);
-      const visibleUserIds = visResult.rows.map(r => r.target_id);
-      
-      let visibleNames = [user.name]; // Always see own records
-      if (visibleUserIds.length > 0) {
-        const visibleUsersResult = await pool.query('SELECT name FROM users WHERE id = ANY($1)', [visibleUserIds]);
-        visibleNames = visibleNames.concat(visibleUsersResult.rows.map(r => r.name));
-      }
+    const vis = await buildVisibilityClause(user);
+    const { where, params } = appendFilterClauses(vis.where, vis.params, req.query as any);
 
-      // Non-admin users can see records linked to their name either as operator or shift lead.
-      query += ' WHERE operator = ANY($1) OR boss = ANY($1)';
-      params.push(visibleNames);
-    }
+    const whereClause = where ? `WHERE ${where}` : '';
 
-    query += ' ORDER BY timestamp DESC';
+    // Single query: data + total count using window function
+    const dataQuery = `
+      SELECT
+        id, timestamp, date, machine, meters,
+        changescount as "changesCount", changescomment as "changesComment",
+        shift, boss, operator,
+        COUNT(*) OVER() AS total_count
+      FROM production_records
+      ${whereClause}
+      ORDER BY timestamp DESC
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+    `;
 
-    const result = await pool.query(query, params);
-    const rows = result.rows.map(row => ({
+    const result = await pool.query(dataQuery, [...params, limit, offset]);
+
+    const total = result.rows.length > 0 ? parseInt(result.rows[0].total_count, 10) : 0;
+    const records = result.rows.map(({ total_count, ...row }: any) => ({
       ...row,
-      timestamp: Number(row.timestamp)
+      timestamp: Number(row.timestamp),
     }));
-    res.json(rows);
+
+    res.json({
+      records,
+      total,
+      page,
+      totalPages: Math.ceil(total / limit),
+    });
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch records' });
   }
 });
 
-app.post('/api/records', requireDB, async (req, res) => {
+app.get('/api/records/stats', authenticate, requireDB, async (req, res) => {
+  const user = (req as any).user;
+  try {
+    const vis = await buildVisibilityClause(user);
+    const { where, params } = appendFilterClauses(vis.where, vis.params, req.query as any);
+    const whereClause = where ? `WHERE ${where}` : '';
+
+    const [summaryRes, machineRes, operatorRes, shiftRes, bossRes, commentRes, dateRes] = await Promise.all([
+      pool.query(
+        `SELECT COUNT(*) as count, COALESCE(SUM(meters),0) as total_meters,
+                COALESCE(AVG(meters),0)::int as avg_meters,
+                COALESCE(SUM(changescount),0) as total_changes,
+                COALESCE(AVG(changescount),0) as avg_changes
+         FROM production_records ${whereClause}`,
+        params
+      ),
+      pool.query(
+        `SELECT machine as name, SUM(meters) as value
+         FROM production_records ${whereClause}
+         GROUP BY machine ORDER BY value DESC`,
+        params
+      ),
+      pool.query(
+        `SELECT operator as name, SUM(meters) as value
+         FROM production_records ${whereClause}
+         WHERE operator IS NOT NULL AND operator <> ''
+         GROUP BY operator ORDER BY value DESC LIMIT 10`,
+        params
+      ),
+      pool.query(
+        `SELECT shift as name, SUM(meters) as value
+         FROM production_records ${whereClause}
+         GROUP BY shift`,
+        params
+      ),
+      pool.query(
+        `SELECT boss as name, SUM(meters) as value
+         FROM production_records ${whereClause}
+         GROUP BY boss ORDER BY value DESC`,
+        params
+      ),
+      pool.query(
+        `SELECT changescomment as name, COUNT(*) as value
+         FROM production_records ${whereClause}
+         ${whereClause ? 'AND' : 'WHERE'} changescomment IS NOT NULL AND LENGTH(TRIM(changescomment)) > 1
+         GROUP BY changescomment ORDER BY value DESC LIMIT 20`,
+        params
+      ),
+      pool.query(
+        `SELECT date as name, SUM(meters) as value
+         FROM production_records ${whereClause}
+         GROUP BY date ORDER BY date ASC`,
+        params
+      ),
+    ]);
+
+    const s = summaryRes.rows[0];
+    const count = parseInt(s.count, 10);
+    const totalMeters = parseInt(s.total_meters, 10);
+    const avgMeters = parseInt(s.avg_meters, 10);
+    const totalChanges = parseInt(s.total_changes, 10);
+    const avgChanges = count > 0 ? parseFloat((parseFloat(s.avg_changes)).toFixed(1)) : 0;
+    const efficiency = Math.min(100, Math.round((avgMeters / 5000) * 100));
+
+    const toItems = (rows: any[]) => rows.map(r => ({ name: r.name, value: Number(r.value) }));
+
+    res.json({
+      summary: { count, totalMeters, avgMeters, totalChanges, avgChanges, efficiency },
+      byMachine: toItems(machineRes.rows),
+      byOperator: toItems(operatorRes.rows),
+      byShift: toItems(shiftRes.rows),
+      byBoss: toItems(bossRes.rows),
+      byComment: toItems(commentRes.rows),
+      byDate: toItems(dateRes.rows),
+    });
+  } catch (err) {
+    console.error('Stats error:', err);
+    res.status(500).json({ error: 'Failed to fetch stats' });
+  }
+});
+
+app.post('/api/records', authenticate, requireDB, async (req, res) => {
   const { id, timestamp, date, machine, meters, changesCount, changesComment, shift, boss, operator } = req.body;
   try {
     await pool.query(
@@ -412,7 +566,7 @@ app.post('/api/records', requireDB, async (req, res) => {
   }
 });
 
-app.delete('/api/records/:id', requireDB, async (req, res) => {
+app.delete('/api/records/:id', authenticate, requireDB, async (req, res) => {
   try {
     await pool.query('DELETE FROM production_records WHERE id = $1', [req.params.id]);
     io.emit('records_changed');
@@ -422,7 +576,7 @@ app.delete('/api/records/:id', requireDB, async (req, res) => {
   }
 });
 
-app.delete('/api/records', requireDB, async (req, res) => {
+app.delete('/api/records', authenticate, requireDB, async (req, res) => {
   try {
     await pool.query('DELETE FROM production_records');
     io.emit('records_changed');
@@ -433,7 +587,7 @@ app.delete('/api/records', requireDB, async (req, res) => {
 });
 
 // --- SETTINGS (COMMENTS) ---
-app.get('/api/settings/comments', requireDB, async (req, res) => {
+app.get('/api/settings/comments', authenticate, requireDB, async (req, res) => {
   try {
     const result = await pool.query('SELECT name FROM custom_comments ORDER BY name ASC');
     res.json(result.rows.map((row: any) => row.name));
@@ -442,7 +596,7 @@ app.get('/api/settings/comments', requireDB, async (req, res) => {
   }
 });
 
-app.post('/api/settings/comments', requireDB, async (req, res) => {
+app.post('/api/settings/comments', authenticate, requireDB, async (req, res) => {
   try {
     await pool.query('INSERT INTO custom_comments (name) VALUES ($1) ON CONFLICT DO NOTHING', [req.body.name]);
     io.emit('settings_changed');
@@ -452,7 +606,7 @@ app.post('/api/settings/comments', requireDB, async (req, res) => {
   }
 });
 
-app.delete('/api/settings/comments/:name', requireDB, async (req, res) => {
+app.delete('/api/settings/comments/:name', authenticate, requireDB, async (req, res) => {
   try {
     await pool.query('DELETE FROM custom_comments WHERE name = $1', [req.params.name]);
     io.emit('settings_changed');
@@ -462,7 +616,7 @@ app.delete('/api/settings/comments/:name', requireDB, async (req, res) => {
   }
 });
 
-app.put('/api/settings/comments/:oldName', requireDB, async (req, res) => {
+app.put('/api/settings/comments/:oldName', authenticate, requireDB, async (req, res) => {
   const { oldName } = req.params;
   const { newName } = req.body;
   try {
@@ -481,7 +635,7 @@ app.put('/api/settings/comments/:oldName', requireDB, async (req, res) => {
 });
 
 // --- SETTINGS (OPERATORS) ---
-app.get('/api/settings/operators', requireDB, async (req, res) => {
+app.get('/api/settings/operators', authenticate, requireDB, async (req, res) => {
   try {
     const result = await pool.query('SELECT name FROM custom_operators ORDER BY name ASC');
     res.json(result.rows.map((row: any) => row.name));
@@ -490,7 +644,7 @@ app.get('/api/settings/operators', requireDB, async (req, res) => {
   }
 });
 
-app.post('/api/settings/operators', requireDB, async (req, res) => {
+app.post('/api/settings/operators', authenticate, requireDB, async (req, res) => {
   try {
     await pool.query('INSERT INTO custom_operators (name) VALUES ($1) ON CONFLICT DO NOTHING', [req.body.name]);
     io.emit('settings_changed');
@@ -500,7 +654,7 @@ app.post('/api/settings/operators', requireDB, async (req, res) => {
   }
 });
 
-app.delete('/api/settings/operators/:name', requireDB, async (req, res) => {
+app.delete('/api/settings/operators/:name', authenticate, requireDB, async (req, res) => {
   try {
     await pool.query('DELETE FROM custom_operators WHERE name = $1', [req.params.name]);
     io.emit('settings_changed');
@@ -510,7 +664,7 @@ app.delete('/api/settings/operators/:name', requireDB, async (req, res) => {
   }
 });
 
-app.put('/api/settings/operators/:oldName', requireDB, async (req, res) => {
+app.put('/api/settings/operators/:oldName', authenticate, requireDB, async (req, res) => {
   const { oldName } = req.params;
   const { newName } = req.body;
   try {

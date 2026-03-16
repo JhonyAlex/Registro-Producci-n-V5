@@ -49,3 +49,34 @@ export interface FilterState {
   boss: string;
   operator: string;
 }
+
+export interface PaginatedRecordsResponse {
+  records: ProductionRecord[];
+  total: number;
+  page: number;
+  totalPages: number;
+}
+
+export interface DashboardSummary {
+  count: number;
+  totalMeters: number;
+  avgMeters: number;
+  totalChanges: number;
+  avgChanges: number;
+  efficiency: number;
+}
+
+export interface DashboardGroupItem {
+  name: string;
+  value: number;
+}
+
+export interface DashboardStats {
+  summary: DashboardSummary;
+  byMachine: DashboardGroupItem[];
+  byOperator: DashboardGroupItem[];
+  byShift: DashboardGroupItem[];
+  byBoss: DashboardGroupItem[];
+  byComment: DashboardGroupItem[];
+  byDate: DashboardGroupItem[];
+}

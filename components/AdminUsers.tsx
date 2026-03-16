@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { CheckCircle, Unlock, ShieldAlert, UserCheck, Clock, Ban, Users, RefreshCw, Trash2, AlertTriangle } from 'lucide-react';
 import { io } from 'socket.io-client';
 import { useAuth } from '../context/AuthContext';
+import { emitAppNotification } from '../services/notificationService';
 
 interface AdminUser {
   id: string;
@@ -66,7 +67,7 @@ const AdminUsers: React.FC = () => {
       }
       await fetchUsers();
     } catch (err: any) {
-      alert(err.message);
+      emitAppNotification(err.message, 'error');
     } finally {
       setActionLoading(null);
     }
@@ -85,7 +86,7 @@ const AdminUsers: React.FC = () => {
       }
       await fetchUsers();
     } catch (err: any) {
-      alert(err.message);
+      emitAppNotification(err.message, 'error');
     } finally {
       setActionLoading(null);
     }
@@ -98,7 +99,7 @@ const AdminUsers: React.FC = () => {
 
   const openDeleteModal = (adminUser: AdminUser) => {
     if (currentUser?.id === adminUser.id) {
-      alert('No puedes eliminar tu propia cuenta mientras estás autenticado.');
+      emitAppNotification('No puedes eliminar tu propia cuenta mientras estás autenticado.', 'warning');
       return;
     }
 
@@ -112,7 +113,7 @@ const AdminUsers: React.FC = () => {
     }
 
     if (deleteConfirmation.trim() !== userToDelete.operator_code) {
-      alert('Debes escribir exactamente el código del operario para confirmar el borrado.');
+      emitAppNotification('Debes escribir exactamente el código del operario para confirmar el borrado.', 'warning');
       return;
     }
 
@@ -131,7 +132,7 @@ const AdminUsers: React.FC = () => {
       closeDeleteModal();
       await fetchUsers();
     } catch (err: any) {
-      alert(err.message);
+      emitAppNotification(err.message, 'error');
     } finally {
       setActionLoading(null);
     }
