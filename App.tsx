@@ -667,7 +667,7 @@ const AppContent: React.FC = () => {
                   <table className="w-full text-sm text-left">
                     <thead className="bg-slate-50 text-slate-500 font-medium border-b border-slate-200">
                       <tr>
-                        <th className="px-6 py-4">Fecha</th>
+                        <th className="px-6 py-4">Fecha y Hora</th>
                         <th className="px-6 py-4">Turno</th>
                         <th className="px-6 py-4">Máq.</th>
                         <th className="px-6 py-4">Operario</th>
@@ -685,7 +685,10 @@ const AppContent: React.FC = () => {
                           className="hover:bg-blue-50 transition-colors group cursor-pointer active:bg-blue-100"
                         >
                           <td className="px-6 py-4 text-slate-600 whitespace-nowrap">
-                            <div className="font-bold text-slate-800">{r.date}</div>
+                            <div className="font-bold text-slate-800">
+                              {new Date(r.recordedAt || r.timestamp).toLocaleString('es-ES')}
+                            </div>
+                            <div className="text-xs text-slate-500 mt-0.5">Turno: {r.date}</div>
                           </td>
                           <td className="px-6 py-4 text-slate-600 whitespace-nowrap">
                             <span className="bg-slate-100 text-slate-600 px-2 py-1 rounded text-xs font-bold border border-slate-200">

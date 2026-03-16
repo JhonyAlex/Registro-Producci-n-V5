@@ -40,6 +40,7 @@ async function initDB() {
       CREATE TABLE IF NOT EXISTS production_records (
         id VARCHAR(255) PRIMARY KEY,
         timestamp BIGINT NOT NULL,
+        recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         date VARCHAR(255) NOT NULL,
         machine VARCHAR(255) NOT NULL,
         meters INTEGER NOT NULL,
@@ -102,6 +103,13 @@ async function initDB() {
         ip_address VARCHAR(45),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+    `);
+
+    await pool.query('ALTER TABLE production_records ADD COLUMN IF NOT EXISTS recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
+    await pool.query(`
+      UPDATE production_records
+      SET recorded_at = TO_TIMESTAMP(timestamp / 1000.0)
+      WHERE recorded_at IS NULL
     `);
 
     for (const role of APP_ROLES) {
@@ -665,7 +673,7 @@ app.put('/api/admin/role-permissions/:role', authenticate, requireRole(['admin']
 app.get('/api/records', authenticate, requirePermission('records.read'), requireDB, async (req, res) => {
   const user = (req as any).user;
   try {
-    let query = 'SELECT id, timestamp, date, machine, meters, changescount as "changesCount", changescomment as "changesComment", shift, boss, operator FROM production_records';
+    let query = 'SELECT id, timestamp, recorded_at as "recordedAt", date, machine, meters, changescount as "changesCount", changescomment as "changesComment", shift, boss, operator FROM production_records';
     let params: any[] = [];
 
     if (user.role !== 'admin') {
@@ -697,7 +705,8 @@ app.get('/api/records', authenticate, requirePermission('records.read'), require
 
 app.post('/api/records', authenticate, requirePermission('records.write'), requireDB, async (req, res) => {
   const user = (req as any).user;
-  const { id, timestamp, date, machine, meters, changesCount, changesComment, shift, boss, operator } = req.body;
+  const { id, date, machine, meters, changesCount, changesComment, shift, boss, operator } = req.body;
+  const persistedTimestamp = Date.now();
   try {
     const existingRecordResult = await pool.query(
       `SELECT id, date, machine, meters, changescount as "changesCount", changescomment as "changesComment", shift, boss, operator
@@ -707,13 +716,13 @@ app.post('/api/records', authenticate, requirePermission('records.write'), requi
     const existingRecord = existingRecordResult.rows[0] || null;
 
     await pool.query(
-      `INSERT INTO production_records (id, timestamp, date, machine, meters, changesCount, changesComment, shift, boss, operator)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      `INSERT INTO production_records (id, timestamp, recorded_at, date, machine, meters, changesCount, changesComment, shift, boss, operator)
+       VALUES ($1, $2, TO_TIMESTAMP($3 / 1000.0), $4, $5, $6, $7, $8, $9, $10, $11)
        ON CONFLICT (id) DO UPDATE SET
-       timestamp = EXCLUDED.timestamp, date = EXCLUDED.date, machine = EXCLUDED.machine, meters = EXCLUDED.meters,
+       timestamp = EXCLUDED.timestamp, recorded_at = EXCLUDED.recorded_at, date = EXCLUDED.date, machine = EXCLUDED.machine, meters = EXCLUDED.meters,
        changesCount = EXCLUDED.changesCount, changesComment = EXCLUDED.changesComment, shift = EXCLUDED.shift,
        boss = EXCLUDED.boss, operator = EXCLUDED.operator`,
-      [id, timestamp, date, machine, meters, changesCount, changesComment, shift, boss, operator]
+      [id, persistedTimestamp, persistedTimestamp, date, machine, meters, changesCount, changesComment, shift, boss, operator]
     );
 
     const normalizeValue = (value: any) => {
@@ -954,7 +963,7 @@ app.put('/api/settings/operators/:oldName', authenticate, requirePermission('set
 app.get('/api/export', authenticate, requireRole(['admin', 'jefe_planta']), requirePermission('backup.export'), requireDB, async (req, res) => {
   const user = (req as any).user;
   try {
-    const records = await pool.query('SELECT id, timestamp, date, machine, meters, changescount as "changesCount", changescomment as "changesComment", shift, boss, operator FROM production_records');
+    const records = await pool.query('SELECT id, timestamp, recorded_at as "recordedAt", date, machine, meters, changescount as "changesCount", changescomment as "changesComment", shift, boss, operator FROM production_records');
     const comments = await pool.query('SELECT name FROM custom_comments');
     const operators = await pool.query('SELECT name FROM custom_operators');
     
@@ -977,14 +986,15 @@ app.post('/api/import', authenticate, requireRole(['admin', 'jefe_planta']), req
     
     if (records && Array.isArray(records)) {
       for (const r of records) {
+        const importTimestamp = Number(r.timestamp || Date.now());
         await pool.query(
-          `INSERT INTO production_records (id, timestamp, date, machine, meters, changesCount, changesComment, shift, boss, operator)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          `INSERT INTO production_records (id, timestamp, recorded_at, date, machine, meters, changesCount, changesComment, shift, boss, operator)
+           VALUES ($1, $2, TO_TIMESTAMP($3 / 1000.0), $4, $5, $6, $7, $8, $9, $10, $11)
            ON CONFLICT (id) DO UPDATE SET
-           timestamp = EXCLUDED.timestamp, date = EXCLUDED.date, machine = EXCLUDED.machine, meters = EXCLUDED.meters,
+           timestamp = EXCLUDED.timestamp, recorded_at = EXCLUDED.recorded_at, date = EXCLUDED.date, machine = EXCLUDED.machine, meters = EXCLUDED.meters,
            changesCount = EXCLUDED.changesCount, changesComment = EXCLUDED.changesComment, shift = EXCLUDED.shift,
            boss = EXCLUDED.boss, operator = EXCLUDED.operator`,
-          [r.id, r.timestamp, r.date, r.machine, r.meters, r.changesCount, r.changesComment, r.shift, r.boss, r.operator]
+          [r.id, importTimestamp, importTimestamp, r.date, r.machine, r.meters, r.changesCount, r.changesComment, r.shift, r.boss, r.operator]
         );
       }
     }

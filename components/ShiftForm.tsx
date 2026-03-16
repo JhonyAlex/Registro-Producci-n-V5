@@ -256,7 +256,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
     if (!metersInput) return;
 
     const id = editingRecord ? editingRecord.id : crypto.randomUUID();
-    const timestamp = editingRecord ? editingRecord.timestamp : Date.now();
+    const timestamp = Date.now();
 
     const newRecord: ProductionRecord = {
       id,

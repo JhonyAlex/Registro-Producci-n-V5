@@ -25,6 +25,7 @@ export enum BossType {
 export interface ProductionRecord {
   id: string;
   timestamp: number;
+  recordedAt?: string;
   date: string; // YYYY-MM-DD
   machine: MachineType;
   meters: number;
