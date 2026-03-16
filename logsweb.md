@@ -1,9 +1,20 @@
 (index):64 cdn.tailwindcss.com should not be used in production. To use Tailwind CSS in production, install it as a PostCSS plugin or use the Tailwind CLI: https://tailwindcss.com/docs/installation
 (anonymous) @ (index):64
-index-BNM2_oXU.js:337 API Error: Error: Sesión cerrada por un nuevo inicio de sesión.
-    at Ma (index-BNM2_oXU.js:337:67905)
-    at async n (index-BNM2_oXU.js:337:69968)
-n @ index-BNM2_oXU.js:337
-index-BNM2_oXU.js:337 API Error: TypeError: A.sort is not a function
-    at n (index-BNM2_oXU.js:337:69991)
-n @ index-BNM2_oXU.js:337
+(anonymous) @ (index):64
+index-zSsJx6SQ.js:337 Error reconnecting: Error: Failed to fetch stats
+    at ta (index-zSsJx6SQ.js:337:68022)
+    at async rw (index-zSsJx6SQ.js:337:72129)
+rw @ index-zSsJx6SQ.js:337
+await in rw
+onClick @ index-zSsJx6SQ.js:436
+Ci @ index-zSsJx6SQ.js:37
+fe @ index-zSsJx6SQ.js:37
+me @ index-zSsJx6SQ.js:37
+Fc @ index-zSsJx6SQ.js:37
+Tc @ index-zSsJx6SQ.js:37
+(anonymous) @ index-zSsJx6SQ.js:37
+v2 @ index-zSsJx6SQ.js:40
+Ta @ index-zSsJx6SQ.js:37
+Nc @ index-zSsJx6SQ.js:37
+ns @ index-zSsJx6SQ.js:37
+qs @ index-zSsJx6SQ.js:37

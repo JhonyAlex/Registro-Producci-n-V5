@@ -491,7 +491,7 @@ app.get('/api/records/stats', authenticate, requireDB, async (req, res) => {
       pool.query(
         `SELECT operator as name, SUM(meters) as value
          FROM production_records ${whereClause}
-         WHERE operator IS NOT NULL AND operator <> ''
+         ${whereClause ? 'AND' : 'WHERE'} operator IS NOT NULL AND operator <> ''
          GROUP BY operator ORDER BY value DESC LIMIT 10`,
         params
       ),
