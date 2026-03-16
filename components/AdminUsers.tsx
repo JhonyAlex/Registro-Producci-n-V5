@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { CheckCircle, Unlock, ShieldAlert, UserCheck, Clock, Ban, Users, RefreshCw, Trash2, AlertTriangle, Key } from 'lucide-react';
+import { CheckCircle, Unlock, ShieldAlert, UserCheck, Clock, Ban, Users, RefreshCw, Trash2, AlertTriangle, Key, History, Search } from 'lucide-react';
 import { io } from 'socket.io-client';
 import { useAuth } from '../context/AuthContext';
 import { emitAppNotification } from '../services/notificationService';
+import { fetchAuditLogsPage } from '../services/storageService';
+import { AuditLogEntry } from '../types';
 
 interface AdminUser {
   id: string;
@@ -26,6 +28,17 @@ const AdminUsers: React.FC = () => {
   const [userToResetPin, setUserToResetPin] = useState<AdminUser | null>(null);
   const [newPin, setNewPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+  const [auditLoading, setAuditLoading] = useState(true);
+  const [auditError, setAuditError] = useState('');
+  const [auditPage, setAuditPage] = useState(1);
+  const [auditTotalPages, setAuditTotalPages] = useState(1);
+  const [auditTotal, setAuditTotal] = useState(0);
+  const [auditSearchInput, setAuditSearchInput] = useState('');
+  const [auditSearch, setAuditSearch] = useState('');
+  const [auditRole, setAuditRole] = useState('');
+
+  const AUDIT_ITEMS_PER_PAGE = 15;
 
   const fetchUsers = async () => {
     try {
@@ -37,6 +50,21 @@ const AdminUsers: React.FC = () => {
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchAuditLogs = async (page = auditPage, q = auditSearch, role = auditRole) => {
+    setAuditLoading(true);
+    setAuditError('');
+    try {
+      const data = await fetchAuditLogsPage(page, AUDIT_ITEMS_PER_PAGE, q, role);
+      setAuditLogs(data.logs);
+      setAuditTotal(data.total);
+      setAuditTotalPages(Math.max(1, data.totalPages || 1));
+    } catch (err: any) {
+      setAuditError(err.message || 'Error al cargar historial de actividad');
+    } finally {
+      setAuditLoading(false);
     }
   };
 
@@ -56,6 +84,10 @@ const AdminUsers: React.FC = () => {
       socket.off('user_deleted');
     };
   }, []);
+
+  useEffect(() => {
+    fetchAuditLogs(auditPage, auditSearch, auditRole);
+  }, [auditPage, auditSearch, auditRole]);
 
   const handleApprove = async (id: string) => {
     setActionLoading(id);
@@ -228,6 +260,48 @@ const AdminUsers: React.FC = () => {
     return labels[role] || role;
   };
 
+  const getActionLabel = (action: string) => {
+    const labels: Record<string, string> = {
+      record_created: 'Registro creado',
+      record_updated: 'Registro modificado',
+      record_deleted: 'Registro eliminado',
+      record_bulk_deleted: 'Eliminación masiva de registros',
+      user_registered: 'Usuario registrado',
+      user_approved: 'Usuario aprobado',
+      user_unlocked: 'Usuario desbloqueado',
+      user_deleted: 'Usuario eliminado',
+      pin_reset: 'PIN restablecido',
+      login_success: 'Inicio de sesión',
+      login_failed: 'Intento de acceso fallido',
+      account_locked: 'Cuenta bloqueada',
+      logout: 'Cierre de sesión',
+      session_timeout: 'Sesión expirada',
+    };
+    return labels[action] || action;
+  };
+
+  const formatAuditDetails = (details: AuditLogEntry['details']) => {
+    if (!details) return '-';
+    if (typeof details !== 'object') return String(details);
+    return Object.entries(details)
+      .slice(0, 4)
+      .map(([key, value]) => `${key}: ${String(value)}`)
+      .join(' | ');
+  };
+
+  const handleAuditSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuditPage(1);
+    setAuditSearch(auditSearchInput.trim());
+  };
+
+  const clearAuditFilters = () => {
+    setAuditSearchInput('');
+    setAuditSearch('');
+    setAuditRole('');
+    setAuditPage(1);
+  };
+
   const isOnlyAdmin = (adminUser: AdminUser) => {
     if (adminUser.role !== 'admin') {
       return false;
@@ -371,6 +445,149 @@ const AdminUsers: React.FC = () => {
               </tbody>
             </table>
           </div>
+        </div>
+
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="p-6 border-b border-slate-200">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+              <div>
+                <h3 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+                  <History className="w-5 h-5 text-indigo-600" />
+                  Historial de Actividad
+                </h3>
+                <p className="text-sm text-slate-500 mt-1">
+                  Acciones realizadas por operarios, jefes de turno, jefes de planta y administradores.
+                </p>
+              </div>
+              <button
+                onClick={() => fetchAuditLogs()}
+                className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium rounded-lg transition-colors"
+              >
+                <RefreshCw className="w-4 h-4" />
+                Actualizar
+              </button>
+            </div>
+
+            <form onSubmit={handleAuditSearch} className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3">
+              <div className="md:col-span-2 relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={auditSearchInput}
+                  onChange={(e) => setAuditSearchInput(e.target.value)}
+                  placeholder="Buscar por nombre, código, acción o detalles"
+                  className="w-full rounded-xl border border-slate-300 pl-9 pr-4 py-2.5 text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                />
+              </div>
+              <select
+                value={auditRole}
+                onChange={(e) => {
+                  setAuditPage(1);
+                  setAuditRole(e.target.value);
+                }}
+                className="rounded-xl border border-slate-300 px-3 py-2.5 text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+              >
+                <option value="">Todos los roles</option>
+                <option value="operario">Operario</option>
+                <option value="jefe_turno">Jefe de Turno</option>
+                <option value="jefe_planta">Jefe de Planta</option>
+                <option value="admin">Administrador</option>
+              </select>
+              <div className="flex gap-2">
+                <button
+                  type="submit"
+                  className="flex-1 px-3 py-2.5 rounded-xl bg-indigo-600 text-white font-medium hover:bg-indigo-700 transition-colors"
+                >
+                  Buscar
+                </button>
+                <button
+                  type="button"
+                  onClick={clearAuditFilters}
+                  className="px-3 py-2.5 rounded-xl bg-slate-100 text-slate-700 font-medium hover:bg-slate-200 transition-colors"
+                >
+                  Limpiar
+                </button>
+              </div>
+            </form>
+          </div>
+
+          {auditError && (
+            <div className="mx-6 mt-4 bg-red-50 border border-red-200 text-red-600 p-3 rounded-xl text-sm">
+              {auditError}
+            </div>
+          )}
+
+          <div className="px-6 py-3 text-sm text-slate-500 border-b border-slate-100">
+            {auditTotal} eventos encontrados
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 text-sm uppercase tracking-wider">
+                  <th className="p-4 font-bold">Fecha</th>
+                  <th className="p-4 font-bold">Actor</th>
+                  <th className="p-4 font-bold">Rol</th>
+                  <th className="p-4 font-bold">Acción</th>
+                  <th className="p-4 font-bold">Detalles</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {auditLoading ? (
+                  <tr>
+                    <td colSpan={5} className="p-8 text-center text-slate-500">Cargando historial...</td>
+                  </tr>
+                ) : auditLogs.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="p-8 text-center text-slate-500">No hay eventos para los filtros seleccionados.</td>
+                  </tr>
+                ) : (
+                  auditLogs.map((log) => (
+                    <tr key={log.id} className="hover:bg-slate-50 transition-colors">
+                      <td className="p-4 text-sm text-slate-600 whitespace-nowrap">
+                        {new Date(log.created_at).toLocaleString()}
+                      </td>
+                      <td className="p-4 text-sm text-slate-800 font-medium">
+                        {log.actor_name || 'Sistema'}
+                        {log.actor_operator_code ? (
+                          <span className="ml-2 text-xs text-slate-500 font-mono">({log.actor_operator_code})</span>
+                        ) : null}
+                      </td>
+                      <td className="p-4 text-sm text-slate-600">
+                        {log.actor_role ? getRoleLabel(log.actor_role) : '-'}
+                      </td>
+                      <td className="p-4 text-sm text-indigo-700 font-medium">
+                        {getActionLabel(log.action)}
+                      </td>
+                      <td className="p-4 text-sm text-slate-600 max-w-lg truncate" title={formatAuditDetails(log.details)}>
+                        {formatAuditDetails(log.details)}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {auditTotalPages > 1 && (
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-3">
+              <button
+                onClick={() => setAuditPage((prev) => Math.max(1, prev - 1))}
+                disabled={auditPage === 1}
+                className="px-3 py-2 rounded-lg border border-slate-300 text-slate-700 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 transition-colors"
+              >
+                Anterior
+              </button>
+              <span className="text-sm text-slate-600">Página {auditPage} de {auditTotalPages}</span>
+              <button
+                onClick={() => setAuditPage((prev) => Math.min(auditTotalPages, prev + 1))}
+                disabled={auditPage === auditTotalPages}
+                className="px-3 py-2 rounded-lg border border-slate-300 text-slate-700 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 transition-colors"
+              >
+                Siguiente
+              </button>
+            </div>
+          )}
         </div>
 
         {userToDelete && (

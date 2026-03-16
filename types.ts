@@ -80,3 +80,22 @@ export interface DashboardStats {
   byComment: DashboardGroupItem[];
   byDate: DashboardGroupItem[];
 }
+
+export interface AuditLogEntry {
+  id: string;
+  action: string;
+  details: Record<string, unknown> | null;
+  ip_address: string | null;
+  created_at: string;
+  actor_id: string | null;
+  actor_operator_code: string | null;
+  actor_name: string | null;
+  actor_role: string | null;
+}
+
+export interface PaginatedAuditLogsResponse {
+  logs: AuditLogEntry[];
+  total: number;
+  page: number;
+  totalPages: number;
+}

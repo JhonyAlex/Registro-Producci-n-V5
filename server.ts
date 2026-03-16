@@ -397,6 +397,76 @@ app.post('/api/admin/users/:id/reset-pin', authenticate, requireRole(['admin']),
   }
 });
 
+app.get('/api/admin/audit-logs', authenticate, requireRole(['admin', 'jefe_planta']), requireDB, async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt((req.query.page as string) || '1', 10));
+    const limit = Math.min(100, Math.max(1, parseInt((req.query.limit as string) || '20', 10)));
+    const offset = (page - 1) * limit;
+
+    const q = ((req.query.q as string) || '').trim();
+    const role = ((req.query.role as string) || '').trim();
+    const allowedRoles = ['admin', 'jefe_planta', 'jefe_turno', 'operario'];
+
+    const conditions: string[] = [];
+    const params: any[] = [];
+
+    if (role && allowedRoles.includes(role)) {
+      params.push(role);
+      conditions.push(`u.role = $${params.length}`);
+    }
+
+    if (q) {
+      params.push(`%${q}%`);
+      const qIdx = params.length;
+      conditions.push(`(
+        COALESCE(u.name, '') ILIKE $${qIdx}
+        OR COALESCE(u.operator_code, '') ILIKE $${qIdx}
+        OR al.action ILIKE $${qIdx}
+        OR COALESCE(al.details::text, '') ILIKE $${qIdx}
+      )`);
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const countResult = await pool.query(
+      `SELECT COUNT(*)::int AS count
+       FROM audit_logs al
+       LEFT JOIN users u ON u.id = al.user_id
+       ${whereClause}`,
+      params
+    );
+    const total = countResult.rows[0]?.count ?? 0;
+
+    const logsResult = await pool.query(
+      `SELECT
+         al.id,
+         al.action,
+         al.details,
+         al.ip_address,
+         al.created_at,
+         u.id AS actor_id,
+         u.operator_code AS actor_operator_code,
+         u.name AS actor_name,
+         u.role AS actor_role
+       FROM audit_logs al
+       LEFT JOIN users u ON u.id = al.user_id
+       ${whereClause}
+       ORDER BY al.created_at DESC
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
+    );
+
+    res.json({
+      logs: logsResult.rows,
+      total,
+      page,
+      totalPages: Math.ceil(total / limit),
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Error fetching audit logs' });
+  }
+});
+
 // --- RECORDS ---
 
 // Helper: build visibility WHERE clause and params based on role
@@ -575,8 +645,12 @@ app.get('/api/records/stats', authenticate, requireDB, async (req, res) => {
 });
 
 app.post('/api/records', authenticate, requireDB, async (req, res) => {
+  const user = (req as any).user;
   const { id, timestamp, date, machine, meters, changesCount, changesComment, shift, boss, operator } = req.body;
   try {
+    const existingResult = await pool.query('SELECT 1 FROM production_records WHERE id = $1', [id]);
+    const wasExisting = existingResult.rowCount > 0;
+
     await pool.query(
       `INSERT INTO production_records (id, timestamp, date, machine, meters, changesCount, changesComment, shift, boss, operator)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
@@ -586,6 +660,14 @@ app.post('/api/records', authenticate, requireDB, async (req, res) => {
        boss = EXCLUDED.boss, operator = EXCLUDED.operator`,
       [id, timestamp, date, machine, meters, changesCount, changesComment, shift, boss, operator]
     );
+
+    await logAudit(
+      user.id,
+      wasExisting ? 'record_updated' : 'record_created',
+      { record_id: id, date, machine, shift, boss, operator, meters, changesCount },
+      req.ip || ''
+    );
+
     io.emit('records_changed');
     res.json({ success: true });
   } catch (err) {
@@ -594,8 +676,19 @@ app.post('/api/records', authenticate, requireDB, async (req, res) => {
 });
 
 app.delete('/api/records/:id', authenticate, requireDB, async (req, res) => {
+  const user = (req as any).user;
   try {
-    await pool.query('DELETE FROM production_records WHERE id = $1', [req.params.id]);
+    const deletedResult = await pool.query(
+      `DELETE FROM production_records
+       WHERE id = $1
+       RETURNING id, date, machine, shift, boss, operator, meters, changescount as "changesCount"`,
+      [req.params.id]
+    );
+
+    if (deletedResult.rowCount > 0) {
+      await logAudit(user.id, 'record_deleted', deletedResult.rows[0], req.ip || '');
+    }
+
     io.emit('records_changed');
     res.json({ success: true });
   } catch (err) {
@@ -604,8 +697,17 @@ app.delete('/api/records/:id', authenticate, requireDB, async (req, res) => {
 });
 
 app.delete('/api/records', authenticate, requireDB, async (req, res) => {
+  const user = (req as any).user;
   try {
+    const countResult = await pool.query('SELECT COUNT(*)::int AS count FROM production_records');
+    const deletedCount = countResult.rows[0]?.count ?? 0;
+
     await pool.query('DELETE FROM production_records');
+
+    if (deletedCount > 0) {
+      await logAudit(user.id, 'record_bulk_deleted', { deleted_count: deletedCount }, req.ip || '');
+    }
+
     io.emit('records_changed');
     res.json({ success: true });
   } catch (err) {

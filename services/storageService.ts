@@ -1,4 +1,4 @@
-import { ProductionRecord, FilterState, PaginatedRecordsResponse, DashboardStats } from '../types';
+import { ProductionRecord, FilterState, PaginatedRecordsResponse, DashboardStats, PaginatedAuditLogsResponse } from '../types';
 import { COMMON_COMMENTS, COMMON_OPERATORS } from '../constants';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
@@ -257,6 +257,20 @@ export const fetchDashboardStats = async (
 ): Promise<DashboardStats> => {
   const qs = buildFilterQS(filters);
   return fetchJson(`/records/stats${qs}`);
+};
+
+export const fetchAuditLogsPage = async (
+  page: number,
+  limit: number,
+  searchText: string,
+  role: string
+): Promise<PaginatedAuditLogsResponse> => {
+  const params = new URLSearchParams();
+  params.set('page', String(page));
+  params.set('limit', String(limit));
+  if (searchText.trim()) params.set('q', searchText.trim());
+  if (role.trim()) params.set('role', role.trim());
+  return fetchJson(`/admin/audit-logs?${params.toString()}`);
 };
 
 export const onRecordsChanged = (callback: () => void): (() => void) => {
