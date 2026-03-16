@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { io } from 'socket.io-client';
 
+const AUTH_EXPIRED_EVENT = 'app:auth-expired';
+
 export interface User {
   id: string;
   operator_code: string;
@@ -44,6 +46,40 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     checkAuth();
+  }, []);
+
+  useEffect(() => {
+    const originalFetch = window.fetch.bind(window);
+
+    const handleAuthExpired = () => {
+      setUser(null);
+    };
+
+    window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const response = await originalFetch(input, init);
+
+      if (response.status === 401) {
+        const requestUrl = typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+
+        const isAuthFormRequest = requestUrl.includes('/api/auth/login') || requestUrl.includes('/api/auth/register');
+        if (!isAuthFormRequest) {
+          window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+        }
+      }
+
+      return response;
+    };
+
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+
+    return () => {
+      window.fetch = originalFetch;
+      window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+    };
   }, []);
 
   const login = async (operator_code: string, pin: string) => {

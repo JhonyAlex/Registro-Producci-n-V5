@@ -73,7 +73,26 @@ const actionLabel = (action: string) => {
 const formatDetails = (details: Record<string, any> | null) => {
   if (!details || Object.keys(details).length === 0) return '-';
 
-  const textIfAny = (value: any) => (value === null || value === undefined || value === '' ? '-' : String(value));
+  const textIfAny = (value: any) => {
+    if (value === null || value === undefined || value === '') return '-';
+    if (Array.isArray(value)) {
+      const rendered = value
+        .map((item) => (typeof item === 'object' ? JSON.stringify(item) : String(item)))
+        .join(', ');
+      return rendered || '-';
+    }
+    if (typeof value === 'object') {
+      return JSON.stringify(value);
+    }
+    return String(value);
+  };
+
+  const permissionsSummary = (permissions: Record<string, boolean>) => {
+    const enabled = Object.entries(permissions)
+      .filter(([, allowed]) => allowed === true)
+      .map(([key]) => key);
+    return enabled.length > 0 ? enabled.join(', ') : 'Sin permisos habilitados';
+  };
   const recordInfo = (src: any) => {
     if (!src) return '';
     return `fecha ${textIfAny(src.date)}, máquina ${textIfAny(src.machine)}, turno ${textIfAny(src.shift)}, operario ${textIfAny(src.operator)}, metros ${textIfAny(src.meters)}, cambios ${textIfAny(src.changesCount)}`;
@@ -95,6 +114,10 @@ const formatDetails = (details: Record<string, any> | null) => {
   if (details.record_id) {
     const summary = recordInfo(details);
     return `ID ${details.record_id}${summary ? ` | ${summary}` : ''}`;
+  }
+
+  if (details.role && details.permissions && typeof details.permissions === 'object') {
+    return `Rol: ${details.role} | Permisos habilitados: ${permissionsSummary(details.permissions)}`;
   }
 
   if (details.target_user_id) return `Usuario objetivo: ${details.target_user_id}`;
