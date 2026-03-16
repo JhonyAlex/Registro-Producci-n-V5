@@ -371,6 +371,32 @@ app.delete('/api/admin/users/:id', authenticate, requireRole(['admin']), async (
   }
 });
 
+app.post('/api/admin/users/:id/reset-pin', authenticate, requireRole(['admin']), async (req, res) => {
+  const admin = (req as any).user;
+  const { id } = req.params;
+  const { new_pin } = req.body;
+
+  if (!new_pin || !/^\d{4,6}$/.test(new_pin)) {
+    return res.status(400).json({ error: 'El PIN debe tener entre 4 y 6 dígitos numéricos.' });
+  }
+
+  try {
+    const targetResult = await pool.query('SELECT id FROM users WHERE id = $1', [id]);
+    if (targetResult.rowCount === 0) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+    const pinHash = await bcrypt.hash(new_pin, 10);
+    await pool.query(
+      'UPDATE users SET pin_hash = $1, session_version = session_version + 1 WHERE id = $2',
+      [pinHash, id]
+    );
+
+    await logAudit(admin.id, 'pin_reset', { target_user_id: id }, req.ip || '');
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Error al restablecer el PIN' });
+  }
+});
+
 // --- RECORDS ---
 
 // Helper: build visibility WHERE clause and params based on role

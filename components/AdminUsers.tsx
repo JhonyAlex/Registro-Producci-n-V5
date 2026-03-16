@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { CheckCircle, Unlock, ShieldAlert, UserCheck, Clock, Ban, Users, RefreshCw, Trash2, AlertTriangle } from 'lucide-react';
+import { CheckCircle, Unlock, ShieldAlert, UserCheck, Clock, Ban, Users, RefreshCw, Trash2, AlertTriangle, Key } from 'lucide-react';
 import { io } from 'socket.io-client';
 import { useAuth } from '../context/AuthContext';
 import { emitAppNotification } from '../services/notificationService';
@@ -23,6 +23,9 @@ const AdminUsers: React.FC = () => {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [userToDelete, setUserToDelete] = useState<AdminUser | null>(null);
   const [deleteConfirmation, setDeleteConfirmation] = useState('');
+  const [userToResetPin, setUserToResetPin] = useState<AdminUser | null>(null);
+  const [newPin, setNewPin] = useState('');
+  const [confirmPin, setConfirmPin] = useState('');
 
   const fetchUsers = async () => {
     try {
@@ -105,6 +108,54 @@ const AdminUsers: React.FC = () => {
 
     setUserToDelete(adminUser);
     setDeleteConfirmation('');
+  };
+
+  const openResetPinModal = (adminUser: AdminUser) => {
+    setUserToResetPin(adminUser);
+    setNewPin('');
+    setConfirmPin('');
+  };
+
+  const closeResetPinModal = () => {
+    setUserToResetPin(null);
+    setNewPin('');
+    setConfirmPin('');
+  };
+
+  const handleResetPin = async () => {
+    if (!userToResetPin) return;
+
+    if (!/^\d{4,6}$/.test(newPin)) {
+      emitAppNotification('El PIN debe tener entre 4 y 6 dígitos numéricos.', 'warning');
+      return;
+    }
+
+    if (newPin !== confirmPin) {
+      emitAppNotification('Los PINs no coinciden.', 'warning');
+      return;
+    }
+
+    setActionLoading(userToResetPin.id);
+    try {
+      const res = await fetch(`/api/admin/users/${userToResetPin.id}/reset-pin`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ new_pin: newPin }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Error al restablecer el PIN');
+      }
+
+      emitAppNotification(`PIN de ${userToResetPin.name} restablecido correctamente.`, 'success');
+      closeResetPinModal();
+    } catch (err: any) {
+      emitAppNotification(err.message, 'error');
+    } finally {
+      setActionLoading(null);
+    }
   };
 
   const handleDelete = async () => {
@@ -286,10 +337,16 @@ const AdminUsers: React.FC = () => {
                               <span className="hidden sm:inline">Desbloquear</span>
                             </button>
                           )}
-                          {u.status === 'active' && (
-                            <span className="text-sm text-slate-400 italic px-2">
-                              Sin acciones
-                            </span>
+                          {currentUser?.role === 'admin' && (
+                            <button
+                              onClick={() => openResetPinModal(u)}
+                              disabled={actionLoading === u.id}
+                              className="flex items-center gap-1 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 font-medium rounded-lg transition-colors disabled:opacity-50"
+                              title="Restablecer PIN"
+                            >
+                              <Key className="w-4 h-4" />
+                              <span className="hidden sm:inline">Restablecer</span>
+                            </button>
                           )}
                           <button
                             onClick={() => openDeleteModal(u)}
@@ -368,6 +425,76 @@ const AdminUsers: React.FC = () => {
                   className="px-4 py-2 rounded-lg bg-red-600 text-white font-medium hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Eliminar usuario
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {userToResetPin && (
+          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden border border-slate-200">
+              <div className="p-6 border-b border-slate-200 bg-blue-50">
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 flex-shrink-0">
+                    <Key className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-900">Restablecer PIN de usuario</h3>
+                    <p className="text-sm text-slate-600 mt-1">
+                      Establece un nuevo PIN para <span className="font-semibold">{userToResetPin.name}</span>. La sesión activa del usuario será invalidada.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-6 space-y-4">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700 space-y-1">
+                  <p><span className="font-semibold">Nombre:</span> {userToResetPin.name}</p>
+                  <p><span className="font-semibold">Código:</span> {userToResetPin.operator_code}</p>
+                  <p><span className="font-semibold">Rol:</span> {getRoleLabel(userToResetPin.role)}</p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Nuevo PIN (4-6 dígitos)</label>
+                  <input
+                    type="password"
+                    inputMode="numeric"
+                    value={newPin}
+                    onChange={(e) => setNewPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    className="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="••••"
+                    maxLength={6}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Confirmar nuevo PIN</label>
+                  <input
+                    type="password"
+                    inputMode="numeric"
+                    value={confirmPin}
+                    onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    className="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="••••"
+                    maxLength={6}
+                  />
+                </div>
+              </div>
+
+              <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-3">
+                <button
+                  onClick={closeResetPinModal}
+                  className="px-4 py-2 rounded-lg text-slate-600 font-medium hover:bg-slate-200 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleResetPin}
+                  disabled={actionLoading === userToResetPin.id || newPin.length < 4 || newPin.length > 6 || newPin !== confirmPin}
+                  className="px-4 py-2 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Restablecer PIN
                 </button>
               </div>
             </div>
