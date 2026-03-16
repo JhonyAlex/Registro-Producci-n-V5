@@ -1,10 +1,9 @@
-import { ProductionRecord, FilterState, PaginatedRecordsResponse, DashboardStats, PaginatedAuditLogsResponse } from '../types';
+import { ProductionRecord } from '../types';
 import { COMMON_COMMENTS, COMMON_OPERATORS } from '../constants';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { io } from 'socket.io-client';
-import { emitAppNotification } from './notificationService';
 
 const socket = io();
 
@@ -37,20 +36,7 @@ const fetchJson = async (url: string, options?: RequestInit) => {
   });
   if (!res.ok) {
     const errorData = await res.json().catch(() => ({}));
-    const error: any = new Error(errorData.error || `HTTP error ${res.status}`);
-    error.status = res.status;
-
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('app-session-state', {
-        detail: {
-          authError: res.status === 401,
-          authMessage: errorData.error as string | undefined,
-          dbUnavailable: error.message === 'Database unavailable',
-        },
-      }));
-    }
-
-    throw error;
+    throw new Error(errorData.error || `HTTP error ${res.status}`);
   }
   return res.json();
 };
@@ -173,7 +159,7 @@ export const deleteRecord = async (id: string): Promise<void> => {
     });
   } catch (e) {
     console.error("Error deleting record:", e);
-    emitAppNotification('Error al borrar. Verifique su conexión.', 'error');
+    alert("Error al borrar. Verifique su conexión.");
   }
 };
 
@@ -229,61 +215,6 @@ export const renameCustomOperator = async (oldName: string, newName: string): Pr
   }
 };
 
-// --- FILTER QUERY STRING BUILDER ---
-function buildFilterQS(filters: FilterState, page?: number, limit?: number): string {
-  const params = new URLSearchParams();
-  if (filters.startDate) params.set('startDate', filters.startDate);
-  if (filters.endDate) params.set('endDate', filters.endDate);
-  if (filters.machine) params.set('machine', filters.machine);
-  if (filters.boss) params.set('boss', filters.boss);
-  if (filters.operator) params.set('operator', filters.operator);
-  if (page !== undefined) params.set('page', String(page));
-  if (limit !== undefined) params.set('limit', String(limit));
-  const qs = params.toString();
-  return qs ? `?${qs}` : '';
-}
-
-export const fetchRecordsPage = async (
-  filters: FilterState,
-  page: number,
-  limit: number
-): Promise<PaginatedRecordsResponse> => {
-  const qs = buildFilterQS(filters, page, limit);
-  return fetchJson(`/records${qs}`);
-};
-
-export const fetchDashboardStats = async (
-  filters: FilterState
-): Promise<DashboardStats> => {
-  const qs = buildFilterQS(filters);
-  return fetchJson(`/records/stats${qs}`);
-};
-
-export const fetchAuditLogsPage = async (
-  page: number,
-  limit: number,
-  searchText: string,
-  role: string
-): Promise<PaginatedAuditLogsResponse> => {
-  const params = new URLSearchParams();
-  params.set('page', String(page));
-  params.set('limit', String(limit));
-  if (searchText.trim()) params.set('q', searchText.trim());
-  if (role.trim()) params.set('role', role.trim());
-  return fetchJson(`/admin/audit-logs?${params.toString()}`);
-};
-
-export const onRecordsChanged = (callback: () => void): (() => void) => {
-  socket.on('records_changed', callback);
-  return () => socket.off('records_changed', callback);
-};
-
-export const exportFilteredToExcel = async (filters: FilterState): Promise<void> => {
-  const qs = buildFilterQS(filters, 1, 999999);
-  const data: PaginatedRecordsResponse = await fetchJson(`/records${qs}`);
-  exportToExcel(data.records);
-};
-
 export const clearAllRecords = async (): Promise<void> => {
   try {
     await fetchJson('/records', {
@@ -295,8 +226,58 @@ export const clearAllRecords = async (): Promise<void> => {
   }
 };
 
-// Legacy alias kept for any direct references; use onRecordsChanged + fetchRecordsPage instead
-export const subscribeToRecords = onRecordsChanged;
+export const subscribeToRecords = (
+  callback: (records: ProductionRecord[]) => void,
+  onError?: (errorMsg: string) => void
+) => {
+  let isSubscribed = true;
+
+  const fetchRecords = async () => {
+    try {
+      const records = await fetchJson('/records');
+      
+      // Sort locally to ensure records without timestamp are still loaded
+      records.sort((a: any, b: any) => {
+        const timeA = a.timestamp || new Date(a.date || 0).getTime();
+        const timeB = b.timestamp || new Date(b.date || 0).getTime();
+        return timeB - timeA;
+      });
+      
+      if (isSubscribed) {
+        localRecordsCache = records;
+        callback(records);
+        if (onError) onError('');
+      }
+    } catch (error: any) {
+      console.error("API Error:", error);
+      let msg = "Error de conexión con la base de datos.";
+      if (error.message === 'Database unavailable') msg = "Servicio no disponible (Offline).";
+      if (isSubscribed && onError) onError(msg);
+    }
+  };
+
+  fetchRecords();
+  
+  const handleConnect = () => {
+    if (onError) onError('');
+    fetchRecords();
+  };
+  
+  const handleDisconnect = () => {
+    if (onError) onError('Desconectado del servidor en tiempo real.');
+  };
+
+  socket.on('records_changed', fetchRecords);
+  socket.on('connect', handleConnect);
+  socket.on('disconnect', handleDisconnect);
+
+  return () => {
+    isSubscribed = false;
+    socket.off('records_changed', fetchRecords);
+    socket.off('connect', handleConnect);
+    socket.off('disconnect', handleDisconnect);
+  };
+};
 
 // --- IMPORT / EXPORT ---
 
@@ -315,7 +296,7 @@ export const exportAllData = async () => {
     URL.revokeObjectURL(url);
   } catch (e) {
     console.error("Error exporting all data:", e);
-    emitAppNotification('Error al exportar los datos.', 'error');
+    alert("Error al exportar los datos.");
   }
 };
 
@@ -403,13 +384,12 @@ export const exportToPDF = (records: ProductionRecord[]) => {
   doc.save(`Reporte_Produccion_${new Date().toISOString().slice(0, 10)}.pdf`);
 };
 
-export const reconnectDatabase = async (): Promise<boolean> => {
+export const reconnectDatabase = async () => {
+  // Try to fetch records to test connection
   try {
-    await fetchJson('/records/stats');
-    console.log('Network reconnected successfully');
-    return true;
+    await fetchJson('/records');
+    console.log("Network enabled successfully");
   } catch (e) {
-    console.error('Error reconnecting:', e);
-    return false;
+    console.error("Error enabling network:", e);
   }
 };
