@@ -111,7 +111,7 @@ export const saveRecord = async (record: ProductionRecord): Promise<void> => {
     if (record.changesComment) {
       await fetchJson('/settings/comments', {
         method: 'POST',
-        body: JSON.stringify({ name: record.changesComment })
+        body: JSON.stringify({ name: record.changesComment, skipAudit: true })
       }).catch(err => console.warn("Failed to add comment:", err));
     }
 
@@ -123,7 +123,7 @@ export const saveRecord = async (record: ProductionRecord): Promise<void> => {
       if (!isTestOp) {
          await fetchJson('/settings/operators', {
            method: 'POST',
-           body: JSON.stringify({ name: record.operator })
+           body: JSON.stringify({ name: record.operator, skipAudit: true })
          }).catch(err => console.warn("Failed to add operator:", err));
           
          // Clean up test data if present in our local cache
@@ -138,7 +138,7 @@ export const saveRecord = async (record: ProductionRecord): Promise<void> => {
       } else {
         await fetchJson('/settings/operators', {
           method: 'POST',
-          body: JSON.stringify({ name: record.operator })
+          body: JSON.stringify({ name: record.operator, skipAudit: true })
         }).catch(err => console.warn("Failed to add operator:", err));
       }
     }

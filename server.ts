@@ -504,27 +504,50 @@ app.post('/api/records', authenticate, requireDB, async (req, res) => {
       [id, timestamp, date, machine, meters, changesCount, changesComment, shift, boss, operator]
     );
 
+    const normalizeValue = (value: any) => {
+      if (value === null || value === undefined) return '';
+      return String(value).trim();
+    };
+
+    const toComparable = (source: any) => ({
+      date: normalizeValue(source?.date),
+      machine: normalizeValue(source?.machine),
+      shift: normalizeValue(source?.shift),
+      boss: normalizeValue(source?.boss),
+      operator: normalizeValue(source?.operator),
+      meters: Number(source?.meters || 0),
+      changesCount: Number(source?.changesCount || 0),
+      changesComment: normalizeValue(source?.changesComment)
+    });
+
     const currentSnapshot = { date, machine, shift, boss, operator, meters, changesCount, changesComment };
+    const currentComparable = toComparable(currentSnapshot);
+
     if (existingRecord) {
-      await logAudit(
-        user.id,
-        'record_updated',
-        {
-          record_id: id,
-          before: {
-            date: existingRecord.date,
-            machine: existingRecord.machine,
-            shift: existingRecord.shift,
-            boss: existingRecord.boss,
-            operator: existingRecord.operator,
-            meters: existingRecord.meters,
-            changesCount: existingRecord.changesCount,
-            changesComment: existingRecord.changesComment
+      const beforeSnapshot = {
+        date: existingRecord.date,
+        machine: existingRecord.machine,
+        shift: existingRecord.shift,
+        boss: existingRecord.boss,
+        operator: existingRecord.operator,
+        meters: existingRecord.meters,
+        changesCount: existingRecord.changesCount,
+        changesComment: existingRecord.changesComment
+      };
+      const beforeComparable = toComparable(beforeSnapshot);
+
+      if (JSON.stringify(beforeComparable) !== JSON.stringify(currentComparable)) {
+        await logAudit(
+          user.id,
+          'record_updated',
+          {
+            record_id: id,
+            before: beforeSnapshot,
+            after: currentSnapshot
           },
-          after: currentSnapshot
-        },
-        req.ip || ''
-      );
+          req.ip || ''
+        );
+      }
     } else {
       await logAudit(
         user.id,
@@ -604,8 +627,14 @@ app.get('/api/settings/comments', authenticate, requireDB, async (req, res) => {
 app.post('/api/settings/comments', authenticate, requireDB, async (req, res) => {
   const user = (req as any).user;
   try {
-    await pool.query('INSERT INTO custom_comments (name) VALUES ($1) ON CONFLICT DO NOTHING', [req.body.name]);
-    await logAudit(user.id, 'comment_added', { name: req.body.name }, req.ip || '');
+    const skipAudit = Boolean(req.body?.skipAudit);
+    const insertResult = await pool.query(
+      'INSERT INTO custom_comments (name) VALUES ($1) ON CONFLICT DO NOTHING RETURNING name',
+      [req.body.name]
+    );
+    if (!skipAudit && insertResult.rowCount && insertResult.rowCount > 0) {
+      await logAudit(user.id, 'comment_added', { name: req.body.name }, req.ip || '');
+    }
     io.emit('settings_changed');
     res.json({ success: true });
   } catch (err) {
@@ -616,8 +645,10 @@ app.post('/api/settings/comments', authenticate, requireDB, async (req, res) => 
 app.delete('/api/settings/comments/:name', authenticate, requireDB, async (req, res) => {
   const user = (req as any).user;
   try {
-    await pool.query('DELETE FROM custom_comments WHERE name = $1', [req.params.name]);
-    await logAudit(user.id, 'comment_deleted', { name: req.params.name }, req.ip || '');
+    const deleteResult = await pool.query('DELETE FROM custom_comments WHERE name = $1 RETURNING name', [req.params.name]);
+    if (deleteResult.rowCount && deleteResult.rowCount > 0) {
+      await logAudit(user.id, 'comment_deleted', { name: req.params.name }, req.ip || '');
+    }
     io.emit('settings_changed');
     res.json({ success: true });
   } catch (err) {
@@ -658,8 +689,14 @@ app.get('/api/settings/operators', authenticate, requireDB, async (req, res) => 
 app.post('/api/settings/operators', authenticate, requireDB, async (req, res) => {
   const user = (req as any).user;
   try {
-    await pool.query('INSERT INTO custom_operators (name) VALUES ($1) ON CONFLICT DO NOTHING', [req.body.name]);
-    await logAudit(user.id, 'operator_added', { name: req.body.name }, req.ip || '');
+    const skipAudit = Boolean(req.body?.skipAudit);
+    const insertResult = await pool.query(
+      'INSERT INTO custom_operators (name) VALUES ($1) ON CONFLICT DO NOTHING RETURNING name',
+      [req.body.name]
+    );
+    if (!skipAudit && insertResult.rowCount && insertResult.rowCount > 0) {
+      await logAudit(user.id, 'operator_added', { name: req.body.name }, req.ip || '');
+    }
     io.emit('settings_changed');
     res.json({ success: true });
   } catch (err) {
@@ -670,8 +707,10 @@ app.post('/api/settings/operators', authenticate, requireDB, async (req, res) =>
 app.delete('/api/settings/operators/:name', authenticate, requireDB, async (req, res) => {
   const user = (req as any).user;
   try {
-    await pool.query('DELETE FROM custom_operators WHERE name = $1', [req.params.name]);
-    await logAudit(user.id, 'operator_deleted', { name: req.params.name }, req.ip || '');
+    const deleteResult = await pool.query('DELETE FROM custom_operators WHERE name = $1 RETURNING name', [req.params.name]);
+    if (deleteResult.rowCount && deleteResult.rowCount > 0) {
+      await logAudit(user.id, 'operator_deleted', { name: req.params.name }, req.ip || '');
+    }
     io.emit('settings_changed');
     res.json({ success: true });
   } catch (err) {
