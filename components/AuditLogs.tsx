@@ -93,6 +93,31 @@ const formatDetails = (details: Record<string, any> | null) => {
       .map(([key]) => key);
     return enabled.length > 0 ? enabled.join(', ') : 'Sin permisos habilitados';
   };
+
+  const permissionsSummaryFromAny = (value: any) => {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      return permissionsSummary(value as Record<string, boolean>);
+    }
+
+    if (typeof value === 'string') {
+      if (value.trim() === '[object Object]') {
+        return 'Permisos actualizados (detalle no serializado correctamente)';
+      }
+
+      try {
+        const parsed = JSON.parse(value);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return permissionsSummary(parsed as Record<string, boolean>);
+        }
+      } catch {
+        // Ignore parse errors and fallback to raw text.
+      }
+
+      return value;
+    }
+
+    return 'Permisos actualizados';
+  };
   const recordInfo = (src: any) => {
     if (!src) return '';
     return `fecha ${textIfAny(src.date)}, máquina ${textIfAny(src.machine)}, turno ${textIfAny(src.shift)}, operario ${textIfAny(src.operator)}, metros ${textIfAny(src.meters)}, cambios ${textIfAny(src.changesCount)}`;
@@ -116,8 +141,8 @@ const formatDetails = (details: Record<string, any> | null) => {
     return `ID ${details.record_id}${summary ? ` | ${summary}` : ''}`;
   }
 
-  if (details.role && details.permissions && typeof details.permissions === 'object') {
-    return `Rol: ${details.role} | Permisos habilitados: ${permissionsSummary(details.permissions)}`;
+  if (details.role && details.permissions !== undefined) {
+    return `Rol: ${details.role} | Permisos habilitados: ${permissionsSummaryFromAny(details.permissions)}`;
   }
 
   if (details.target_user_id) return `Usuario objetivo: ${details.target_user_id}`;
