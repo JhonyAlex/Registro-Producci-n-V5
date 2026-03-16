@@ -529,7 +529,7 @@ app.put('/api/settings/operators/:oldName', requireDB, async (req, res) => {
 });
 
 // --- IMPORT / EXPORT ---
-app.get('/api/export', requireDB, async (req, res) => {
+app.get('/api/export', authenticate, requireRole(['admin']), requireDB, async (req, res) => {
   try {
     const records = await pool.query('SELECT id, timestamp, date, machine, meters, changescount as "changesCount", changescomment as "changesComment", shift, boss, operator FROM production_records');
     const comments = await pool.query('SELECT name FROM custom_comments');
@@ -545,7 +545,7 @@ app.get('/api/export', requireDB, async (req, res) => {
   }
 });
 
-app.post('/api/import', requireDB, async (req, res) => {
+app.post('/api/import', authenticate, requireRole(['admin']), requireDB, async (req, res) => {
   const { records, comments, operators } = req.body;
   try {
     await pool.query('BEGIN');

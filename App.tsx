@@ -18,6 +18,7 @@ const ITEMS_PER_PAGE = 15;
 
 const AppContent: React.FC = () => {
   const { user, logout } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [currentView, setCurrentView] = useState<View>('entry');
   const [records, setRecords] = useState<ProductionRecord[]>([]);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -256,10 +257,18 @@ const AppContent: React.FC = () => {
   };
 
   const handleImportClick = () => {
+    if (!isAdmin) {
+      return;
+    }
     fileInputRef.current?.click();
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!isAdmin) {
+      e.target.value = '';
+      return;
+    }
+
     const file = e.target.files?.[0];
     if (!file) return;
     
@@ -335,23 +344,27 @@ const AppContent: React.FC = () => {
             </>
           )}
           
-          <div className="mt-8 mb-2 px-4">
-            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Datos</h3>
-          </div>
-          <button
-            onClick={exportAllData}
-            className="flex items-center gap-3 px-4 py-3 rounded-lg transition-all w-full text-slate-500 hover:bg-slate-100 hover:text-slate-800"
-          >
-            <Database className="w-5 h-5" />
-            <span className="font-medium">Exportar Backup</span>
-          </button>
-          <button
-            onClick={handleImportClick}
-            className="flex items-center gap-3 px-4 py-3 rounded-lg transition-all w-full text-slate-500 hover:bg-slate-100 hover:text-slate-800"
-          >
-            <FileUp className="w-5 h-5" />
-            <span className="font-medium">Importar Backup</span>
-          </button>
+          {isAdmin && (
+            <>
+              <div className="mt-8 mb-2 px-4">
+                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Datos</h3>
+              </div>
+              <button
+                onClick={exportAllData}
+                className="flex items-center gap-3 px-4 py-3 rounded-lg transition-all w-full text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+              >
+                <Database className="w-5 h-5" />
+                <span className="font-medium">Exportar Backup</span>
+              </button>
+              <button
+                onClick={handleImportClick}
+                className="flex items-center gap-3 px-4 py-3 rounded-lg transition-all w-full text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+              >
+                <FileUp className="w-5 h-5" />
+                <span className="font-medium">Importar Backup</span>
+              </button>
+            </>
+          )}
         </nav>
         
         <div className="mt-auto p-6">
@@ -762,13 +775,15 @@ const AppContent: React.FC = () => {
         {(user?.role === 'admin' || user?.role === 'jefe_planta') && (
           <NavItem view="admin" icon={Users} label="Usuarios" mobileOnly />
         )}
-        <button
-          onClick={exportAllData}
-          className="flex flex-col items-center gap-1 py-1 px-1 justify-center rounded-lg transition-all w-auto text-slate-500 hover:bg-slate-100 hover:text-slate-800"
-        >
-          <Database className="w-6 h-6" />
-          <span className="text-[10px]">Exportar</span>
-        </button>
+        {isAdmin && (
+          <button
+            onClick={exportAllData}
+            className="flex flex-col items-center gap-1 py-1 px-1 justify-center rounded-lg transition-all w-auto text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+          >
+            <Database className="w-6 h-6" />
+            <span className="text-[10px]">Exportar</span>
+          </button>
+        )}
       </nav>
 
       {/* --- OFFLINE BLOCKING OVERLAY REMOVED --- */}
