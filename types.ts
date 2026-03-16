@@ -16,12 +16,6 @@ export enum ShiftType {
   NIGHT = 'Noche'
 }
 
-export enum BossType {
-  MARTIN = 'J.Martín',
-  NAVARRO = 'J.Navarro',
-  CESAR = 'César'
-}
-
 export interface ProductionRecord {
   id: string;
   timestamp: number;
@@ -32,7 +26,7 @@ export interface ProductionRecord {
   changesCount: number;
   changesComment: string;
   shift: ShiftType;
-  boss: BossType;
+  boss: string;
   operator: string; // New field
 }
 

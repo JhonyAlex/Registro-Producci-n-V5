@@ -1,5 +1,5 @@
 import { ProductionRecord } from '../types';
-import { COMMON_COMMENTS, COMMON_OPERATORS } from '../constants';
+import { COMMON_COMMENTS } from '../constants';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
@@ -11,15 +11,17 @@ const socket = io();
 let localRecordsCache: ProductionRecord[] = [];
 let localCommentsCache: string[] = [];
 let localOperatorsCache: string[] = [];
+let localBossesCache: string[] = [];
 
 // Subscribers for settings updates
-type SettingsCallback = (comments: string[], operators: string[]) => void;
+type SettingsCallback = (comments: string[], operators: string[], bosses: string[]) => void;
 const settingsSubscribers: SettingsCallback[] = [];
 
 const notifySettingsSubscribers = () => {
   const comments = localCommentsCache.length > 0 ? localCommentsCache : COMMON_COMMENTS;
-  const operators = localOperatorsCache.length > 0 ? localOperatorsCache : COMMON_OPERATORS;
-  settingsSubscribers.forEach(cb => cb(comments, operators));
+  const operators = localOperatorsCache;
+  const bosses = localBossesCache;
+  settingsSubscribers.forEach(cb => cb(comments, operators, bosses));
 };
 
 // --- API HELPERS ---
@@ -47,13 +49,14 @@ let isPolling = false;
 
 const pollSettings = async () => {
   try {
-    const [comments, operators] = await Promise.all([
+    const [comments, userOptions] = await Promise.all([
       fetchJson('/settings/comments').catch(() => []),
-      fetchJson('/settings/operators').catch(() => [])
+      fetchJson('/settings/user-options').catch(() => ({ operators: [], bosses: [] }))
     ]);
     
     localCommentsCache = comments.length > 0 ? comments : COMMON_COMMENTS;
-    localOperatorsCache = operators.length > 0 ? operators : COMMON_OPERATORS;
+    localOperatorsCache = Array.isArray(userOptions?.operators) ? userOptions.operators : [];
+    localBossesCache = Array.isArray(userOptions?.bosses) ? userOptions.bosses : [];
     
     notifySettingsSubscribers();
   } catch (err) {
@@ -67,6 +70,8 @@ const startPollingSettings = () => {
   pollSettings();
   
   socket.on('settings_changed', pollSettings);
+  socket.on('user_status_changed', pollSettings);
+  socket.on('user_deleted', pollSettings);
 };
 
 // Start polling immediately
@@ -79,8 +84,9 @@ export const subscribeToSettings = (callback: SettingsCallback) => {
   settingsSubscribers.push(callback);
   // Send immediate current state
   const comments = localCommentsCache.length > 0 ? localCommentsCache : COMMON_COMMENTS;
-  const operators = localOperatorsCache.length > 0 ? localOperatorsCache : COMMON_OPERATORS;
-  callback(comments, operators);
+  const operators = localOperatorsCache;
+  const bosses = localBossesCache;
+  callback(comments, operators, bosses);
 
   // Return unsubscribe function
   return () => {
@@ -96,7 +102,11 @@ export const getAvailableComments = (): string[] => {
 };
 
 export const getAvailableOperators = (): string[] => {
-  return localOperatorsCache.length > 0 ? localOperatorsCache : COMMON_OPERATORS;
+  return localOperatorsCache;
+};
+
+export const getAvailableBosses = (): string[] => {
+  return localBossesCache;
 };
 
 export const saveRecord = async (record: ProductionRecord): Promise<void> => {
@@ -113,34 +123,6 @@ export const saveRecord = async (record: ProductionRecord): Promise<void> => {
         method: 'POST',
         body: JSON.stringify({ name: record.changesComment, skipAudit: true })
       }).catch(err => console.warn("Failed to add comment:", err));
-    }
-
-    // 3. Handle Custom Operators & Cleanup Test Data
-    if (record.operator) {
-      const testOperatorsToRemove = ["Operario 1", "Operario 2"];
-      const isTestOp = testOperatorsToRemove.includes(record.operator);
-      
-      if (!isTestOp) {
-         await fetchJson('/settings/operators', {
-           method: 'POST',
-           body: JSON.stringify({ name: record.operator, skipAudit: true })
-         }).catch(err => console.warn("Failed to add operator:", err));
-          
-         // Clean up test data if present in our local cache
-         const hasTestOps = localOperatorsCache.some(op => testOperatorsToRemove.includes(op));
-         if (hasTestOps) {
-            for (const testOp of testOperatorsToRemove) {
-              await fetchJson(`/settings/operators/${encodeURIComponent(testOp)}`, {
-                method: 'DELETE'
-              }).catch(() => {});
-            }
-         }
-      } else {
-        await fetchJson('/settings/operators', {
-          method: 'POST',
-          body: JSON.stringify({ name: record.operator, skipAudit: true })
-        }).catch(err => console.warn("Failed to add operator:", err));
-      }
     }
 
     // Trigger a poll to update caches

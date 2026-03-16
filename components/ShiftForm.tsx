@@ -1,13 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Save, Calendar, CheckCircle, X, ChevronDown, MessageSquare, Trash2, RotateCcw, Settings, Edit2, Users, Cloud } from 'lucide-react';
-import { MachineType, ShiftType, BossType, ProductionRecord } from '../types';
-import { MACHINES, SHIFTS, BOSSES } from '../constants';
+import { MachineType, ShiftType, ProductionRecord } from '../types';
+import { MACHINES, SHIFTS } from '../constants';
 import { 
   saveRecord, 
   deleteCustomComment, 
   renameCustomComment,
-  deleteCustomOperator,
-  renameCustomOperator,
   subscribeToSettings
 } from '../services/storageService';
 
@@ -23,7 +21,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
   const [formData, setFormData] = useState({
     date: new Date().toISOString().split('T')[0],
     shift: ShiftType.MORNING,
-    boss: BossType.MARTIN,
+    boss: '',
     machine: MachineType.WH1,
   });
 
@@ -34,6 +32,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
   // Custom Operator Field State
   const [operatorInput, setOperatorInput] = useState('');
   const [availableOperators, setAvailableOperators] = useState<string[]>([]);
+  const [availableBosses, setAvailableBosses] = useState<string[]>([]);
   const [filteredOperators, setFilteredOperators] = useState<string[]>([]);
   const [showOperatorSuggestions, setShowOperatorSuggestions] = useState(false);
   const operatorDropdownRef = useRef<HTMLDivElement>(null);
@@ -46,7 +45,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Management Modal State (Generic for Comments and Operators)
-  type ModalMode = 'comments' | 'operators';
+  type ModalMode = 'comments';
   const [showManageModal, setShowManageModal] = useState(false);
   const [manageMode, setManageMode] = useState<ModalMode>('comments');
   const [editingItemOldName, setEditingItemOldName] = useState<string | null>(null);
@@ -76,6 +75,12 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
       }
     }
   }, []); // Run once on mount
+
+  useEffect(() => {
+    if (!formData.boss && availableBosses.length > 0) {
+      setFormData((prev) => ({ ...prev, boss: availableBosses[0] }));
+    }
+  }, [availableBosses, formData.boss]);
 
   // 2. Save Defaults to LocalStorage whenever context fields change (Only if not editing)
   useEffect(() => {
@@ -115,9 +120,10 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
 
   // Subscribe to real-time updates for Comments and Operators
   useEffect(() => {
-    const unsubscribe = subscribeToSettings((comments, operators) => {
+    const unsubscribe = subscribeToSettings((comments, operators, bosses) => {
       setAvailableComments(comments);
       setAvailableOperators(operators);
+      setAvailableBosses(bosses);
     });
     return () => unsubscribe();
   }, []);
@@ -217,14 +223,8 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
   };
 
   const handleDeleteItem = async (item: string) => {
-    if (manageMode === 'comments') {
-      if (confirm(`¿Borrar "${item}" de la lista de incidencias?\n\nNota: Los registros históricos NO se borrarán.`)) {
-        await deleteCustomComment(item);
-      }
-    } else {
-      if (confirm(`¿Borrar "${item}" de la lista de operarios?\n\nNota: Los registros históricos NO se borrarán.`)) {
-        await deleteCustomOperator(item);
-      }
+    if (confirm(`¿Borrar "${item}" de la lista de incidencias?\n\nNota: Los registros históricos NO se borrarán.`)) {
+      await deleteCustomComment(item);
     }
   };
 
@@ -238,13 +238,8 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
     
     if (tempItemName !== editingItemOldName) {
       if (confirm(`¿Renombrar "${editingItemOldName}" a "${tempItemName}"?\n\nEsto actualizará TODOS los registros históricos.`)) {
-        if (manageMode === 'comments') {
-          await renameCustomComment(editingItemOldName, tempItemName);
-          if (commentInput === editingItemOldName) setCommentInput(tempItemName);
-        } else {
-          await renameCustomOperator(editingItemOldName, tempItemName);
-          if (operatorInput === editingItemOldName) setOperatorInput(tempItemName);
-        }
+        await renameCustomComment(editingItemOldName, tempItemName);
+        if (commentInput === editingItemOldName) setCommentInput(tempItemName);
       }
     }
     setEditingItemOldName(null);
@@ -254,6 +249,17 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!metersInput) return;
+
+    const isValidBoss = availableBosses.includes(formData.boss);
+    if (!isValidBoss) {
+      alert('Selecciona un jefe válido desde la lista de usuarios activos.');
+      return;
+    }
+
+    if (operatorInput && !availableOperators.includes(operatorInput)) {
+      alert('Selecciona un operario válido desde la lista de usuarios activos.');
+      return;
+    }
 
     const id = editingRecord ? editingRecord.id : crypto.randomUUID();
     const timestamp = Date.now();
@@ -349,10 +355,11 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
             <div className="relative">
               <select
                 value={formData.boss}
-                onChange={e => setFormData({ ...formData, boss: e.target.value as BossType })}
+                onChange={e => setFormData({ ...formData, boss: e.target.value })}
                 className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none appearance-none font-medium"
               >
-                {BOSSES.map(boss => (
+                {availableBosses.length === 0 && <option value="">Sin jefes activos</option>}
+                {availableBosses.map((boss) => (
                   <option key={boss} value={boss}>{boss}</option>
                 ))}
               </select>
@@ -367,13 +374,6 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
                 <label className="block text-sm font-semibold text-slate-700 flex items-center gap-2">
                   <Users className="w-4 h-4 text-slate-400" /> Operario
                 </label>
-                <button 
-                  type="button" 
-                  onClick={() => openManageModal('operators')}
-                  className="text-xs text-blue-600 font-bold flex items-center gap-1 hover:underline bg-blue-50 px-2 py-1 rounded"
-                >
-                  <Settings className="w-3 h-3" /> Config
-                </button>
               </div>
               <div className="relative w-full">
                 <div className="relative">
@@ -419,21 +419,9 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
                         ))}
                       </div>
                     ) : (
-                      <button
-                        type="button"
-                        onClick={() => selectOperator(operatorInput)}
-                        className="w-full px-4 py-4 text-left hover:bg-blue-50 transition-colors flex items-center gap-3 group"
-                      >
-                          <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-colors">
-                            <Plus className="w-5 h-5" />
-                          </div>
-                          <div>
-                            <p className="text-slate-500 text-xs font-medium">No encontrado en la lista</p>
-                            <p className="text-blue-700 font-bold text-sm break-words">
-                              Crear "{operatorInput}"
-                            </p>
-                          </div>
-                      </button>
+                      <div className="px-4 py-4 text-center">
+                        <p className="text-slate-500 text-sm font-medium">No hay coincidencias en usuarios activos.</p>
+                      </div>
                     )}
                   </div>
                 )}
@@ -618,7 +606,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
             <div className="bg-slate-50 p-4 border-b border-slate-200 flex justify-between items-center">
                <h3 className="font-bold text-slate-800 flex items-center gap-2">
                  <Settings className="w-5 h-5 text-slate-500" />
-                 {manageMode === 'comments' ? 'Gestionar Incidencias' : 'Gestionar Operarios'}
+                 Gestionar Incidencias
                </h3>
                <button onClick={() => setShowManageModal(false)} className="p-2 hover:bg-slate-200 rounded-full text-slate-500">
                  <X className="w-5 h-5" />
@@ -631,7 +619,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
             </div>
 
             <div className="overflow-y-auto flex-1 p-2 space-y-1">
-              {(manageMode === 'comments' ? availableComments : availableOperators).map((item, index) => {
+              {availableComments.map((item, index) => {
                  const isEditing = editingItemOldName === item;
                  
                  return (

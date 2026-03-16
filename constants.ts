@@ -1,8 +1,7 @@
-import { MachineType, ShiftType, BossType } from './types';
+import { MachineType, ShiftType } from './types';
 
 export const MACHINES = Object.values(MachineType);
 export const SHIFTS = Object.values(ShiftType);
-export const BOSSES = Object.values(BossType);
 
 export const COMMON_COMMENTS = [
   "Antivaho",

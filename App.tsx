@@ -9,9 +9,9 @@ import AdminUsers from './components/AdminUsers';
 import AuditLogs from './components/AuditLogs';
 import RolePermissionsMatrix from './components/RolePermissionsMatrix';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import { subscribeToRecords, clearAllRecords, deleteRecord, exportToExcel, exportAllData, importAllData, reconnectDatabase } from './services/storageService';
+import { subscribeToRecords, subscribeToSettings, clearAllRecords, deleteRecord, exportToExcel, exportAllData, importAllData, reconnectDatabase } from './services/storageService';
 import { ProductionRecord, FilterState } from './types';
-import { MACHINES, BOSSES } from './constants';
+import { MACHINES } from './constants';
 
 type View = 'dashboard' | 'entry' | 'list' | 'admin' | 'audit' | 'permissions';
 type DeleteMode = 'all' | 'single';
@@ -30,6 +30,7 @@ const AppContent: React.FC = () => {
 
   const [currentView, setCurrentView] = useState<View>('entry');
   const [records, setRecords] = useState<ProductionRecord[]>([]);
+  const [availableBosses, setAvailableBosses] = useState<string[]>([]);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [dbError, setDbError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -79,6 +80,15 @@ const AppContent: React.FC = () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToSettings((_comments, _operators, bosses) => {
+      setAvailableBosses(bosses);
+      setFilters((prev) => (prev.boss && !bosses.includes(prev.boss) ? { ...prev, boss: '' } : prev));
+    });
+
+    return () => unsubscribe();
   }, []);
 
   // Calculate unique operators from existing records for the filter dropdown
@@ -536,7 +546,7 @@ const AppContent: React.FC = () => {
                           onChange={e => setFilters({...filters, boss: e.target.value})}
                         >
                           <option value="">Todos</option>
-                          {BOSSES.map(b => <option key={b} value={b}>{b}</option>)}
+                          {availableBosses.map(b => <option key={b} value={b}>{b}</option>)}
                         </select>
                         <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                       </div>

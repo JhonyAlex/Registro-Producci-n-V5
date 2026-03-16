@@ -897,6 +897,32 @@ app.put('/api/settings/comments/:oldName', authenticate, requirePermission('sett
   }
 });
 
+app.get('/api/settings/user-options', authenticate, requirePermission('settings.read'), requireDB, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT name, role
+       FROM users
+       WHERE status = 'active'
+       ORDER BY name ASC`
+    );
+
+    const bosses = result.rows
+      .filter((row: any) => row.role === 'jefe_turno' || row.role === 'jefe_planta')
+      .map((row: any) => row.name);
+
+    const operators = result.rows
+      .filter((row: any) => row.role === 'operario' || row.role === 'jefe_turno' || row.role === 'jefe_planta')
+      .map((row: any) => row.name);
+
+    res.json({
+      bosses,
+      operators
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch selectable users' });
+  }
+});
+
 // --- SETTINGS (OPERATORS) ---
 app.get('/api/settings/operators', authenticate, requirePermission('settings.read'), requireDB, async (req, res) => {
   try {
