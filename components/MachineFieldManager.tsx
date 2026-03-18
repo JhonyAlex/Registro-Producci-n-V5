@@ -1,28 +1,13 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Plus, Save, Trash2, RefreshCw, History, AlertCircle, Copy } from 'lucide-react';
+﻿import React, { useEffect, useState } from 'react';
+import { Plus, Save, Edit2, Trash2, RefreshCw, AlertCircle, X } from 'lucide-react';
 import { MACHINES } from '../constants';
 import {
-  getMachineFieldSchema,
-  getMachineFieldSchemaHistory,
-  saveMachineFieldSchema,
-  subscribeToMachineFieldSchema,
+  createCatalogField,
+  deleteCatalogField,
+  getFieldCatalog,
+  updateCatalogField,
 } from '../services/storageService';
-import { DynamicFieldType, MachineFieldDefinition, MachineFieldSchemaHistoryItem, MachineType } from '../types';
-
-type EditableField = {
-  id: string;
-  key: string;
-  label: string;
-  type: DynamicFieldType;
-  required: boolean;
-  enabled: boolean;
-  order: number;
-  options: string[];
-  defaultValueText: string;
-  min: string;
-  max: string;
-  maxLength: string;
-};
+import { DynamicFieldType, FieldCatalogEntry, MachineType } from '../types';
 
 const FIELD_TYPES: DynamicFieldType[] = ['number', 'short_text', 'select', 'multi_select'];
 
@@ -33,324 +18,331 @@ const FIELD_TYPE_LABELS: Record<DynamicFieldType, string> = {
   multi_select: 'Seleccion multiple',
 };
 
-const makeEmptyField = (order: number): EditableField => ({
-  id: crypto.randomUUID(),
+const FIELD_TYPE_BADGE: Record<DynamicFieldType, string> = {
+  number: 'bg-blue-100 text-blue-700',
+  short_text: 'bg-slate-100 text-slate-700',
+  select: 'bg-purple-100 text-purple-700',
+  multi_select: 'bg-violet-100 text-violet-700',
+};
+
+type EditableEntry = {
+  id: string | null;
+  key: string;
+  label: string;
+  type: DynamicFieldType;
+  required: boolean;
+  options: string[];
+  defaultValueText: string;
+  min: string;
+  max: string;
+  maxLength: string;
+  assignedMachines: MachineType[];
+};
+
+const makeEmpty = (): EditableEntry => ({
+  id: null,
   key: '',
   label: '',
   type: 'short_text',
   required: false,
-  enabled: true,
-  order,
   options: [],
   defaultValueText: '',
   min: '',
   max: '',
   maxLength: '',
+  assignedMachines: [],
 });
 
-const toEditableField = (field: MachineFieldDefinition, index: number): EditableField => {
+const fromCatalog = (entry: FieldCatalogEntry): EditableEntry => {
   let defaultValueText = '';
-  if (Array.isArray(field.defaultValue)) {
-    defaultValueText = field.defaultValue.join(', ');
-  } else if (field.defaultValue !== undefined && field.defaultValue !== null) {
-    defaultValueText = String(field.defaultValue);
+  if (Array.isArray(entry.defaultValue)) {
+    defaultValueText = entry.defaultValue.join(', ');
+  } else if (entry.defaultValue !== undefined && entry.defaultValue !== null) {
+    defaultValueText = String(entry.defaultValue);
   }
 
   return {
-    id: `${field.key}-${index}`,
-    key: field.key,
-    label: field.label,
-    type: field.type,
-    required: field.required === true,
-    enabled: field.enabled !== false,
-    order: Number.isFinite(field.order) ? field.order : index,
-    options: Array.isArray(field.options) ? field.options : [],
+    id: entry.id,
+    key: entry.key,
+    label: entry.label,
+    type: entry.type,
+    required: entry.required,
+    options: entry.options ?? [],
     defaultValueText,
-    min: field.rules?.min !== undefined ? String(field.rules.min) : '',
-    max: field.rules?.max !== undefined ? String(field.rules.max) : '',
-    maxLength: field.rules?.maxLength !== undefined ? String(field.rules.maxLength) : '',
-  };
-};
-
-const toMachineFieldDefinition = (field: EditableField, index: number): MachineFieldDefinition => {
-  const options = field.options.map((item) => item.trim()).filter(Boolean);
-
-  const rules: MachineFieldDefinition['rules'] = {};
-  if (field.min.trim().length > 0) rules.min = Number(field.min);
-  if (field.max.trim().length > 0) rules.max = Number(field.max);
-  if (field.maxLength.trim().length > 0) rules.maxLength = Number(field.maxLength);
-
-  let defaultValue: MachineFieldDefinition['defaultValue'];
-  if (field.defaultValueText.trim().length > 0) {
-    if (field.type === 'number') {
-      defaultValue = Number(field.defaultValueText);
-    } else if (field.type === 'multi_select') {
-      defaultValue = field.defaultValueText
-        .split(',')
-        .map((item) => item.trim())
-        .filter(Boolean);
-    } else {
-      defaultValue = field.defaultValueText.trim();
-    }
-  }
-
-  return {
-    key: field.key.trim(),
-    label: field.label.trim(),
-    type: field.type,
-    required: field.required,
-    enabled: field.enabled,
-    order: index,
-    options,
-    defaultValue,
-    rules,
+    min: entry.rules?.min !== undefined ? String(entry.rules.min) : '',
+    max: entry.rules?.max !== undefined ? String(entry.rules.max) : '',
+    maxLength: entry.rules?.maxLength !== undefined ? String(entry.rules.maxLength) : '',
+    assignedMachines: [...entry.assignments]
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .map((assignment) => assignment.machine as MachineType),
   };
 };
 
 const MachineFieldManager: React.FC = () => {
-  const [selectedMachine, setSelectedMachine] = useState<MachineType>(MACHINES[0] as MachineType);
-  const [targetMachines, setTargetMachines] = useState<MachineType[]>([]);
-  const [schemaVersion, setSchemaVersion] = useState(1);
-  const [updatedAt, setUpdatedAt] = useState<string | null>(null);
-  const [fields, setFields] = useState<EditableField[]>([]);
-  const [history, setHistory] = useState<MachineFieldSchemaHistoryItem[]>([]);
+  const [catalogFields, setCatalogFields] = useState<FieldCatalogEntry[]>([]);
+  const [form, setForm] = useState<EditableEntry | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [copying, setCopying] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState('');
-  const [successMessage, setSuccessMessage] = useState('');
+  const [success, setSuccess] = useState('');
 
-  // Import individual fields from another machine
-  const [showImportPanel, setShowImportPanel] = useState(false);
-  const [importSourceMachine, setImportSourceMachine] = useState<MachineType | ''>('');
-  const [importSourceFields, setImportSourceFields] = useState<EditableField[]>([]);
-  const [selectedImportIds, setSelectedImportIds] = useState<string[]>([]);
-  const [importLoading, setImportLoading] = useState(false);
-
-  const sortedFields = useMemo(() => {
-    return [...fields].sort((a, b) => a.order - b.order);
-  }, [fields]);
-
-  const availableTargetMachines = useMemo(
-    () => MACHINES.filter((machine) => machine !== selectedMachine) as MachineType[],
-    [selectedMachine]
-  );
-
-  const loadHistory = async (machine: MachineType) => {
-    try {
-      const nextHistory = await getMachineFieldSchemaHistory(machine);
-      setHistory(nextHistory);
-    } catch (err: any) {
-      setHistory([]);
-      setError(err?.message || 'No se pudo cargar historial del esquema.');
-    }
-  };
-
-  const loadSchema = async (machine: MachineType) => {
+  const loadCatalog = async () => {
     setLoading(true);
     setError('');
     try {
-      const schema = await getMachineFieldSchema(machine);
-      setSchemaVersion(Number(schema.version || 1));
-      setUpdatedAt(schema.updatedAt || null);
-      setFields((schema.fields || []).map(toEditableField));
-      await loadHistory(machine);
+      const entries = await getFieldCatalog();
+      setCatalogFields(entries);
     } catch (err: any) {
-      setError(err?.message || 'No se pudo cargar la configuración de campos.');
-      setFields([]);
+      setError(err?.message || 'No se pudo cargar el catalogo de campos.');
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    void loadSchema(selectedMachine);
-    const unsubscribe = subscribeToMachineFieldSchema(
-      selectedMachine,
-      (schema) => {
-        setSchemaVersion(Number(schema.version || 1));
-        setUpdatedAt(schema.updatedAt || null);
-        setFields((schema.fields || []).map(toEditableField));
-        setSuccessMessage('El esquema se actualizó en tiempo real.');
-        setTimeout(() => setSuccessMessage(''), 2500);
-        void loadHistory(selectedMachine);
-      },
-      (message) => setError(message)
+    void loadCatalog();
+  }, []);
+
+  const showSuccess = (message: string) => {
+    setSuccess(message);
+    setTimeout(() => setSuccess(''), 3000);
+  };
+
+  const updateForm = (patch: Partial<EditableEntry>) => {
+    setForm((prev) => (prev ? { ...prev, ...patch } : prev));
+  };
+
+  const handleTypeChange = (type: DynamicFieldType) => {
+    if (!form) return;
+    const next: EditableEntry = { ...form, type };
+
+    if (type === 'number') {
+      next.maxLength = '';
+      next.options = [];
+    }
+
+    if (type === 'short_text') {
+      next.min = '';
+      next.max = '';
+      next.options = [];
+    }
+
+    if (type === 'select' || type === 'multi_select') {
+      next.min = '';
+      next.max = '';
+      next.maxLength = '';
+      if (next.options.length === 0) next.options = ['', ''];
+    }
+
+    setForm(next);
+  };
+
+  const toggleMachine = (machine: MachineType) => {
+    if (!form) return;
+    updateForm({
+      assignedMachines: form.assignedMachines.includes(machine)
+        ? form.assignedMachines.filter((item) => item !== machine)
+        : [...form.assignedMachines, machine],
+    });
+  };
+
+  const addOption = () => {
+    updateForm({ options: [...(form?.options ?? []), ''] });
+  };
+
+  const updateOption = (idx: number, value: string) => {
+    if (!form) return;
+    const next = [...form.options];
+    next[idx] = value;
+    updateForm({ options: next });
+  };
+
+  const removeOption = (idx: number) => {
+    if (!form) return;
+    updateForm({ options: form.options.filter((_, index) => index !== idx) });
+  };
+
+  const handleSave = async () => {
+    if (!form) return;
+
+    const key = form.key.trim();
+    const label = form.label.trim();
+
+    if (!key || !label) {
+      setError('La clave tecnica y la etiqueta son obligatorias.');
+      return;
+    }
+
+    setSaving(true);
+    setError('');
+
+    try {
+      const options = form.options.map((option) => option.trim()).filter(Boolean);
+      const rules: Record<string, number> = {};
+
+      if (form.min.trim()) rules.min = Number(form.min);
+      if (form.max.trim()) rules.max = Number(form.max);
+      if (form.maxLength.trim()) rules.maxLength = Number(form.maxLength);
+
+      let defaultValue: string | number | string[] | undefined;
+      if (form.defaultValueText.trim()) {
+        if (form.type === 'number') {
+          defaultValue = Number(form.defaultValueText);
+        } else if (form.type === 'multi_select') {
+          defaultValue = form.defaultValueText
+            .split(',')
+            .map((item) => item.trim())
+            .filter(Boolean);
+        } else {
+          defaultValue = form.defaultValueText.trim();
+        }
+      }
+
+      const payload = {
+        key,
+        label,
+        type: form.type,
+        required: form.required,
+        options,
+        defaultValue,
+        rules,
+        machines: form.assignedMachines,
+      };
+
+      let result: FieldCatalogEntry;
+
+      if (form.id) {
+        result = await updateCatalogField(form.id, payload);
+        setCatalogFields((prev) => prev.map((field) => (field.id === result.id ? result : field)));
+        showSuccess('Campo actualizado correctamente.');
+      } else {
+        result = await createCatalogField(payload);
+        setCatalogFields((prev) => [...prev, result].sort((a, b) => a.label.localeCompare(b.label)));
+        showSuccess('Campo creado correctamente.');
+      }
+
+      setForm(null);
+    } catch (err: any) {
+      setError(err?.message || 'No se pudo guardar el campo.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (entry: FieldCatalogEntry) => {
+    if (!window.confirm(`Eliminar el campo "${entry.label}"? Se quitara de todas las maquinas.`)) return;
+
+    setDeletingId(entry.id);
+    setError('');
+
+    try {
+      await deleteCatalogField(entry.id);
+      setCatalogFields((prev) => prev.filter((field) => field.id !== entry.id));
+      showSuccess('Campo eliminado.');
+    } catch (err: any) {
+      setError(err?.message || 'No se pudo eliminar el campo.');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const renderTypeSettings = () => {
+    if (!form) return null;
+
+    const cleanOptions = form.options.map((item) => item.trim()).filter(Boolean);
+
+    const optionsEditor = (
+      <div className="space-y-2 md:col-span-2">
+        <p className="text-xs font-semibold text-slate-600">Opciones</p>
+        {form.options.length === 0 && <p className="text-xs text-slate-400">Agrega al menos una opcion.</p>}
+
+        {form.options.map((option, index) => (
+          <div key={index} className="flex items-center gap-2">
+            <input
+              placeholder={`Opcion ${index + 1}`}
+              value={option}
+              onChange={(e) => updateOption(index, e.target.value)}
+              className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
+            />
+            <button
+              type="button"
+              onClick={() => removeOption(index)}
+              className="px-2 py-2 text-xs font-semibold rounded bg-red-50 border border-red-200 text-red-600 hover:bg-red-100"
+            >
+              X
+            </button>
+          </div>
+        ))}
+
+        <button
+          type="button"
+          onClick={addOption}
+          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800"
+        >
+          <Plus className="w-3 h-3" /> Agregar opcion
+        </button>
+      </div>
     );
 
-    return () => unsubscribe();
-  }, [selectedMachine]);
-
-  useEffect(() => {
-    setTargetMachines((prev) => prev.filter((machine) => machine !== selectedMachine));
-  }, [selectedMachine]);
-
-  const updateField = (id: string, patch: Partial<EditableField>) => {
-    setFields((prev) => prev.map((field) => (field.id === id ? { ...field, ...patch } : field)));
-  };
-
-  const updateFieldType = (id: string, type: DynamicFieldType) => {
-    setFields((prev) =>
-      prev.map((field) => {
-        if (field.id !== id) return field;
-
-        const next: EditableField = { ...field, type };
-
-        if (type === 'number') {
-          next.maxLength = '';
-          next.defaultValueText = field.defaultValueText.trim();
-        }
-
-        if (type === 'short_text') {
-          next.min = '';
-          next.max = '';
-          next.options = [];
-        }
-
-        if (type === 'select') {
-          next.min = '';
-          next.max = '';
-          next.maxLength = '';
-          if (next.options.length === 0) {
-            next.options = ['', ''];
-          }
-        }
-
-        if (type === 'multi_select') {
-          next.min = '';
-          next.max = '';
-          next.maxLength = '';
-          if (next.options.length === 0) {
-            next.options = ['', ''];
-          }
-        }
-
-        return next;
-      })
-    );
-  };
-
-  const addOption = (id: string) => {
-    setFields((prev) => prev.map((field) => (field.id === id ? { ...field, options: [...field.options, ''] } : field)));
-  };
-
-  const updateOption = (id: string, optionIndex: number, value: string) => {
-    setFields((prev) =>
-      prev.map((field) => {
-        if (field.id !== id) return field;
-        const nextOptions = [...field.options];
-        nextOptions[optionIndex] = value;
-        return { ...field, options: nextOptions };
-      })
-    );
-  };
-
-  const removeOption = (id: string, optionIndex: number) => {
-    setFields((prev) =>
-      prev.map((field) => {
-        if (field.id !== id) return field;
-        const nextOptions = field.options.filter((_, idx) => idx !== optionIndex);
-        return { ...field, options: nextOptions };
-      })
-    );
-  };
-
-  const renderOptionsEditor = (field: EditableField) => (
-    <div className="space-y-2 md:col-span-2">
-      <p className="text-xs font-semibold text-slate-600">Opciones</p>
-      {field.options.length === 0 && (
-        <p className="text-xs text-slate-500">Agrega al menos una opcion.</p>
-      )}
-      {field.options.map((option, optionIndex) => (
-        <div key={`${field.id}-option-${optionIndex}`} className="flex items-center gap-2">
-          <input
-            placeholder={`Opcion ${optionIndex + 1}`}
-            value={option}
-            onChange={(e) => updateOption(field.id, optionIndex, e.target.value)}
-            className="flex-1 px-3 py-2 border border-slate-300 rounded-lg bg-white"
-          />
-          <button
-            type="button"
-            onClick={() => removeOption(field.id, optionIndex)}
-            className="px-2 py-2 text-xs font-semibold rounded bg-red-50 border border-red-200 text-red-600"
-          >
-            Quitar
-          </button>
-        </div>
-      ))}
-      <button
-        type="button"
-        onClick={() => addOption(field.id)}
-        className="inline-flex items-center gap-1 px-3 py-2 rounded-lg bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800"
-      >
-        <Plus className="w-3 h-3" /> Agregar opcion
-      </button>
-    </div>
-  );
-
-  const renderFieldTypeSettings = (field: EditableField) => {
-    const cleanOptions = field.options.map((item) => item.trim()).filter(Boolean);
-
-    if (field.type === 'number') {
+    if (form.type === 'number') {
       return (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-          <input
-            placeholder="Valor por defecto"
-            value={field.defaultValueText}
-            onChange={(e) => updateField(field.id, { defaultValueText: e.target.value })}
-            className="px-3 py-2 border border-slate-300 rounded-lg bg-white"
-          />
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:col-span-2">
           <input
             placeholder="Minimo"
-            value={field.min}
-            onChange={(e) => updateField(field.id, { min: e.target.value })}
-            className="px-3 py-2 border border-slate-300 rounded-lg bg-white"
+            value={form.min}
+            onChange={(e) => updateForm({ min: e.target.value })}
+            className="px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
           />
           <input
             placeholder="Maximo"
-            value={field.max}
-            onChange={(e) => updateField(field.id, { max: e.target.value })}
-            className="px-3 py-2 border border-slate-300 rounded-lg bg-white"
+            value={form.max}
+            onChange={(e) => updateForm({ max: e.target.value })}
+            className="px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
+          />
+          <input
+            placeholder="Valor por defecto"
+            value={form.defaultValueText}
+            onChange={(e) => updateForm({ defaultValueText: e.target.value })}
+            className="px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
           />
         </div>
       );
     }
 
-    if (field.type === 'short_text') {
+    if (form.type === 'short_text') {
       return (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-          <input
-            placeholder="Texto por defecto"
-            value={field.defaultValueText}
-            onChange={(e) => updateField(field.id, { defaultValueText: e.target.value })}
-            className="px-3 py-2 border border-slate-300 rounded-lg bg-white md:col-span-2"
-          />
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:col-span-2">
           <input
             placeholder="Longitud maxima"
-            value={field.maxLength}
-            onChange={(e) => updateField(field.id, { maxLength: e.target.value })}
-            className="px-3 py-2 border border-slate-300 rounded-lg bg-white"
+            value={form.maxLength}
+            onChange={(e) => updateForm({ maxLength: e.target.value })}
+            className="px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
+          />
+          <input
+            placeholder="Texto por defecto"
+            value={form.defaultValueText}
+            onChange={(e) => updateForm({ defaultValueText: e.target.value })}
+            className="px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white md:col-span-2"
           />
         </div>
       );
     }
 
-    if (field.type === 'select') {
+    if (form.type === 'select') {
       return (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-start">
-          {renderOptionsEditor(field)}
-          <div className="space-y-2">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:col-span-2">
+          {optionsEditor}
+          <div className="space-y-1">
             <p className="text-xs font-semibold text-slate-600">Valor por defecto</p>
             <select
-              value={field.defaultValueText}
-              onChange={(e) => updateField(field.id, { defaultValueText: e.target.value })}
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white"
+              value={form.defaultValueText}
+              onChange={(e) => updateForm({ defaultValueText: e.target.value })}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
             >
               <option value="">Sin valor por defecto</option>
               {cleanOptions.map((option) => (
-                <option key={`${field.id}-default-${option}`} value={option}>
-                  {option}
-                </option>
+                <option key={option} value={option}>{option}</option>
               ))}
             </select>
           </div>
@@ -359,484 +351,277 @@ const MachineFieldManager: React.FC = () => {
     }
 
     return (
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-start">
-        {renderOptionsEditor(field)}
-        <div className="space-y-2 md:col-span-2">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:col-span-2">
+        {optionsEditor}
+        <div className="space-y-1">
           <p className="text-xs font-semibold text-slate-600">Valores por defecto</p>
           {cleanOptions.length === 0 ? (
-            <p className="text-xs text-slate-500">Primero agrega opciones para seleccionar valores por defecto.</p>
+            <p className="text-xs text-slate-500">Primero agrega opciones.</p>
           ) : (
-            <div className="space-y-2">
-              {cleanOptions.map((option) => {
-                const selectedDefaults = field.defaultValueText
-                  .split(',')
-                  .map((item) => item.trim())
-                  .filter(Boolean);
-                const checked = selectedDefaults.includes(option);
-                return (
-                  <label key={`${field.id}-multi-default-${option}`} className="flex items-center gap-2 text-sm text-slate-700">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={(e) => {
-                        const nextDefaults = e.target.checked
-                          ? [...selectedDefaults, option]
-                          : selectedDefaults.filter((item) => item !== option);
-                        updateField(field.id, { defaultValueText: nextDefaults.join(', ') });
-                      }}
-                    />
-                    {option}
-                  </label>
-                );
-              })}
-            </div>
+            cleanOptions.map((option) => {
+              const selected = form.defaultValueText
+                .split(',')
+                .map((item) => item.trim())
+                .filter(Boolean);
+              return (
+                <label key={option} className="flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={selected.includes(option)}
+                    onChange={(e) => {
+                      const next = e.target.checked
+                        ? [...selected, option]
+                        : selected.filter((item) => item !== option);
+                      updateForm({ defaultValueText: next.join(', ') });
+                    }}
+                  />
+                  {option}
+                </label>
+              );
+            })
           )}
         </div>
       </div>
     );
-  };
-
-  const removeField = (id: string) => {
-    setFields((prev) => prev.filter((field) => field.id !== id).map((field, index) => ({ ...field, order: index })));
-  };
-
-  const moveField = (id: string, direction: 'up' | 'down') => {
-    setFields((prev) => {
-      const sorted = [...prev].sort((a, b) => a.order - b.order);
-      const currentIndex = sorted.findIndex((field) => field.id === id);
-      if (currentIndex === -1) return prev;
-
-      const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
-      if (targetIndex < 0 || targetIndex >= sorted.length) return prev;
-
-      const current = sorted[currentIndex];
-      sorted[currentIndex] = sorted[targetIndex];
-      sorted[targetIndex] = current;
-
-      return sorted.map((field, index) => ({ ...field, order: index }));
-    });
-  };
-
-  const addField = () => {
-    setFields((prev) => [...prev, makeEmptyField(prev.length)]);
-  };
-
-  const openImportPanel = () => {
-    if (!showImportPanel) {
-      const first = availableTargetMachines[0];
-      if (first) {
-        setImportSourceMachine(first);
-        setImportSourceFields([]);
-        setSelectedImportIds([]);
-        void loadImportSourceFields(first);
-      }
-    }
-    setShowImportPanel((prev) => !prev);
-  };
-
-  const loadImportSourceFields = async (machine: MachineType) => {
-    setImportLoading(true);
-    try {
-      const schema = await getMachineFieldSchema(machine);
-      setImportSourceFields((schema.fields || []).map(toEditableField));
-      setSelectedImportIds([]);
-    } catch {
-      setImportSourceFields([]);
-    } finally {
-      setImportLoading(false);
-    }
-  };
-
-  const toggleImportField = (id: string) => {
-    setSelectedImportIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    );
-  };
-
-  const handleImportSelectedFields = () => {
-    const toAdd = importSourceFields.filter((f) => selectedImportIds.includes(f.id));
-    if (toAdd.length === 0) return;
-    setFields((prev) => {
-      const baseOrder = prev.length;
-      return [
-        ...prev,
-        ...toAdd.map((f, i) => ({ ...f, id: crypto.randomUUID(), order: baseOrder + i })),
-      ];
-    });
-    setSelectedImportIds([]);
-    setShowImportPanel(false);
-  };
-
-  const toggleSelectAllImport = () => {
-    if (selectedImportIds.length === importSourceFields.length) {
-      setSelectedImportIds([]);
-    } else {
-      setSelectedImportIds(importSourceFields.map((f) => f.id));
-    }
-  };
-
-  const toggleTargetMachine = (machine: MachineType) => {
-    setTargetMachines((prev) =>
-      prev.includes(machine)
-        ? prev.filter((current) => current !== machine)
-        : [...prev, machine]
-    );
-  };
-
-  const handleSave = async () => {
-    setSaving(true);
-    setError('');
-    setSuccessMessage('');
-    try {
-      const payload = sortedFields.map(toMachineFieldDefinition);
-      const result = await saveMachineFieldSchema(selectedMachine, payload, schemaVersion);
-      setSchemaVersion(Number(result.version || schemaVersion + 1));
-      setUpdatedAt(result.updatedAt || null);
-      setFields((result.fields || []).map(toEditableField));
-      setSuccessMessage(`Esquema publicado en versión ${result.version}.`);
-      await loadHistory(selectedMachine);
-    } catch (err: any) {
-      if (err?.message?.includes('SCHEMA_WRITE_CONFLICT')) {
-        setError('Otro administrador publicó cambios antes que tú. Recarga para continuar.');
-      } else {
-        setError(err?.message || 'No se pudo guardar el esquema.');
-      }
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleApplyToMachines = async () => {
-    if (targetMachines.length === 0) {
-      setError('Selecciona al menos una máquina de destino.');
-      return;
-    }
-
-    setCopying(true);
-    setError('');
-    setSuccessMessage('');
-
-    const payload = sortedFields.map(toMachineFieldDefinition);
-    let copied = 0;
-    const failed: string[] = [];
-
-    try {
-      for (const targetMachine of targetMachines) {
-        try {
-          const targetSchema = await getMachineFieldSchema(targetMachine);
-          const expectedVersion = Number(targetSchema.version || 1);
-          await saveMachineFieldSchema(targetMachine, payload, expectedVersion);
-          copied += 1;
-        } catch {
-          failed.push(targetMachine);
-        }
-      }
-
-      if (copied > 0) {
-        setSuccessMessage(`Esquema aplicado en ${copied} máquina${copied > 1 ? 's' : ''}.`);
-      }
-      if (failed.length > 0) {
-        setError(`No se pudo aplicar en: ${failed.join(', ')}.`);
-      }
-      setTargetMachines([]);
-    } finally {
-      setCopying(false);
-    }
   };
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
       <div className="px-6 py-4 bg-emerald-600 text-white flex items-center justify-between">
         <div>
-          <h2 className="font-bold text-lg">Campos Dinámicos por Máquina</h2>
-          <p className="text-emerald-50 text-sm">Configura campos numéricos, texto corto, selección y multiselección.</p>
+          <h2 className="font-bold text-lg">Catalogo de Campos Dinamicos</h2>
+          <p className="text-emerald-50 text-sm">Crea un campo una vez y asignalo a una o varias maquinas.</p>
         </div>
-        <button
-          type="button"
-          onClick={() => void loadSchema(selectedMachine)}
-          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-white/20 hover:bg-white/30 text-sm font-semibold"
-        >
-          <RefreshCw className="w-4 h-4" /> Recargar
-        </button>
-      </div>
-
-      <div className="p-6 space-y-6">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
-          <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-2">Máquina</label>
-            <select
-              value={selectedMachine}
-              onChange={(e) => setSelectedMachine(e.target.value as MachineType)}
-              className="w-full px-3 py-2.5 border border-slate-300 rounded-lg bg-white focus:ring-2 focus:ring-emerald-500 outline-none"
-            >
-              {MACHINES.map((machine) => (
-                <option key={machine} value={machine}>
-                  {machine}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <p className="text-xs uppercase tracking-wide font-bold text-slate-400">Versión vigente</p>
-            <p className="text-2xl font-bold text-slate-800">{schemaVersion}</p>
-          </div>
-          <div>
-            <p className="text-xs uppercase tracking-wide font-bold text-slate-400">Última actualización</p>
-            <p className="text-sm font-semibold text-slate-700">{updatedAt ? new Date(updatedAt).toLocaleString('es-ES') : 'Sin publicar'}</p>
-          </div>
-        </div>
-
-        <div className="rounded-lg border border-slate-200 p-4 bg-slate-50">
-          <p className="text-sm font-bold text-slate-700 mb-2">Reutilizar esquema en otras máquinas</p>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
-            {availableTargetMachines.map((machine) => {
-              const checked = targetMachines.includes(machine);
-              return (
-                <label
-                  key={machine}
-                  className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium cursor-pointer ${
-                    checked
-                      ? 'bg-blue-50 border-blue-300 text-blue-700'
-                      : 'bg-white border-slate-200 text-slate-700'
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => toggleTargetMachine(machine)}
-                  />
-                  {machine}
-                </label>
-              );
-            })}
-          </div>
+        <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={handleApplyToMachines}
-            disabled={copying || loading || sortedFields.length === 0}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 disabled:opacity-50"
+            onClick={() => void loadCatalog()}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-white/20 hover:bg-white/30 text-sm font-semibold"
           >
-            {copying ? 'Aplicando...' : 'Aplicar esquema a seleccionadas'}
+            <RefreshCw className="w-4 h-4" /> Recargar
           </button>
+          {!form && (
+            <button
+              type="button"
+              onClick={() => {
+                setForm(makeEmpty());
+                setError('');
+              }}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-white text-emerald-700 text-sm font-bold hover:bg-emerald-50"
+            >
+              <Plus className="w-4 h-4" /> Nuevo campo
+            </button>
+          )}
         </div>
+      </div>
+
+      <div className="p-6 space-y-5">
+        {form && (
+          <div className="rounded-xl border border-blue-200 bg-blue-50 p-5 space-y-5">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-slate-800">{form.id ? 'Editar campo' : 'Nuevo campo'}</h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setForm(null);
+                  setError('');
+                }}
+                className="p-1.5 rounded hover:bg-blue-100 text-slate-500"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Clave tecnica</label>
+                <input
+                  placeholder="ej: temperatura"
+                  value={form.key}
+                  onChange={(e) => updateForm({ key: e.target.value })}
+                  disabled={Boolean(form.id)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Etiqueta visible</label>
+                <input
+                  placeholder="ej: Temperatura de operacion"
+                  value={form.label}
+                  onChange={(e) => updateForm({ label: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Tipo</label>
+                <select
+                  value={form.type}
+                  onChange={(e) => handleTypeChange(e.target.value as DynamicFieldType)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
+                >
+                  {FIELD_TYPES.map((type) => (
+                    <option key={type} value={type}>{FIELD_TYPE_LABELS[type]}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {renderTypeSettings()}
+            </div>
+
+            <label className="inline-flex items-center gap-2 text-sm text-slate-700 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={form.required}
+                onChange={(e) => updateForm({ required: e.target.checked })}
+              />
+              Campo obligatorio
+            </label>
+
+            <div>
+              <p className="text-xs font-bold text-slate-600 uppercase tracking-wide mb-2">Asignar a maquinas</p>
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                {(MACHINES as MachineType[]).map((machine) => {
+                  const checked = form.assignedMachines.includes(machine);
+                  return (
+                    <label
+                      key={machine}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer select-none font-medium ${
+                        checked
+                          ? 'bg-emerald-50 border-emerald-300 text-emerald-700'
+                          : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        className="accent-emerald-600"
+                        checked={checked}
+                        onChange={() => toggleMachine(machine)}
+                      />
+                      {machine}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 pt-1">
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={saving}
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-blue-600 text-white font-bold hover:bg-blue-700 disabled:opacity-60"
+              >
+                <Save className="w-4 h-4" />
+                {saving ? 'Guardando...' : form.id ? 'Actualizar campo' : 'Crear campo'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setForm(null);
+                  setError('');
+                }}
+                className="px-4 py-2.5 rounded-lg border border-slate-300 text-slate-600 text-sm font-semibold hover:bg-slate-50"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
 
         {error && (
           <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm flex items-start gap-2">
-            <AlertCircle className="w-4 h-4 mt-0.5" />
+            <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
             <span>{error}</span>
           </div>
         )}
 
-        {successMessage && (
+        {success && (
           <div className="bg-emerald-50 border border-emerald-200 text-emerald-700 px-4 py-3 rounded-lg text-sm">
-            {successMessage}
+            {success}
           </div>
         )}
 
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wide">Definición de Campos</h3>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={openImportPanel}
-                className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-semibold ${
-                  showImportPanel
-                    ? 'bg-blue-600 border-blue-600 text-white hover:bg-blue-700'
-                    : 'bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100'
-                }`}
-              >
-                <Copy className="w-4 h-4" /> Importar campos
-              </button>
-              <button
-                type="button"
-                onClick={addField}
-                className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700"
-              >
-                <Plus className="w-4 h-4" /> Agregar campo
-              </button>
-            </div>
+        {loading ? (
+          <div className="p-6 text-slate-500 text-sm bg-slate-50 rounded-lg border border-slate-200">
+            Cargando catalogo...
           </div>
+        ) : catalogFields.length === 0 ? (
+          <div className="p-10 text-center">
+            <p className="text-slate-500 text-sm mb-3">No hay campos definidos todavia.</p>
+            <button
+              type="button"
+              onClick={() => {
+                setForm(makeEmpty());
+                setError('');
+              }}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-700"
+            >
+              <Plus className="w-4 h-4" /> Crear primer campo
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {catalogFields.map((entry) => (
+              <div
+                key={entry.id}
+                className="flex flex-wrap items-center gap-2 px-4 py-3 rounded-lg border border-slate-200 bg-white hover:border-slate-300"
+              >
+                <span className="font-semibold text-slate-800 text-sm">{entry.label}</span>
+                <span className="text-xs font-mono text-slate-400 bg-slate-100 px-2 py-0.5 rounded">{entry.key}</span>
+                <span className={`text-xs font-semibold px-2 py-0.5 rounded ${FIELD_TYPE_BADGE[entry.type]}`}>
+                  {FIELD_TYPE_LABELS[entry.type]}
+                </span>
+                {entry.required && (
+                  <span className="text-xs font-semibold px-2 py-0.5 rounded bg-red-50 text-red-600">Obligatorio</span>
+                )}
 
-          {showImportPanel && (
-            <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 space-y-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Máquina de origen</label>
-                <select
-                  value={importSourceMachine}
-                  onChange={(e) => {
-                    const machine = e.target.value as MachineType;
-                    setImportSourceMachine(machine);
-                    void loadImportSourceFields(machine);
-                  }}
-                  className="w-full md:w-64 px-3 py-2 border border-slate-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 outline-none"
-                >
-                  {availableTargetMachines.map((machine) => (
-                    <option key={machine} value={machine}>{machine}</option>
-                  ))}
-                </select>
-              </div>
-
-              {importLoading ? (
-                <p className="text-sm text-slate-500">Cargando campos...</p>
-              ) : importSourceFields.length === 0 ? (
-                <p className="text-sm text-slate-500">Esta máquina no tiene campos configurados.</p>
-              ) : (
-                <>
-                  <div className="flex items-center justify-between">
-                    <p className="text-xs font-semibold text-slate-600">
-                      {importSourceFields.length} campo{importSourceFields.length !== 1 ? 's' : ''} disponibles
-                    </p>
-                    <button
-                      type="button"
-                      onClick={toggleSelectAllImport}
-                      className="text-xs font-semibold text-blue-600 hover:underline"
-                    >
-                      {selectedImportIds.length === importSourceFields.length ? 'Deseleccionar todos' : 'Seleccionar todos'}
-                    </button>
-                  </div>
-                  <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
-                    {importSourceFields.map((field) => {
-                      const checked = selectedImportIds.includes(field.id);
-                      return (
-                        <label
-                          key={field.id}
-                          className={`flex items-center gap-3 px-3 py-2 rounded-lg border text-sm cursor-pointer select-none ${
-                            checked ? 'bg-blue-100 border-blue-300' : 'bg-white border-slate-200 hover:border-blue-200'
-                          }`}
+                <div className="flex flex-wrap gap-1 flex-1 min-w-0">
+                  {entry.assignments.length === 0 ? (
+                    <span className="text-xs text-slate-400 italic">Sin maquinas asignadas</span>
+                  ) : (
+                    [...entry.assignments]
+                      .sort((a, b) => a.sortOrder - b.sortOrder)
+                      .map((assignment) => (
+                        <span
+                          key={`${entry.id}-${assignment.machine}`}
+                          className="text-xs font-medium px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200"
                         >
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => toggleImportField(field.id)}
-                          />
-                          <span className="font-medium text-slate-800">{field.label || <em className="text-slate-400">{field.key || 'Sin etiqueta'}</em>}</span>
-                          {field.key && field.label && (
-                            <span className="text-xs text-slate-400">{field.key}</span>
-                          )}
-                          <span className="ml-auto text-xs font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
-                            {FIELD_TYPE_LABELS[field.type]}
-                          </span>
-                        </label>
-                      );
-                    })}
-                  </div>
+                          {assignment.machine}
+                        </span>
+                      ))
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 ml-auto">
                   <button
                     type="button"
-                    onClick={handleImportSelectedFields}
-                    disabled={selectedImportIds.length === 0}
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-50"
+                    onClick={() => {
+                      setForm(fromCatalog(entry));
+                      setError('');
+                    }}
+                    disabled={Boolean(form)}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:opacity-40"
                   >
-                    <Copy className="w-4 h-4" />
-                    Agregar {selectedImportIds.length > 0 ? selectedImportIds.length : ''} campo{selectedImportIds.length !== 1 ? 's' : ''} seleccionado{selectedImportIds.length !== 1 ? 's' : ''}
+                    <Edit2 className="w-3 h-3" /> Editar
                   </button>
-                </>
-              )}
-            </div>
-          )}
 
-          {loading ? (
-            <div className="p-6 text-slate-500 text-sm bg-slate-50 rounded-lg border border-slate-200">Cargando configuración...</div>
-          ) : sortedFields.length === 0 ? (
-            <div className="p-6 text-slate-500 text-sm bg-slate-50 rounded-lg border border-slate-200">
-              Esta máquina no tiene campos dinámicos aún.
-            </div>
-          ) : (
-            sortedFields.map((field, index) => (
-              <div key={field.id} className="p-4 rounded-lg border border-slate-200 bg-slate-50 space-y-4">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm font-bold text-slate-700">Campo {index + 1}</p>
-                  <div className="flex items-center gap-2">
-                    <button type="button" onClick={() => moveField(field.id, 'up')} className="px-2 py-1 text-xs font-semibold rounded bg-white border border-slate-200">Subir</button>
-                    <button type="button" onClick={() => moveField(field.id, 'down')} className="px-2 py-1 text-xs font-semibold rounded bg-white border border-slate-200">Bajar</button>
-                    <button type="button" onClick={() => removeField(field.id)} className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold rounded bg-red-50 border border-red-200 text-red-600">
-                      <Trash2 className="w-3 h-3" /> Quitar
-                    </button>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                  <input
-                    placeholder="Clave técnica (ej: temperatura)"
-                    value={field.key}
-                    onChange={(e) => updateField(field.id, { key: e.target.value })}
-                    className="px-3 py-2 border border-slate-300 rounded-lg bg-white"
-                  />
-                  <input
-                    placeholder="Etiqueta visible"
-                    value={field.label}
-                    onChange={(e) => updateField(field.id, { label: e.target.value })}
-                    className="px-3 py-2 border border-slate-300 rounded-lg bg-white"
-                  />
-                  <select
-                    value={field.type}
-                    onChange={(e) => updateFieldType(field.id, e.target.value as DynamicFieldType)}
-                    className="px-3 py-2 border border-slate-300 rounded-lg bg-white"
+                  <button
+                    type="button"
+                    onClick={() => void handleDelete(entry)}
+                    disabled={deletingId === entry.id}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-lg bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 disabled:opacity-50"
                   >
-                    {FIELD_TYPES.map((type) => (
-                      <option key={type} value={type}>
-                        {FIELD_TYPE_LABELS[type]}
-                      </option>
-                    ))}
-                  </select>
-                  <div className="flex items-center gap-4 px-2">
-                    <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-                      <input
-                        type="checkbox"
-                        checked={field.required}
-                        onChange={(e) => updateField(field.id, { required: e.target.checked })}
-                      />
-                      Obligatorio
-                    </label>
-                    <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-                      <input
-                        type="checkbox"
-                        checked={field.enabled}
-                        onChange={(e) => updateField(field.id, { enabled: e.target.checked })}
-                      />
-                      Activo
-                    </label>
-                  </div>
+                    <Trash2 className="w-3 h-3" /> {deletingId === entry.id ? '...' : 'Eliminar'}
+                  </button>
                 </div>
-
-                {renderFieldTypeSettings(field)}
               </div>
-            ))
-          )}
-        </div>
-
-        <div className="flex justify-end">
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={saving || loading}
-            className="inline-flex items-center gap-2 px-5 py-3 rounded-lg bg-blue-600 text-white font-bold hover:bg-blue-700 disabled:opacity-60"
-          >
-            <Save className="w-4 h-4" /> {saving ? 'Guardando...' : 'Publicar cambios'}
-          </button>
-        </div>
-
-        <div className="pt-4 border-t border-slate-200">
-          <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wide mb-3 flex items-center gap-2">
-            <History className="w-4 h-4" /> Historial de esquema
-          </h3>
-          <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-            {history.length === 0 ? (
-              <p className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-4 py-3">Sin cambios registrados todavía.</p>
-            ) : (
-              history.map((item) => (
-                <div key={item.id} className="rounded-lg border border-slate-200 px-4 py-3 bg-white">
-                  <p className="text-sm font-semibold text-slate-800">
-                    Versión {item.details?.previousVersion ?? '?'} → {item.details?.nextVersion ?? '?'}
-                  </p>
-                  <p className="text-xs text-slate-500 mt-1">
-                    {new Date(item.createdAt).toLocaleString('es-ES')} · {item.userName || 'Usuario desconocido'}
-                  </p>
-                </div>
-              ))
-            )}
+            ))}
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

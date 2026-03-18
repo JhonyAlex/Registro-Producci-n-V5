@@ -201,6 +201,46 @@ async function initDB() {
         AND pr.boss = u.name
     `);
 
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS field_catalog (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        key VARCHAR(100) NOT NULL UNIQUE,
+        label VARCHAR(255) NOT NULL,
+        type VARCHAR(50) NOT NULL,
+        required BOOLEAN NOT NULL DEFAULT FALSE,
+        options JSONB NOT NULL DEFAULT '[]',
+        default_value JSONB,
+        rules JSONB NOT NULL DEFAULT '{}',
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        created_by_user_id UUID
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS field_catalog_assignments (
+        field_id UUID NOT NULL,
+        machine VARCHAR(50) NOT NULL,
+        enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (field_id, machine)
+      )
+    `);
+
+    await pool.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'field_catalog_created_by_fkey') THEN
+          ALTER TABLE field_catalog ADD CONSTRAINT field_catalog_created_by_fkey
+          FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'field_catalog_assignments_field_id_fkey') THEN
+          ALTER TABLE field_catalog_assignments ADD CONSTRAINT field_catalog_assignments_field_id_fkey
+          FOREIGN KEY (field_id) REFERENCES field_catalog(id) ON DELETE CASCADE;
+        END IF;
+      END $$;
+    `);
+
     for (const role of APP_ROLES) {
       for (const key of PERMISSION_KEYS) {
         const allowed = DEFAULT_ROLE_PERMISSIONS[role].includes(key);
@@ -1449,6 +1489,34 @@ app.get('/api/settings/machine-fields/:machine', authenticate, requirePermission
   }
 
   try {
+    // Prefer fields defined in the global catalog for this machine
+    const catalogResult = await pool.query(
+      `SELECT fc.key, fc.label, fc.type, fc.required, fca.enabled,
+              fc.options, fc.default_value as "defaultValue", fc.rules,
+              fca.sort_order as "order"
+       FROM field_catalog_assignments fca
+       JOIN field_catalog fc ON fc.id = fca.field_id
+       WHERE fca.machine = $1
+       ORDER BY fca.sort_order ASC`,
+      [machine]
+    );
+
+    if ((catalogResult.rowCount ?? 0) > 0) {
+      const fields = catalogResult.rows.map((row: any) => ({
+        key: row.key,
+        label: row.label,
+        type: row.type,
+        required: row.required,
+        enabled: row.enabled,
+        order: row.order,
+        options: row.options ?? [],
+        defaultValue: row.defaultValue ?? undefined,
+        rules: row.rules ?? {},
+      }));
+      return res.json({ machine, version: 1, fields, updatedByUserId: null, updatedAt: null });
+    }
+
+    // Fallback: legacy per-machine schema
     const result = await pool.query(
       `SELECT machine, schema_version as version, fields_json as fields,
               updated_by_user_id as "updatedByUserId", updated_at as "updatedAt"
@@ -1459,13 +1527,7 @@ app.get('/api/settings/machine-fields/:machine', authenticate, requirePermission
     );
 
     if (result.rowCount === 0) {
-      return res.json({
-        machine,
-        version: 1,
-        fields: [],
-        updatedByUserId: null,
-        updatedAt: null
-      });
+      return res.json({ machine, version: 1, fields: [], updatedByUserId: null, updatedAt: null });
     }
 
     const row = result.rows[0];
@@ -1590,6 +1652,148 @@ app.get('/api/settings/machine-fields/:machine/history', authenticate, requirePe
     res.json(history.rows);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch machine schema history' });
+  }
+});
+
+// --- FIELD CATALOG ---
+app.get('/api/settings/field-catalog', authenticate, requirePermission('settings.read'), requireDB, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT fc.id, fc.key, fc.label, fc.type, fc.required,
+             fc.options, fc.default_value as "defaultValue", fc.rules,
+             fc.created_at as "createdAt", fc.updated_at as "updatedAt",
+             COALESCE(
+               json_agg(
+                 json_build_object('machine', fca.machine, 'enabled', fca.enabled, 'sortOrder', fca.sort_order)
+                 ORDER BY fca.sort_order
+               ) FILTER (WHERE fca.machine IS NOT NULL),
+               '[]'::json
+             ) AS assignments
+      FROM field_catalog fc
+      LEFT JOIN field_catalog_assignments fca ON fc.id = fca.field_id
+      GROUP BY fc.id
+      ORDER BY fc.label ASC
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: 'No se pudo cargar el catálogo de campos.' });
+  }
+});
+
+app.post('/api/settings/field-catalog', authenticate, requirePermission('settings.field_schemas'), requireDB, async (req, res) => {
+  const user = (req as any).user;
+  const { key, label, type, required, options, defaultValue, rules, machines } = req.body;
+  if (!key || !label || !FIELD_TYPES.includes(type as any)) {
+    return res.status(400).json({ error: 'Datos inválidos: clave, etiqueta y tipo son obligatorios.' });
+  }
+  try {
+    await pool.query('BEGIN');
+    const fieldResult = await pool.query(
+      `INSERT INTO field_catalog (key, label, type, required, options, default_value, rules, created_by_user_id)
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, $8)
+       RETURNING id, key, label, type, required, options,
+                 default_value as "defaultValue", rules,
+                 created_at as "createdAt", updated_at as "updatedAt"`,
+      [
+        String(key).trim(), String(label).trim(), type, required ?? false,
+        JSON.stringify(options ?? []),
+        defaultValue !== undefined && defaultValue !== null ? JSON.stringify(defaultValue) : null,
+        JSON.stringify(rules ?? {}),
+        user.id,
+      ]
+    );
+    const field = fieldResult.rows[0];
+    const validMachines = Array.isArray(machines)
+      ? machines.filter((m: string) => MACHINE_VALUES.includes(m as any))
+      : [];
+    for (let i = 0; i < validMachines.length; i++) {
+      await pool.query(
+        `INSERT INTO field_catalog_assignments (field_id, machine, enabled, sort_order) VALUES ($1, $2, TRUE, $3)`,
+        [field.id, validMachines[i], i]
+      );
+    }
+    await logAudit(user.id, 'field_catalog_created', { key: field.key, label: field.label, machines: validMachines }, req.ip || '');
+    await pool.query('COMMIT');
+    validMachines.forEach((m: string) => io.emit('machine_schema_changed', { machine: m }));
+    io.emit('settings_changed');
+    res.status(201).json({ ...field, assignments: validMachines.map((m: string, i: number) => ({ machine: m, enabled: true, sortOrder: i })) });
+  } catch (err: any) {
+    await pool.query('ROLLBACK').catch(() => {});
+    if (err.code === '23505') return res.status(409).json({ error: 'Ya existe un campo con esa clave técnica.' });
+    res.status(500).json({ error: 'No se pudo crear el campo.' });
+  }
+});
+
+app.put('/api/settings/field-catalog/:id', authenticate, requirePermission('settings.field_schemas'), requireDB, async (req, res) => {
+  const user = (req as any).user;
+  const { id } = req.params;
+  const { key, label, type, required, options, defaultValue, rules, machines } = req.body;
+  if (!key || !label || !FIELD_TYPES.includes(type as any)) {
+    return res.status(400).json({ error: 'Datos inválidos: clave, etiqueta y tipo son obligatorios.' });
+  }
+  try {
+    await pool.query('BEGIN');
+    const fieldResult = await pool.query(
+      `UPDATE field_catalog
+       SET key=$1, label=$2, type=$3, required=$4, options=$5::jsonb,
+           default_value=$6::jsonb, rules=$7::jsonb, updated_at=NOW()
+       WHERE id=$8
+       RETURNING id, key, label, type, required, options,
+                 default_value as "defaultValue", rules,
+                 created_at as "createdAt", updated_at as "updatedAt"`,
+      [
+        String(key).trim(), String(label).trim(), type, required ?? false,
+        JSON.stringify(options ?? []),
+        defaultValue !== undefined && defaultValue !== null ? JSON.stringify(defaultValue) : null,
+        JSON.stringify(rules ?? {}),
+        id,
+      ]
+    );
+    if (fieldResult.rowCount === 0) {
+      await pool.query('ROLLBACK');
+      return res.status(404).json({ error: 'Campo no encontrado.' });
+    }
+    const field = fieldResult.rows[0];
+    const oldRows = await pool.query('SELECT machine FROM field_catalog_assignments WHERE field_id = $1', [id]);
+    const oldMachines = oldRows.rows.map((r: any) => r.machine);
+    await pool.query('DELETE FROM field_catalog_assignments WHERE field_id = $1', [id]);
+    const validMachines = Array.isArray(machines)
+      ? machines.filter((m: string) => MACHINE_VALUES.includes(m as any))
+      : [];
+    for (let i = 0; i < validMachines.length; i++) {
+      await pool.query(
+        `INSERT INTO field_catalog_assignments (field_id, machine, enabled, sort_order) VALUES ($1, $2, TRUE, $3)`,
+        [id, validMachines[i], i]
+      );
+    }
+    await logAudit(user.id, 'field_catalog_updated', { key: field.key, label: field.label, machines: validMachines }, req.ip || '');
+    await pool.query('COMMIT');
+    const affected = new Set([...oldMachines, ...validMachines]);
+    affected.forEach((m: string) => io.emit('machine_schema_changed', { machine: m }));
+    io.emit('settings_changed');
+    res.json({ ...field, assignments: validMachines.map((m: string, i: number) => ({ machine: m, enabled: true, sortOrder: i })) });
+  } catch (err: any) {
+    await pool.query('ROLLBACK').catch(() => {});
+    if (err.code === '23505') return res.status(409).json({ error: 'Ya existe un campo con esa clave técnica.' });
+    res.status(500).json({ error: 'No se pudo actualizar el campo.' });
+  }
+});
+
+app.delete('/api/settings/field-catalog/:id', authenticate, requirePermission('settings.field_schemas'), requireDB, async (req, res) => {
+  const user = (req as any).user;
+  const { id } = req.params;
+  try {
+    const info = await pool.query('SELECT key, label FROM field_catalog WHERE id = $1', [id]);
+    if (info.rowCount === 0) return res.status(404).json({ error: 'Campo no encontrado.' });
+    const asgn = await pool.query('SELECT machine FROM field_catalog_assignments WHERE field_id = $1', [id]);
+    const machines = asgn.rows.map((r: any) => r.machine);
+    await pool.query('DELETE FROM field_catalog WHERE id = $1', [id]);
+    await logAudit(user.id, 'field_catalog_deleted', { ...info.rows[0], machines }, req.ip || '');
+    machines.forEach((m: string) => io.emit('machine_schema_changed', { machine: m }));
+    io.emit('settings_changed');
+    res.json({ deleted: true });
+  } catch (err) {
+    res.status(500).json({ error: 'No se pudo eliminar el campo.' });
   }
 });
 

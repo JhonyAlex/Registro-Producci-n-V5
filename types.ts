@@ -79,6 +79,26 @@ export interface MachineFieldSchemaHistoryItem {
   };
 }
 
+export interface FieldCatalogAssignment {
+  machine: string;
+  enabled: boolean;
+  sortOrder: number;
+}
+
+export interface FieldCatalogEntry {
+  id: string;
+  key: string;
+  label: string;
+  type: DynamicFieldType;
+  required: boolean;
+  options: string[];
+  defaultValue?: string | number | string[] | null;
+  rules?: DynamicFieldRuleSet;
+  assignments: FieldCatalogAssignment[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface ProductionStats {
   totalMeters: number;
   totalChanges: number;

@@ -1,4 +1,5 @@
 import {
+  FieldCatalogEntry,
   MachineFieldDefinition,
   MachineFieldSchemaHistoryItem,
   MachineFieldSchemaPayload,
@@ -197,6 +198,51 @@ export const getMachineFieldSchemaHistory = async (
   machine: MachineType
 ): Promise<MachineFieldSchemaHistoryItem[]> => {
   return fetchJson(`/settings/machine-fields/${encodeURIComponent(machine)}/history`);
+};
+
+export const getFieldCatalog = async (): Promise<FieldCatalogEntry[]> => {
+  return fetchJson('/settings/field-catalog');
+};
+
+export const createCatalogField = async (data: {
+  key: string;
+  label: string;
+  type: string;
+  required: boolean;
+  options: string[];
+  defaultValue?: string | number | string[];
+  rules?: Record<string, number>;
+  machines: MachineType[];
+}): Promise<FieldCatalogEntry> => {
+  return fetchJson('/settings/field-catalog', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+};
+
+export const updateCatalogField = async (
+  id: string,
+  data: {
+    key: string;
+    label: string;
+    type: string;
+    required: boolean;
+    options: string[];
+    defaultValue?: string | number | string[];
+    rules?: Record<string, number>;
+    machines: MachineType[];
+  }
+): Promise<FieldCatalogEntry> => {
+  return fetchJson(`/settings/field-catalog/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+};
+
+export const deleteCatalogField = async (id: string): Promise<void> => {
+  await fetchJson(`/settings/field-catalog/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
 };
 
 export const subscribeToMachineFieldSchema = (
