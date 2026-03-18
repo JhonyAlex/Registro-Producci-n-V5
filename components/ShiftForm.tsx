@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Save, Calendar, CheckCircle, X, ChevronDown, MessageSquare, Trash2, RotateCcw, Settings, Edit2, Users, Cloud, WifiOff } from 'lucide-react';
+import { Plus, Save, Calendar, CheckCircle, X, ChevronDown, Trash2, RotateCcw, Settings, Edit2, Users, Cloud, WifiOff } from 'lucide-react';
 import { MachineFieldDefinition, MachineType, ShiftType, ProductionRecord } from '../types';
 import { MACHINES, SHIFTS } from '../constants';
 import { 
@@ -30,10 +30,6 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
     machine: MachineType.WH1,
   });
 
-  // Handle inputs as strings to prevent "0" prefix issues on mobile
-  const [metersInput, setMetersInput] = useState('');
-  const [changesInput, setChangesInput] = useState('');
-  
   // Custom Operator Field State
   const [operatorInput, setOperatorInput] = useState('');
   const [operatorUserId, setOperatorUserId] = useState<string | null>(null);
@@ -118,8 +114,6 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
         bossUserId: editingRecord.bossUserId || '',
         machine: editingRecord.machine,
       });
-      setMetersInput(editingRecord.meters.toString());
-      setChangesInput(editingRecord.changesCount.toString());
       setCommentInput(editingRecord.changesComment || '');
       setOperatorInput(editingRecord.operator || '');
       setOperatorUserId(editingRecord.operatorUserId || null);
@@ -127,8 +121,6 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
       // Scroll to top when editing starts
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } else {
-      setMetersInput('');
-      setChangesInput('');
       setCommentInput('');
       setOperatorUserId(null);
       setDynamicFieldValues({});
@@ -230,21 +222,6 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
-
-  const handleMetersChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const rawValue = e.target.value.replace(/\D/g, '');
-    setMetersInput(rawValue);
-  };
-
-  const handleChangesChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const rawValue = e.target.value.replace(/\D/g, '');
-    setChangesInput(rawValue);
-  };
-
-  const formatMeters = (value: string) => {
-    if (!value) return '';
-    return parseInt(value).toLocaleString('es-ES');
-  };
 
   const getDefaultFieldValue = (field: MachineFieldDefinition): unknown => {
     if (field.defaultValue !== undefined) return field.defaultValue;
@@ -368,7 +345,6 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!metersInput) return;
 
     const selectedBoss = availableBossOptions.find((boss) => boss.id === formData.bossUserId);
     if (!selectedBoss) {
@@ -399,8 +375,8 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
       boss: selectedBoss.name,
       bossUserId: selectedBoss.id,
       machine: formData.machine,
-      meters: parseInt(metersInput),
-      changesCount: changesInput === '' ? 0 : parseInt(changesInput),
+      meters: 0,
+      changesCount: 0,
       changesComment: commentInput,
       operator: operatorInput,
       operatorUserId,
@@ -431,13 +407,9 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
     
     // Reset Logic
     if (!editingRecord) {
-      setMetersInput('');
-      setChangesInput('');
       setCommentInput('');
       // Operator, Boss, Shift, Date, Machine stay the same!
     } else {
-       setMetersInput('');
-       setChangesInput('');
        setCommentInput('');
     }
   };
@@ -596,84 +568,77 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
         </div>
 
         {machineFields.length > 0 && (
-          <div className="p-4 rounded-xl border border-emerald-100 bg-emerald-50/60 space-y-4">
-            <div>
-              <h3 className="text-sm font-bold text-emerald-800">Campos dinámicos de {formData.machine}</h3>
-              <p className="text-xs text-emerald-700 mt-1">Versión de esquema: {machineSchemaVersion}</p>
-            </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {machineFields.map((field) => (
+              <div key={field.key}>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">
+                  {field.label} {field.required ? <span className="text-red-500">*</span> : null}
+                </label>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {machineFields.map((field) => (
-                <div key={field.key} className="bg-white border border-emerald-100 rounded-lg p-3">
-                  <label className="block text-sm font-semibold text-slate-700 mb-2">
-                    {field.label} {field.required ? <span className="text-red-500">*</span> : null}
-                  </label>
+                {field.type === 'number' && (
+                  <input
+                    type="number"
+                    value={(dynamicFieldValues[field.key] as number | string | undefined) ?? ''}
+                    min={field.rules?.min}
+                    max={field.rules?.max}
+                    onChange={(e) => updateDynamicFieldValue(field.key, e.target.value === '' ? '' : Number(e.target.value))}
+                    className="w-full px-4 py-3 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-medium"
+                  />
+                )}
 
-                  {field.type === 'number' && (
-                    <input
-                      type="number"
-                      value={(dynamicFieldValues[field.key] as number | string | undefined) ?? ''}
-                      min={field.rules?.min}
-                      max={field.rules?.max}
-                      onChange={(e) => updateDynamicFieldValue(field.key, e.target.value === '' ? '' : Number(e.target.value))}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                    />
-                  )}
+                {field.type === 'short_text' && (
+                  <input
+                    type="text"
+                    value={(dynamicFieldValues[field.key] as string | undefined) ?? ''}
+                    maxLength={field.rules?.maxLength}
+                    onChange={(e) => updateDynamicFieldValue(field.key, e.target.value)}
+                    className="w-full px-4 py-3 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-medium"
+                  />
+                )}
 
-                  {field.type === 'short_text' && (
-                    <input
-                      type="text"
-                      value={(dynamicFieldValues[field.key] as string | undefined) ?? ''}
-                      maxLength={field.rules?.maxLength}
-                      onChange={(e) => updateDynamicFieldValue(field.key, e.target.value)}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                    />
-                  )}
+                {field.type === 'select' && (
+                  <select
+                    value={(dynamicFieldValues[field.key] as string | undefined) ?? ''}
+                    onChange={(e) => updateDynamicFieldValue(field.key, e.target.value)}
+                    className="w-full px-4 py-3 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none appearance-none font-medium"
+                  >
+                    <option value="">Selecciona una opción</option>
+                    {(field.options || []).map((option) => (
+                      <option key={option} value={option}>{option}</option>
+                    ))}
+                  </select>
+                )}
 
-                  {field.type === 'select' && (
-                    <select
-                      value={(dynamicFieldValues[field.key] as string | undefined) ?? ''}
-                      onChange={(e) => updateDynamicFieldValue(field.key, e.target.value)}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                    >
-                      <option value="">Selecciona una opción</option>
-                      {(field.options || []).map((option) => (
-                        <option key={option} value={option}>{option}</option>
-                      ))}
-                    </select>
-                  )}
-
-                  {field.type === 'multi_select' && (
-                    <div className="space-y-2">
-                      {(field.options || []).map((option) => {
-                        const selected = Array.isArray(dynamicFieldValues[field.key])
-                          ? (dynamicFieldValues[field.key] as string[])
-                          : [];
-                        const isChecked = selected.includes(option);
-                        return (
-                          <label key={option} className="flex items-center gap-2 text-sm text-slate-700">
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              onChange={(e) => {
-                                const next = new Set(selected);
-                                if (e.target.checked) {
-                                  next.add(option);
-                                } else {
-                                  next.delete(option);
-                                }
-                                updateDynamicFieldValue(field.key, Array.from(next));
-                              }}
-                            />
-                            {option}
-                          </label>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
+                {field.type === 'multi_select' && (
+                  <div className="space-y-2 px-3 py-3 bg-white border border-slate-300 rounded-lg">
+                    {(field.options || []).map((option) => {
+                      const selected = Array.isArray(dynamicFieldValues[field.key])
+                        ? (dynamicFieldValues[field.key] as string[])
+                        : [];
+                      const isChecked = selected.includes(option);
+                      return (
+                        <label key={option} className="flex items-center gap-2 text-sm text-slate-700">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={(e) => {
+                              const next = new Set(selected);
+                              if (e.target.checked) {
+                                next.add(option);
+                              } else {
+                                next.delete(option);
+                              }
+                              updateDynamicFieldValue(field.key, Array.from(next));
+                            }}
+                          />
+                          {option}
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         )}
 
@@ -685,39 +650,6 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
 
         {/* Production Data */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            
-            {/* Meters Input */}
-            <div className="md:col-span-1">
-              <label className="block text-sm font-semibold text-slate-700 mb-2">
-                Metros
-              </label>
-              <div className="relative">
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  required
-                  placeholder="0"
-                  value={formatMeters(metersInput)}
-                  onChange={handleMetersChange}
-                  className="w-full px-4 py-3 text-right bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none font-medium text-lg"
-                />
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs font-bold pointer-events-none">MTS</span>
-              </div>
-            </div>
-
-            {/* Changes Input */}
-            <div className="md:col-span-1">
-              <label className="block text-sm font-semibold text-slate-700 mb-2">Cambios</label>
-              <input
-                type="text"
-                inputMode="numeric"
-                placeholder="0"
-                value={changesInput}
-                onChange={handleChangesChange}
-                className="w-full px-4 py-3 text-center bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-medium text-lg"
-              />
-            </div>
-            
             {/* Comment Input */}
             <div className="md:col-span-2 relative" ref={dropdownRef}>
               <div className="flex justify-between items-center mb-2">

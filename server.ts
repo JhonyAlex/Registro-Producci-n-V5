@@ -1215,7 +1215,7 @@ app.post('/api/records', authenticate, requirePermission('records.write'), requi
       return res.status(400).json({ error: 'Turno inválido.' });
     }
 
-    const normalizedMeters = Number(meters);
+    const normalizedMeters = Number(meters ?? 0);
     const normalizedChanges = Number(changesCount ?? 0);
     if (!Number.isFinite(normalizedMeters) || normalizedMeters < 0) {
       return res.status(400).json({ error: 'Metros inválidos.' });

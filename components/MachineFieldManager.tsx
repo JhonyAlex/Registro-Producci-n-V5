@@ -105,18 +105,25 @@ const toMachineFieldDefinition = (field: EditableField, index: number): MachineF
 
 const MachineFieldManager: React.FC = () => {
   const [selectedMachine, setSelectedMachine] = useState<MachineType>(MACHINES[0] as MachineType);
+  const [targetMachines, setTargetMachines] = useState<MachineType[]>([]);
   const [schemaVersion, setSchemaVersion] = useState(1);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const [fields, setFields] = useState<EditableField[]>([]);
   const [history, setHistory] = useState<MachineFieldSchemaHistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [copying, setCopying] = useState(false);
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
 
   const sortedFields = useMemo(() => {
     return [...fields].sort((a, b) => a.order - b.order);
   }, [fields]);
+
+  const availableTargetMachines = useMemo(
+    () => MACHINES.filter((machine) => machine !== selectedMachine) as MachineType[],
+    [selectedMachine]
+  );
 
   const loadHistory = async (machine: MachineType) => {
     try {
@@ -163,6 +170,10 @@ const MachineFieldManager: React.FC = () => {
     return () => unsubscribe();
   }, [selectedMachine]);
 
+  useEffect(() => {
+    setTargetMachines((prev) => prev.filter((machine) => machine !== selectedMachine));
+  }, [selectedMachine]);
+
   const updateField = (id: string, patch: Partial<EditableField>) => {
     setFields((prev) => prev.map((field) => (field.id === id ? { ...field, ...patch } : field)));
   };
@@ -192,6 +203,14 @@ const MachineFieldManager: React.FC = () => {
     setFields((prev) => [...prev, makeEmptyField(prev.length)]);
   };
 
+  const toggleTargetMachine = (machine: MachineType) => {
+    setTargetMachines((prev) =>
+      prev.includes(machine)
+        ? prev.filter((current) => current !== machine)
+        : [...prev, machine]
+    );
+  };
+
   const handleSave = async () => {
     setSaving(true);
     setError('');
@@ -212,6 +231,44 @@ const MachineFieldManager: React.FC = () => {
       }
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleApplyToMachines = async () => {
+    if (targetMachines.length === 0) {
+      setError('Selecciona al menos una máquina de destino.');
+      return;
+    }
+
+    setCopying(true);
+    setError('');
+    setSuccessMessage('');
+
+    const payload = sortedFields.map(toMachineFieldDefinition);
+    let copied = 0;
+    const failed: string[] = [];
+
+    try {
+      for (const targetMachine of targetMachines) {
+        try {
+          const targetSchema = await getMachineFieldSchema(targetMachine);
+          const expectedVersion = Number(targetSchema.version || 1);
+          await saveMachineFieldSchema(targetMachine, payload, expectedVersion);
+          copied += 1;
+        } catch {
+          failed.push(targetMachine);
+        }
+      }
+
+      if (copied > 0) {
+        setSuccessMessage(`Esquema aplicado en ${copied} máquina${copied > 1 ? 's' : ''}.`);
+      }
+      if (failed.length > 0) {
+        setError(`No se pudo aplicar en: ${failed.join(', ')}.`);
+      }
+      setTargetMachines([]);
+    } finally {
+      setCopying(false);
     }
   };
 
@@ -255,6 +312,40 @@ const MachineFieldManager: React.FC = () => {
             <p className="text-xs uppercase tracking-wide font-bold text-slate-400">Última actualización</p>
             <p className="text-sm font-semibold text-slate-700">{updatedAt ? new Date(updatedAt).toLocaleString('es-ES') : 'Sin publicar'}</p>
           </div>
+        </div>
+
+        <div className="rounded-lg border border-slate-200 p-4 bg-slate-50">
+          <p className="text-sm font-bold text-slate-700 mb-2">Reutilizar esquema en otras máquinas</p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
+            {availableTargetMachines.map((machine) => {
+              const checked = targetMachines.includes(machine);
+              return (
+                <label
+                  key={machine}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium cursor-pointer ${
+                    checked
+                      ? 'bg-blue-50 border-blue-300 text-blue-700'
+                      : 'bg-white border-slate-200 text-slate-700'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleTargetMachine(machine)}
+                  />
+                  {machine}
+                </label>
+              );
+            })}
+          </div>
+          <button
+            type="button"
+            onClick={handleApplyToMachines}
+            disabled={copying || loading || sortedFields.length === 0}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 disabled:opacity-50"
+          >
+            {copying ? 'Aplicando...' : 'Aplicar esquema a seleccionadas'}
+          </button>
         </div>
 
         {error && (
