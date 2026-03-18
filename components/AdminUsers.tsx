@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { CheckCircle, Unlock, ShieldAlert, UserCheck, Clock, Ban, Users, RefreshCw, Trash2 } from 'lucide-react';
-import { io } from 'socket.io-client';
+import { CheckCircle, Unlock, ShieldAlert, UserCheck, Clock, Ban, Users, RefreshCw, Trash2, Edit3 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { socket } from '../services/socket';
 
 interface AdminUser {
   id: string;
@@ -41,14 +41,23 @@ const AdminUsers: React.FC = () => {
 
   useEffect(() => {
     fetchUsers();
-    
-    const socket = io();
-    socket.on('new_pending_user', () => {
-      fetchUsers();
-    });
+
+    const syncUsers = () => {
+      void fetchUsers();
+    };
+
+    socket.on('connect', syncUsers);
+    socket.on('new_pending_user', syncUsers);
+    socket.on('user_status_changed', syncUsers);
+    socket.on('user_deleted', syncUsers);
+    socket.on('settings_changed', syncUsers);
 
     return () => {
-      socket.off('new_pending_user');
+      socket.off('connect', syncUsers);
+      socket.off('new_pending_user', syncUsers);
+      socket.off('user_status_changed', syncUsers);
+      socket.off('user_deleted', syncUsers);
+      socket.off('settings_changed', syncUsers);
     };
   }, []);
 
@@ -107,6 +116,65 @@ const AdminUsers: React.FC = () => {
       await fetchUsers();
     } catch (err: any) {
       alert(err.message);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleEditUser = async (target: AdminUser) => {
+    const newOperatorCode = window.prompt(`Nuevo código para ${target.name}`, target.operator_code);
+    if (newOperatorCode === null) return;
+
+    const newName = window.prompt(`Nuevo nombre para ${target.name}`, target.name);
+    if (newName === null) return;
+
+    const newRole = window.prompt('Nuevo rol (admin, jefe_planta, jefe_turno, operario)', target.role);
+    if (newRole === null) return;
+
+    const newStatus = window.prompt('Nuevo estado (active, pending, locked)', target.status);
+    if (newStatus === null) return;
+
+    const newPin = window.prompt('Nuevo PIN (dejar vacío para no cambiar)', '');
+    if (newPin === null) return;
+
+    const payload: Record<string, string> = {};
+    const cleanOperatorCode = newOperatorCode.trim();
+    const cleanName = newName.trim();
+    const cleanRole = newRole.trim();
+    const cleanStatus = newStatus.trim();
+    const cleanPin = newPin.trim();
+
+    if (!cleanOperatorCode || !cleanName || !cleanRole || !cleanStatus) {
+      alert('Código, nombre, rol y estado son obligatorios.');
+      return;
+    }
+
+    if (cleanOperatorCode !== target.operator_code) payload.operator_code = cleanOperatorCode;
+    if (cleanName !== target.name) payload.name = cleanName;
+    if (cleanRole !== target.role) payload.role = cleanRole;
+    if (cleanStatus !== target.status) payload.status = cleanStatus;
+    if (cleanPin) payload.pin = cleanPin;
+
+    if (Object.keys(payload).length === 0) {
+      alert('No hay cambios para guardar.');
+      return;
+    }
+
+    setActionLoading(target.id);
+    try {
+      const res = await fetch(`/api/admin/users/${target.id}/profile`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Error al editar usuario');
+      }
+      await fetchUsers();
+    } catch (err: any) {
+      alert(err.message || 'Error al editar usuario');
     } finally {
       setActionLoading(null);
     }
@@ -250,6 +318,17 @@ const AdminUsers: React.FC = () => {
                             >
                               <Unlock className="w-4 h-4" />
                               <span className="hidden sm:inline">Desbloquear</span>
+                            </button>
+                          )}
+                          {currentUser?.role === 'admin' && (
+                            <button
+                              onClick={() => handleEditUser(u)}
+                              disabled={actionLoading === u.id}
+                              className="flex items-center gap-1 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 font-medium rounded-lg transition-colors disabled:opacity-50"
+                              title="Editar usuario"
+                            >
+                              <Edit3 className="w-4 h-4" />
+                              <span className="hidden sm:inline">Editar</span>
                             </button>
                           )}
                           {hasPermission('admin.users.delete') && currentUser?.id !== u.id && (

@@ -2,6 +2,13 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { UserPlus, User, Lock, Shield, AlertCircle } from 'lucide-react';
 
+const ROLE_OPTIONS = [
+  { value: 'operario', label: 'Operario' },
+  { value: 'jefe_turno', label: 'Jefe de Turno' },
+  { value: 'jefe_planta', label: 'Jefe de Planta' },
+  { value: 'admin', label: 'Administrador' }
+] as const;
+
 const Register: React.FC<{ onSwitchToLogin: () => void }> = ({ onSwitchToLogin }) => {
   const { register } = useAuth();
   const [formData, setFormData] = useState({
@@ -16,7 +23,9 @@ const Register: React.FC<{ onSwitchToLogin: () => void }> = ({ onSwitchToLogin }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.operator_code || !formData.name || !formData.pin) {
+    const trimmedName = formData.name.trim();
+
+    if (!formData.operator_code || !trimmedName || !formData.pin) {
       setError('Por favor complete todos los campos');
       return;
     }
@@ -27,7 +36,7 @@ const Register: React.FC<{ onSwitchToLogin: () => void }> = ({ onSwitchToLogin }
     setError('');
     setLoading(true);
     try {
-      await register(formData);
+      await register({ ...formData, name: trimmedName });
       setSuccess(true);
     } catch (err: any) {
       setError(err.message || 'Error al registrar');
@@ -84,7 +93,7 @@ const Register: React.FC<{ onSwitchToLogin: () => void }> = ({ onSwitchToLogin }
               <input
                 type="text"
                 value={formData.operator_code}
-                onChange={(e) => setFormData({...formData, operator_code: e.target.value})}
+                onChange={(e) => setFormData({ ...formData, operator_code: e.target.value })}
                 className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all font-medium"
                 placeholder="Ej: OP-001"
               />
@@ -98,7 +107,7 @@ const Register: React.FC<{ onSwitchToLogin: () => void }> = ({ onSwitchToLogin }
               <input
                 type="text"
                 value={formData.name}
-                onChange={(e) => setFormData({...formData, name: e.target.value})}
+                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                 className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all font-medium"
                 placeholder="Ej: Juan Pérez"
               />
@@ -107,18 +116,18 @@ const Register: React.FC<{ onSwitchToLogin: () => void }> = ({ onSwitchToLogin }
 
           <div>
             <label className="block text-sm font-bold text-slate-700 mb-2">Rol Solicitado</label>
-            <div className="relative">
-              <Shield className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <select
-                value={formData.role}
-                onChange={(e) => setFormData({...formData, role: e.target.value})}
-                className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all font-medium appearance-none"
-              >
-                <option value="operario">Operario</option>
-                <option value="jefe_turno">Jefe de Turno</option>
-                <option value="jefe_planta">Jefe de Planta</option>
-                <option value="admin">Administrador</option>
-              </select>
+            <div className="grid grid-cols-2 gap-2">
+              {ROLE_OPTIONS.map(option => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setFormData({ ...formData, role: option.value })}
+                  className={`py-3 px-3 rounded-lg border text-sm font-bold transition-colors flex items-center justify-center gap-2 ${formData.role === option.value ? 'bg-slate-800 text-white border-slate-800' : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'}`}
+                >
+                  <Shield className="w-4 h-4" />
+                  {option.label}
+                </button>
+              ))}
             </div>
           </div>
 
@@ -128,10 +137,10 @@ const Register: React.FC<{ onSwitchToLogin: () => void }> = ({ onSwitchToLogin }
               <Lock className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="password"
+                value={formData.pin}
                 inputMode="numeric"
                 pattern="[0-9]*"
-                value={formData.pin}
-                onChange={(e) => setFormData({...formData, pin: e.target.value.replace(/\D/g, '')})}
+                onChange={(e) => setFormData({ ...formData, pin: e.target.value.replace(/\D/g, '') })}
                 className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all font-mono tracking-widest text-lg"
                 placeholder="••••"
                 maxLength={6}

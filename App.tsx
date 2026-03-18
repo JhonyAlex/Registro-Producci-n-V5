@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { LayoutDashboard, PlusCircle, List, User, Trash2, Lock, AlertCircle, Filter, X, Cloud, WifiOff, CloudOff, Edit, ChevronDown, ChevronUp, Calendar, Monitor, XCircle, FileDown, FileUp, AlertTriangle, Clock, ChevronLeft, ChevronRight, Database, LogOut, Users, History, ShieldCheck } from 'lucide-react';
+import { LayoutDashboard, PlusCircle, List, User, Trash2, Lock, AlertCircle, Filter, X, Cloud, WifiOff, CloudOff, Edit, ChevronDown, ChevronUp, Calendar, Monitor, XCircle, FileDown, FileUp, AlertTriangle, Clock, ChevronLeft, ChevronRight, Database, LogOut, Users, History, ShieldCheck, CheckCircle, RefreshCw } from 'lucide-react';
 import ShiftForm from './components/ShiftForm';
 import Dashboard from './components/Dashboard';
 import Login from './components/Login';
@@ -8,12 +8,16 @@ import WaitingRoom from './components/WaitingRoom';
 import AdminUsers from './components/AdminUsers';
 import AuditLogs from './components/AuditLogs';
 import RolePermissionsMatrix from './components/RolePermissionsMatrix';
+import UserProfile from './components/UserProfile';
+import MachineFieldManager from './components/MachineFieldManager';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { subscribeToRecords, subscribeToSettings, clearAllRecords, deleteRecord, exportToExcel, exportAllData, importAllData, reconnectDatabase } from './services/storageService';
+import { getQueueCount, flushQueue, onQueueChanged } from './services/offlineQueue';
+import { socket } from './services/socket';
 import { ProductionRecord, FilterState } from './types';
 import { MACHINES } from './constants';
 
-type View = 'dashboard' | 'entry' | 'list' | 'admin' | 'audit' | 'permissions';
+type View = 'dashboard' | 'entry' | 'list' | 'profile' | 'admin' | 'audit' | 'permissions' | 'fieldSchemas';
 type DeleteMode = 'all' | 'single';
 
 const ITEMS_PER_PAGE = 15;
@@ -27,6 +31,7 @@ const AppContent: React.FC = () => {
   const canAccessUsers = (user?.role === 'admin' || user?.role === 'jefe_planta') && hasPermission('admin.users.read');
   const canAccessAudit = (user?.role === 'admin' || user?.role === 'jefe_planta') && hasPermission('admin.audit.read');
   const canAccessPermissionsMatrix = user?.role === 'admin';
+  const canAccessFieldSchemas = (user?.role === 'admin' || user?.role === 'jefe_planta') && hasPermission('settings.manage');
 
   const [currentView, setCurrentView] = useState<View>('entry');
   const [records, setRecords] = useState<ProductionRecord[]>([]);
@@ -34,6 +39,30 @@ const AppContent: React.FC = () => {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [dbError, setDbError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // --- Offline sync state ---
+  const [pendingSyncCount, setPendingSyncCount] = useState(0);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState('');
+  const isSyncingRef = useRef(false);
+
+  const doSync = async (userId: string) => {
+    if (!navigator.onLine || isSyncingRef.current || getQueueCount(userId) === 0) return;
+    isSyncingRef.current = true;
+    setIsSyncing(true);
+    try {
+      const result = await flushQueue(userId);
+      setPendingSyncCount(getQueueCount(userId));
+      if (result.synced > 0) {
+        const n = result.synced;
+        setSyncMessage(`✓ ${n} registro${n > 1 ? 's' : ''} sincronizado${n > 1 ? 's' : ''} correctamente`);
+        setTimeout(() => setSyncMessage(''), 5000);
+      }
+    } finally {
+      isSyncingRef.current = false;
+      setIsSyncing(false);
+    }
+  };
   
   // Edit Mode State
   const [editingRecord, setEditingRecord] = useState<ProductionRecord | null>(null);
@@ -81,6 +110,30 @@ const AppContent: React.FC = () => {
       window.removeEventListener('offline', handleOffline);
     };
   }, []);
+
+  // Track pending queue count for current user
+  useEffect(() => {
+    if (!user) {
+      setPendingSyncCount(0);
+      return;
+    }
+    setPendingSyncCount(getQueueCount(user.id));
+    return onQueueChanged(() => setPendingSyncCount(getQueueCount(user.id)));
+  }, [user?.id]);
+
+  // Auto-sync when online or authenticated (surviving session expiry)
+  useEffect(() => {
+    if (!user) return;
+    const userId = user.id;
+    void doSync(userId);
+    const handleOnlineSync = () => void doSync(userId);
+    window.addEventListener('online', handleOnlineSync);
+    socket.on('connect', handleOnlineSync);
+    return () => {
+      window.removeEventListener('online', handleOnlineSync);
+      socket.off('connect', handleOnlineSync);
+    };
+  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const unsubscribe = subscribeToSettings((_comments, _operators, bosses) => {
@@ -308,6 +361,34 @@ const AppContent: React.FC = () => {
 
   return (
     <div className="min-h-screen flex flex-col md:flex-row bg-slate-50 relative">
+      {/* ---- Offline / Sync Banner ---- */}
+      {(!isOnline || isSyncing || syncMessage) && (
+        <div
+          className={`fixed top-0 left-0 right-0 z-50 flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold shadow-lg
+            ${
+              syncMessage
+                ? 'bg-green-500 text-white'
+                : isSyncing
+                ? 'bg-blue-600 text-white'
+                : 'bg-amber-500 text-white'
+            }`}
+        >
+          {syncMessage ? (
+            <><CheckCircle className="w-4 h-4 flex-shrink-0" /><span>{syncMessage}</span></>
+          ) : isSyncing ? (
+            <><RefreshCw className="w-4 h-4 flex-shrink-0 animate-spin" /><span>Sincronizando registros pendientes…</span></>
+          ) : (
+            <>
+              <WifiOff className="w-4 h-4 flex-shrink-0" />
+              <span>
+                Sin conexión — puede seguir registrando
+                {pendingSyncCount > 0 && ` · ${pendingSyncCount} registro${pendingSyncCount > 1 ? 's' : ''} pendiente${pendingSyncCount > 1 ? 's' : ''} de sincronizar`}
+              </span>
+            </>
+          )}
+        </div>
+      )}
+
       <input 
         type="file" 
         ref={fileInputRef} 
@@ -340,14 +421,16 @@ const AppContent: React.FC = () => {
           <NavItem view="entry" icon={PlusCircle} label="Registro" />
           <NavItem view="dashboard" icon={LayoutDashboard} label="Dashboard" />
           <NavItem view="list" icon={List} label="Historial" />
+          <NavItem view="profile" icon={User} label="Mi Perfil" />
           
-          {(canAccessUsers || canAccessAudit || canAccessPermissionsMatrix) && (
+          {(canAccessUsers || canAccessAudit || canAccessPermissionsMatrix || canAccessFieldSchemas) && (
             <>
               <div className="mt-8 mb-2 px-4">
                 <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Administración</h3>
               </div>
               {canAccessUsers && <NavItem view="admin" icon={Users} label="Usuarios" />}
               {canAccessAudit && <NavItem view="audit" icon={History} label="Actividad" />}
+              {canAccessFieldSchemas && <NavItem view="fieldSchemas" icon={Monitor} label="Campos" />}
               {canAccessPermissionsMatrix && <NavItem view="permissions" icon={ShieldCheck} label="Permisos" />}
             </>
           )}
@@ -381,21 +464,31 @@ const AppContent: React.FC = () => {
           </button>
           <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
             <p className="text-xs text-slate-500 font-medium">Estado del Sistema</p>
-            <div className={`mt-2 flex items-center gap-2 text-xs font-bold ${dbError ? 'text-red-500' : 'text-green-600'}`}>
+            <div className={`mt-2 flex items-center gap-2 text-xs font-bold ${
+              dbError ? 'text-red-500'
+              : !isOnline ? 'text-amber-500'
+              : pendingSyncCount > 0 ? 'text-blue-500'
+              : 'text-green-600'
+            }`}>
               {dbError ? (
-                <>
-                  <AlertCircle className="w-4 h-4" />
-                  <span>Error Config</span>
-                </>
+                <><AlertCircle className="w-4 h-4" /><span>Error Config</span></>
+              ) : !isOnline ? (
+                <><WifiOff className="w-4 h-4" /><span>Sin Conexión</span></>
+              ) : pendingSyncCount > 0 ? (
+                <><RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} /><span>{pendingSyncCount} pendiente{pendingSyncCount > 1 ? 's' : ''}</span></>
               ) : (
-                <>
-                  <Cloud className="w-4 h-4" />
-                  <span>Nube Activa</span>
-                </>
+                <><Cloud className="w-4 h-4" /><span>Nube Activa</span></>
               )}
             </div>
             <p className="text-[10px] text-slate-400 mt-1 leading-tight">
-              {dbError ? 'Requiere atención.' : 'Sincronización en tiempo real.'}
+              {dbError
+                ? 'Requiere atención.'
+                : !isOnline
+                ? 'Guardando localmente.'
+                : pendingSyncCount > 0
+                ? 'Sincronizando al reconectar.'
+                : 'Sincronización en tiempo real.'
+              }
             </p>
             {dbError && (
               <button 
@@ -442,6 +535,14 @@ const AppContent: React.FC = () => {
 
           {currentView === 'permissions' && canAccessPermissionsMatrix && (
             <RolePermissionsMatrix />
+          )}
+
+          {currentView === 'fieldSchemas' && canAccessFieldSchemas && (
+            <MachineFieldManager />
+          )}
+
+          {currentView === 'profile' && (
+            <UserProfile />
           )}
 
           {(currentView === 'dashboard' || currentView === 'list') && (
@@ -787,6 +888,7 @@ const AppContent: React.FC = () => {
         <NavItem view="entry" icon={PlusCircle} label="Registro" mobileOnly />
         <NavItem view="dashboard" icon={LayoutDashboard} label="Data" mobileOnly />
         <NavItem view="list" icon={List} label="Historial" mobileOnly />
+        <NavItem view="profile" icon={User} label="Perfil" mobileOnly />
         {(canAccessUsers || canAccessAudit || canAccessPermissionsMatrix) && (
           <>
             {canAccessUsers && <NavItem view="admin" icon={Users} label="Usuarios" mobileOnly />}

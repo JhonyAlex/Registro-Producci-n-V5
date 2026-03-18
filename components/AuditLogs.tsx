@@ -52,6 +52,8 @@ const actionLabel = (action: string) => {
     user_approved: 'Usuario aprobado',
     user_unlocked: 'Usuario desbloqueado',
     user_deleted: 'Usuario eliminado',
+    user_profile_updated: 'Perfil propio actualizado',
+    admin_user_profile_updated: 'Perfil de usuario actualizado por admin',
     role_permissions_updated: 'Permisos por rol actualizados',
     account_locked: 'Cuenta bloqueada',
     record_created: 'Registro creado',

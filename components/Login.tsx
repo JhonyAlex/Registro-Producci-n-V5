@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Lock, User, AlertCircle } from 'lucide-react';
 
@@ -9,15 +9,22 @@ const Login: React.FC<{ onSwitchToRegister: () => void }> = ({ onSwitchToRegiste
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleNumberClick = (num: string) => {
-    if (pin.length < 6) {
-      setPin(prev => prev + num);
+  // Auto-submit cuando el PIN está completo (6 dígitos) y hay código de operario
+  useEffect(() => {
+    if (pin.length === 6 && operatorCode.length > 0 && !loading) {
+      const autoLogin = async () => {
+        setError('');
+        setLoading(true);
+        try {
+          await login(operatorCode, pin);
+        } catch (err: any) {
+          setError(err.message || 'Error al iniciar sesión');
+          setLoading(false);
+        }
+      };
+      autoLogin();
     }
-  };
-
-  const handleBackspace = () => {
-    setPin(prev => prev.slice(0, -1));
-  };
+  }, [pin, operatorCode, loading, login]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -76,45 +83,13 @@ const Login: React.FC<{ onSwitchToRegister: () => void }> = ({ onSwitchToRegiste
               <input
                 type="password"
                 value={pin}
-                readOnly
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={6}
+                onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
                 className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all font-mono text-center tracking-[0.5em] text-xl"
                 placeholder="••••"
               />
-            </div>
-            
-            {/* Numeric Keypad */}
-            <div className="grid grid-cols-3 gap-3 mt-4">
-              {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(num => (
-                <button
-                  key={num}
-                  type="button"
-                  onClick={() => handleNumberClick(num.toString())}
-                  className="py-4 bg-slate-100 hover:bg-slate-200 rounded-lg text-xl font-bold text-slate-700 transition-colors active:bg-slate-300"
-                >
-                  {num}
-                </button>
-              ))}
-              <button
-                type="button"
-                onClick={() => setPin('')}
-                className="py-4 bg-red-50 hover:bg-red-100 rounded-lg text-sm font-bold text-red-600 transition-colors"
-              >
-                Limpiar
-              </button>
-              <button
-                type="button"
-                onClick={() => handleNumberClick('0')}
-                className="py-4 bg-slate-100 hover:bg-slate-200 rounded-lg text-xl font-bold text-slate-700 transition-colors active:bg-slate-300"
-              >
-                0
-              </button>
-              <button
-                type="button"
-                onClick={handleBackspace}
-                className="py-4 bg-slate-100 hover:bg-slate-200 rounded-lg text-sm font-bold text-slate-700 transition-colors"
-              >
-                ←
-              </button>
             </div>
           </div>
 

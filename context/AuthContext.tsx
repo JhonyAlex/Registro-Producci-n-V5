@@ -1,5 +1,4 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { io } from 'socket.io-client';
 
 const AUTH_EXPIRED_EVENT = 'app:auth-expired';
 

@@ -1,38 +1,73 @@
-import { ProductionRecord } from '../types';
+import {
+  MachineFieldDefinition,
+  MachineFieldSchemaHistoryItem,
+  MachineFieldSchemaPayload,
+  MachineType,
+  ProductionRecord,
+} from '../types';
 import { COMMON_COMMENTS } from '../constants';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
-import { io } from 'socket.io-client';
+import { socket } from './socket';
+import { addToQueue } from './offlineQueue';
 
-const socket = io();
+export interface UserOption {
+  id: string;
+  name: string;
+  role: string;
+}
 
 // Local cache to serve synchronous get requests if needed immediately
 let localRecordsCache: ProductionRecord[] = [];
 let localCommentsCache: string[] = [];
 let localOperatorsCache: string[] = [];
 let localBossesCache: string[] = [];
+let localOperatorOptionsCache: UserOption[] = [];
+let localBossOptionsCache: UserOption[] = [];
+let settingsIntervalId: number | null = null;
+let settingsBrowserListenersAttached = false;
+
+const SETTINGS_SYNC_INTERVAL_MS = 15000;
+const RECORDS_SYNC_INTERVAL_MS = 10000;
 
 // Subscribers for settings updates
-type SettingsCallback = (comments: string[], operators: string[], bosses: string[]) => void;
+type SettingsCallback = (
+  comments: string[],
+  operators: string[],
+  bosses: string[],
+  operatorOptions: UserOption[],
+  bossOptions: UserOption[]
+) => void;
 const settingsSubscribers: SettingsCallback[] = [];
 
 const notifySettingsSubscribers = () => {
   const comments = localCommentsCache.length > 0 ? localCommentsCache : COMMON_COMMENTS;
   const operators = localOperatorsCache;
   const bosses = localBossesCache;
-  settingsSubscribers.forEach(cb => cb(comments, operators, bosses));
+  const operatorOptions = localOperatorOptionsCache;
+  const bossOptions = localBossOptionsCache;
+  settingsSubscribers.forEach(cb => cb(comments, operators, bosses, operatorOptions, bossOptions));
 };
 
 // --- API HELPERS ---
 const API_BASE = '/api';
 
 const fetchJson = async (url: string, options?: RequestInit) => {
+  const method = (options?.method || 'GET').toUpperCase();
+  const isReadRequest = method === 'GET' || method === 'HEAD';
   const res = await fetch(`${API_BASE}${url}`, {
+    cache: isReadRequest ? 'no-store' : options?.cache,
     ...options,
     credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
+      ...(isReadRequest
+        ? {
+            'Cache-Control': 'no-cache',
+            Pragma: 'no-cache',
+          }
+        : {}),
       ...options?.headers,
     },
   });
@@ -51,12 +86,14 @@ const pollSettings = async () => {
   try {
     const [comments, userOptions] = await Promise.all([
       fetchJson('/settings/comments').catch(() => []),
-      fetchJson('/settings/user-options').catch(() => ({ operators: [], bosses: [] }))
+      fetchJson('/settings/user-options').catch(() => ({ operators: [], bosses: [], operatorOptions: [], bossOptions: [] }))
     ]);
     
     localCommentsCache = comments.length > 0 ? comments : COMMON_COMMENTS;
     localOperatorsCache = Array.isArray(userOptions?.operators) ? userOptions.operators : [];
     localBossesCache = Array.isArray(userOptions?.bosses) ? userOptions.bosses : [];
+    localOperatorOptionsCache = Array.isArray(userOptions?.operatorOptions) ? userOptions.operatorOptions : [];
+    localBossOptionsCache = Array.isArray(userOptions?.bossOptions) ? userOptions.bossOptions : [];
     
     notifySettingsSubscribers();
   } catch (err) {
@@ -64,14 +101,36 @@ const pollSettings = async () => {
   }
 };
 
+const handleSettingsVisibilitySync = () => {
+  if (document.visibilityState === 'visible') {
+    void pollSettings();
+  }
+};
+
+const triggerSettingsSync = () => {
+  void pollSettings();
+};
+
 const startPollingSettings = () => {
   if (isPolling) return;
   isPolling = true;
-  pollSettings();
+  triggerSettingsSync();
   
-  socket.on('settings_changed', pollSettings);
-  socket.on('user_status_changed', pollSettings);
-  socket.on('user_deleted', pollSettings);
+  socket.on('connect', triggerSettingsSync);
+  socket.on('settings_changed', triggerSettingsSync);
+  socket.on('user_status_changed', triggerSettingsSync);
+  socket.on('user_deleted', triggerSettingsSync);
+
+  if (settingsIntervalId === null) {
+    settingsIntervalId = window.setInterval(triggerSettingsSync, SETTINGS_SYNC_INTERVAL_MS);
+  }
+
+  if (!settingsBrowserListenersAttached) {
+    window.addEventListener('online', triggerSettingsSync);
+    window.addEventListener('focus', triggerSettingsSync);
+    document.addEventListener('visibilitychange', handleSettingsVisibilitySync);
+    settingsBrowserListenersAttached = true;
+  }
 };
 
 // Start polling immediately
@@ -86,7 +145,9 @@ export const subscribeToSettings = (callback: SettingsCallback) => {
   const comments = localCommentsCache.length > 0 ? localCommentsCache : COMMON_COMMENTS;
   const operators = localOperatorsCache;
   const bosses = localBossesCache;
-  callback(comments, operators, bosses);
+  const operatorOptions = localOperatorOptionsCache;
+  const bossOptions = localBossOptionsCache;
+  callback(comments, operators, bosses, operatorOptions, bossOptions);
 
   // Return unsubscribe function
   return () => {
@@ -109,27 +170,125 @@ export const getAvailableBosses = (): string[] => {
   return localBossesCache;
 };
 
-export const saveRecord = async (record: ProductionRecord): Promise<void> => {
+export const getOperatorOptions = (): UserOption[] => {
+  return localOperatorOptionsCache;
+};
+
+export const getBossOptions = (): UserOption[] => {
+  return localBossOptionsCache;
+};
+
+export const getMachineFieldSchema = async (machine: MachineType): Promise<MachineFieldSchemaPayload> => {
+  return fetchJson(`/settings/machine-fields/${encodeURIComponent(machine)}`);
+};
+
+export const saveMachineFieldSchema = async (
+  machine: MachineType,
+  fields: MachineFieldDefinition[],
+  expectedVersion: number
+): Promise<MachineFieldSchemaPayload> => {
+  return fetchJson(`/settings/machine-fields/${encodeURIComponent(machine)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ fields, expectedVersion }),
+  });
+};
+
+export const getMachineFieldSchemaHistory = async (
+  machine: MachineType
+): Promise<MachineFieldSchemaHistoryItem[]> => {
+  return fetchJson(`/settings/machine-fields/${encodeURIComponent(machine)}/history`);
+};
+
+export const subscribeToMachineFieldSchema = (
+  machine: MachineType,
+  callback: (schema: MachineFieldSchemaPayload) => void,
+  onError?: (error: string) => void
+) => {
+  let isActive = true;
+
+  const refresh = async () => {
+    try {
+      const schema = await getMachineFieldSchema(machine);
+      if (isActive) {
+        callback(schema);
+      }
+    } catch (error: any) {
+      if (isActive && onError) {
+        onError(error?.message || 'No se pudo sincronizar el esquema de campos.');
+      }
+    }
+  };
+
+  const onSchemaChanged = (payload: { machine?: string }) => {
+    if (!payload?.machine || payload.machine === machine) {
+      void refresh();
+    }
+  };
+
+  void refresh();
+  socket.on('connect', refresh);
+  socket.on('settings_changed', refresh);
+  socket.on('machine_schema_changed', onSchemaChanged);
+
+  return () => {
+    isActive = false;
+    socket.off('connect', refresh);
+    socket.off('settings_changed', refresh);
+    socket.off('machine_schema_changed', onSchemaChanged);
+  };
+};
+
+export interface SaveResult {
+  /** True when the record could not reach the server and was queued
+   *  in localStorage for later synchronization. */
+  offline?: boolean;
+}
+
+export const saveRecord = async (
+  record: ProductionRecord,
+  userId?: string
+): Promise<SaveResult> => {
+  // If no network at all, queue immediately without even trying
+  if (!navigator.onLine) {
+    if (userId) addToQueue(userId, record);
+    return { offline: true };
+  }
+
   try {
     // 1. Save the record to PostgreSQL
     await fetchJson('/records', {
       method: 'POST',
-      body: JSON.stringify(record)
+      body: JSON.stringify(record),
     });
 
     // 2. Handle Custom Comments
     if (record.changesComment) {
       await fetchJson('/settings/comments', {
         method: 'POST',
-        body: JSON.stringify({ name: record.changesComment, skipAudit: true })
+        body: JSON.stringify({ name: record.changesComment, skipAudit: true }),
       }).catch(err => console.warn("Failed to add comment:", err));
     }
 
     // Trigger a poll to update caches
     pollSettings();
+    return {};
 
   } catch (e: any) {
     console.error("Error saving record:", e);
+
+    // On network / connectivity errors: queue locally instead of showing an error
+    const isConnectivityError =
+      !navigator.onLine ||
+      e.message?.includes('Failed to fetch') ||
+      e.message?.includes('NetworkError') ||
+      e.message?.includes('Network request failed') ||
+      e.message?.includes('Load failed');
+
+    if (isConnectivityError && userId) {
+      addToQueue(userId, record);
+      return { offline: true };
+    }
+
     throw e;
   }
 };
@@ -238,26 +397,45 @@ export const subscribeToRecords = (
     }
   };
 
-  fetchRecords();
+  const triggerRecordsSync = () => {
+    void fetchRecords();
+  };
+
+  const handleVisibilitySync = () => {
+    if (document.visibilityState === 'visible') {
+      triggerRecordsSync();
+    }
+  };
+
+  triggerRecordsSync();
   
   const handleConnect = () => {
     if (onError) onError('');
-    fetchRecords();
+    triggerRecordsSync();
   };
   
   const handleDisconnect = () => {
     if (onError) onError('Desconectado del servidor en tiempo real.');
   };
 
-  socket.on('records_changed', fetchRecords);
+  const intervalId = window.setInterval(triggerRecordsSync, RECORDS_SYNC_INTERVAL_MS);
+
+  socket.on('records_changed', triggerRecordsSync);
   socket.on('connect', handleConnect);
   socket.on('disconnect', handleDisconnect);
+  window.addEventListener('online', triggerRecordsSync);
+  window.addEventListener('focus', triggerRecordsSync);
+  document.addEventListener('visibilitychange', handleVisibilitySync);
 
   return () => {
     isSubscribed = false;
-    socket.off('records_changed', fetchRecords);
+    window.clearInterval(intervalId);
+    socket.off('records_changed', triggerRecordsSync);
     socket.off('connect', handleConnect);
     socket.off('disconnect', handleDisconnect);
+    window.removeEventListener('online', triggerRecordsSync);
+    window.removeEventListener('focus', triggerRecordsSync);
+    document.removeEventListener('visibilitychange', handleVisibilitySync);
   };
 };
 

@@ -1,26 +1,30 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Clock, RefreshCw, LogOut } from 'lucide-react';
-import { io } from 'socket.io-client';
+import { socket } from '../services/socket';
 
 const WaitingRoom: React.FC = () => {
   const { user, checkAuth, logout } = useAuth();
   const [checking, setChecking] = useState(false);
 
   useEffect(() => {
-    const socket = io();
-
     const handleStatusChange = (data: { userId: string, status: string }) => {
       if (user && data.userId === user.id && data.status === 'active') {
         // Status changed to active, re-check auth to get updated user object
-        checkAuth();
+        void checkAuth();
       }
     };
 
+    const handleReconnect = () => {
+      void checkAuth();
+    };
+
     socket.on('user_status_changed', handleStatusChange);
+    socket.on('connect', handleReconnect);
 
     return () => {
       socket.off('user_status_changed', handleStatusChange);
+      socket.off('connect', handleReconnect);
     };
   }, [user, checkAuth]);
 

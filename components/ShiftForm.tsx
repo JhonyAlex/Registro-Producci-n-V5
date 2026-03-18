@@ -1,13 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Save, Calendar, CheckCircle, X, ChevronDown, MessageSquare, Trash2, RotateCcw, Settings, Edit2, Users, Cloud } from 'lucide-react';
-import { MachineType, ShiftType, ProductionRecord } from '../types';
+import { Plus, Save, Calendar, CheckCircle, X, ChevronDown, MessageSquare, Trash2, RotateCcw, Settings, Edit2, Users, Cloud, WifiOff } from 'lucide-react';
+import { MachineFieldDefinition, MachineType, ShiftType, ProductionRecord } from '../types';
 import { MACHINES, SHIFTS } from '../constants';
 import { 
   saveRecord, 
   deleteCustomComment, 
   renameCustomComment,
-  subscribeToSettings
+  subscribeToSettings,
+  subscribeToMachineFieldSchema,
+  UserOption
 } from '../services/storageService';
+import { useAuth } from '../context/AuthContext';
 
 interface ShiftFormProps {
   onRecordSaved: () => void;
@@ -18,10 +21,12 @@ interface ShiftFormProps {
 const STORAGE_KEY = 'pigmea_form_defaults_v1';
 
 const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onCancelEdit }) => {
+  const { user } = useAuth();
+
   const [formData, setFormData] = useState({
     date: new Date().toISOString().split('T')[0],
     shift: ShiftType.MORNING,
-    boss: '',
+    bossUserId: '',
     machine: MachineType.WH1,
   });
 
@@ -31,9 +36,10 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
   
   // Custom Operator Field State
   const [operatorInput, setOperatorInput] = useState('');
-  const [availableOperators, setAvailableOperators] = useState<string[]>([]);
-  const [availableBosses, setAvailableBosses] = useState<string[]>([]);
-  const [filteredOperators, setFilteredOperators] = useState<string[]>([]);
+  const [operatorUserId, setOperatorUserId] = useState<string | null>(null);
+  const [availableOperatorOptions, setAvailableOperatorOptions] = useState<UserOption[]>([]);
+  const [availableBossOptions, setAvailableBossOptions] = useState<UserOption[]>([]);
+  const [filteredOperators, setFilteredOperators] = useState<UserOption[]>([]);
   const [showOperatorSuggestions, setShowOperatorSuggestions] = useState(false);
   const operatorDropdownRef = useRef<HTMLDivElement>(null);
 
@@ -53,6 +59,11 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
 
   // Success Modal State
   const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [wasOfflineSave, setWasOfflineSave] = useState(false);
+  const [machineFields, setMachineFields] = useState<MachineFieldDefinition[]>([]);
+  const [machineSchemaVersion, setMachineSchemaVersion] = useState<number>(1);
+  const [dynamicFieldValues, setDynamicFieldValues] = useState<Record<string, unknown>>({});
+  const [dynamicFieldError, setDynamicFieldError] = useState('');
 
   // 1. Load Defaults from LocalStorage on Mount (Only if not editing)
   useEffect(() => {
@@ -65,10 +76,11 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
             ...prev,
             date: parsed.date || prev.date,
             shift: parsed.shift || prev.shift,
-            boss: parsed.boss || prev.boss,
+            bossUserId: parsed.bossUserId || prev.bossUserId,
             machine: parsed.machine || prev.machine
           }));
           if (parsed.operator) setOperatorInput(parsed.operator);
+          if (parsed.operatorUserId) setOperatorUserId(parsed.operatorUserId);
         } catch (e) {
           console.error("Error loading saved defaults", e);
         }
@@ -77,10 +89,10 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
   }, []); // Run once on mount
 
   useEffect(() => {
-    if (!formData.boss && availableBosses.length > 0) {
-      setFormData((prev) => ({ ...prev, boss: availableBosses[0] }));
+    if (!formData.bossUserId && availableBossOptions.length > 0) {
+      setFormData((prev) => ({ ...prev, bossUserId: availableBossOptions[0].id }));
     }
-  }, [availableBosses, formData.boss]);
+  }, [availableBossOptions, formData.bossUserId]);
 
   // 2. Save Defaults to LocalStorage whenever context fields change (Only if not editing)
   useEffect(() => {
@@ -88,13 +100,14 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
       const defaultsToSave = {
         date: formData.date,
         shift: formData.shift,
-        boss: formData.boss,
+        bossUserId: formData.bossUserId,
         machine: formData.machine,
-        operator: operatorInput
+        operator: operatorInput,
+        operatorUserId
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(defaultsToSave));
     }
-  }, [formData.date, formData.shift, formData.boss, formData.machine, operatorInput, editingRecord]);
+  }, [formData.date, formData.shift, formData.bossUserId, formData.machine, operatorInput, operatorUserId, editingRecord]);
 
   // Load editing data when record changes
   useEffect(() => {
@@ -102,31 +115,83 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
       setFormData({
         date: editingRecord.date,
         shift: editingRecord.shift,
-        boss: editingRecord.boss,
+        bossUserId: editingRecord.bossUserId || '',
         machine: editingRecord.machine,
       });
       setMetersInput(editingRecord.meters.toString());
       setChangesInput(editingRecord.changesCount.toString());
       setCommentInput(editingRecord.changesComment || '');
       setOperatorInput(editingRecord.operator || '');
+      setOperatorUserId(editingRecord.operatorUserId || null);
+      setDynamicFieldValues(editingRecord.dynamicFieldsValues || {});
       // Scroll to top when editing starts
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } else {
       setMetersInput('');
       setChangesInput('');
       setCommentInput('');
+      setOperatorUserId(null);
+      setDynamicFieldValues({});
     }
   }, [editingRecord]);
 
   // Subscribe to real-time updates for Comments and Operators
   useEffect(() => {
-    const unsubscribe = subscribeToSettings((comments, operators, bosses) => {
+    const unsubscribe = subscribeToSettings((comments, _operators, _bosses, operatorOptions, bossOptions) => {
       setAvailableComments(comments);
-      setAvailableOperators(operators);
-      setAvailableBosses(bosses);
+      setAvailableOperatorOptions(operatorOptions);
+      setAvailableBossOptions(bossOptions);
+
+      if (!editingRecord && !formData.bossUserId && bossOptions.length > 0) {
+        setFormData((prev) => ({ ...prev, bossUserId: bossOptions[0].id }));
+      }
+
+      if (editingRecord && editingRecord.boss && !formData.bossUserId) {
+        const matchedBoss = bossOptions.find((option) => option.name === editingRecord.boss);
+        if (matchedBoss) {
+          setFormData((prev) => ({ ...prev, bossUserId: matchedBoss.id }));
+        }
+      }
+
+      if (editingRecord && editingRecord.operator && !operatorUserId) {
+        const matchedOperator = operatorOptions.find((option) => option.name === editingRecord.operator);
+        if (matchedOperator) {
+          setOperatorUserId(matchedOperator.id);
+        }
+      }
     });
     return () => unsubscribe();
-  }, []);
+  }, [editingRecord, formData.bossUserId, operatorUserId]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToMachineFieldSchema(
+      formData.machine,
+      (schema) => {
+        const enabledFields = (schema.fields || []).filter((field) => field.enabled !== false);
+        setMachineFields(enabledFields);
+        setMachineSchemaVersion(Number(schema.version || 1));
+        setDynamicFieldValues((prev) => {
+          const next: Record<string, unknown> = {};
+          for (const field of enabledFields) {
+            if (prev[field.key] !== undefined) {
+              next[field.key] = prev[field.key];
+              continue;
+            }
+            if (editingRecord?.dynamicFieldsValues && editingRecord.dynamicFieldsValues[field.key] !== undefined) {
+              next[field.key] = editingRecord.dynamicFieldsValues[field.key];
+              continue;
+            }
+            next[field.key] = getDefaultFieldValue(field);
+          }
+          return next;
+        });
+        setDynamicFieldError('');
+      },
+      (message) => setDynamicFieldError(message)
+    );
+
+    return () => unsubscribe();
+  }, [formData.machine, editingRecord?.id]);
 
   // Filter logic for Comments
   useEffect(() => {
@@ -143,14 +208,14 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
   // Filter logic for Operators
   useEffect(() => {
     if (!operatorInput) {
-      setFilteredOperators(availableOperators);
+      setFilteredOperators(availableOperatorOptions);
     } else {
       const lowerInput = operatorInput.toLowerCase();
-      setFilteredOperators(availableOperators.filter(o => 
-        o.toLowerCase().includes(lowerInput)
+      setFilteredOperators(availableOperatorOptions.filter(o => 
+        o.name.toLowerCase().includes(lowerInput)
       ));
     }
-  }, [operatorInput, availableOperators]);
+  }, [operatorInput, availableOperatorOptions]);
 
   // Click outside to close dropdowns
   useEffect(() => {
@@ -181,6 +246,59 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
     return parseInt(value).toLocaleString('es-ES');
   };
 
+  const getDefaultFieldValue = (field: MachineFieldDefinition): unknown => {
+    if (field.defaultValue !== undefined) return field.defaultValue;
+    if (field.type === 'multi_select') return [];
+    return '';
+  };
+
+  const validateDynamicFields = (): string | null => {
+    for (const field of machineFields.filter((item) => item.enabled !== false)) {
+      const raw = dynamicFieldValues[field.key];
+      const hasValue = raw !== undefined && raw !== null && raw !== '' && (!Array.isArray(raw) || raw.length > 0);
+      if (field.required && !hasValue) {
+        return `El campo ${field.label} es obligatorio.`;
+      }
+
+      if (!hasValue) continue;
+
+      if (field.type === 'number') {
+        const n = Number(raw);
+        if (!Number.isFinite(n)) return `El campo ${field.label} debe ser numérico.`;
+        if (field.rules?.min !== undefined && n < field.rules.min) return `El campo ${field.label} no puede ser menor a ${field.rules.min}.`;
+        if (field.rules?.max !== undefined && n > field.rules.max) return `El campo ${field.label} no puede ser mayor a ${field.rules.max}.`;
+      }
+
+      if (field.type === 'short_text') {
+        const text = String(raw);
+        if (field.rules?.maxLength !== undefined && text.length > field.rules.maxLength) {
+          return `El campo ${field.label} supera ${field.rules.maxLength} caracteres.`;
+        }
+      }
+
+      if (field.type === 'select') {
+        if (!field.options?.includes(String(raw))) {
+          return `Selecciona una opción válida para ${field.label}.`;
+        }
+      }
+
+      if (field.type === 'multi_select') {
+        if (!Array.isArray(raw)) {
+          return `El campo ${field.label} requiere una selección múltiple.`;
+        }
+        const invalid = raw.find((item) => !field.options?.includes(String(item)));
+        if (invalid) {
+          return `El valor ${invalid} no es válido para ${field.label}.`;
+        }
+      }
+    }
+    return null;
+  };
+
+  const updateDynamicFieldValue = (fieldKey: string, value: unknown) => {
+    setDynamicFieldValues((prev) => ({ ...prev, [fieldKey]: value }));
+  };
+
   // --- Comment Handlers ---
   const clearComment = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -201,15 +319,17 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
   const clearOperator = (e: React.MouseEvent) => {
     e.stopPropagation();
     setOperatorInput('');
-    setFilteredOperators(availableOperators);
+    setOperatorUserId(null);
+    setFilteredOperators(availableOperatorOptions);
   };
 
   const handleOperatorFocus = () => {
     setShowOperatorSuggestions(true);
   };
 
-  const selectOperator = (op: string) => {
-    setOperatorInput(op);
+  const selectOperator = (op: UserOption) => {
+    setOperatorInput(op.name);
+    setOperatorUserId(op.id);
     setShowOperatorSuggestions(false);
   };
 
@@ -250,16 +370,23 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
     e.preventDefault();
     if (!metersInput) return;
 
-    const isValidBoss = availableBosses.includes(formData.boss);
-    if (!isValidBoss) {
+    const selectedBoss = availableBossOptions.find((boss) => boss.id === formData.bossUserId);
+    if (!selectedBoss) {
       alert('Selecciona un jefe válido desde la lista de usuarios activos.');
       return;
     }
 
-    if (operatorInput && !availableOperators.includes(operatorInput)) {
+    if (operatorInput && !operatorUserId) {
       alert('Selecciona un operario válido desde la lista de usuarios activos.');
       return;
     }
+
+    const dynamicValidationError = validateDynamicFields();
+    if (dynamicValidationError) {
+      setDynamicFieldError(dynamicValidationError);
+      return;
+    }
+    setDynamicFieldError('');
 
     const id = editingRecord ? editingRecord.id : crypto.randomUUID();
     const timestamp = Date.now();
@@ -269,18 +396,34 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
       timestamp,
       date: formData.date,
       shift: formData.shift,
-      boss: formData.boss,
+      boss: selectedBoss.name,
+      bossUserId: selectedBoss.id,
       machine: formData.machine,
       meters: parseInt(metersInput),
       changesCount: changesInput === '' ? 0 : parseInt(changesInput),
       changesComment: commentInput,
-      operator: operatorInput
+      operator: operatorInput,
+      operatorUserId,
+      dynamicFieldsValues: dynamicFieldValues,
+      schemaVersionUsed: machineSchemaVersion
     };
 
-    // Save Logic
-    await saveRecord(newRecord);
-    
+    let saveResult;
+    try {
+      // Save Logic — passes userId so offline records are queued for sync
+      saveResult = await saveRecord(newRecord, user?.id);
+    } catch (error: any) {
+      const message = String(error?.message || '');
+      if (message.toLowerCase().includes('versión vigente') || message.includes('SCHEMA_VERSION_MISMATCH')) {
+        setDynamicFieldError('El esquema cambió mientras completabas el formulario. Se recargó la definición, revisa y vuelve a guardar.');
+      } else {
+        setDynamicFieldError(message || 'No se pudo guardar el registro.');
+      }
+      return;
+    }
+
     // Trigger Success Modal
+    setWasOfflineSave(saveResult?.offline === true);
     setShowSuccessModal(true);
 
     // Notify Parent
@@ -301,6 +444,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
 
   const closeSuccessModal = () => {
     setShowSuccessModal(false);
+    setWasOfflineSave(false);
   };
 
   return (
@@ -354,13 +498,13 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
             <label className="block text-sm font-semibold text-slate-700 mb-2">Jefe de Turno</label>
             <div className="relative">
               <select
-                value={formData.boss}
-                onChange={e => setFormData({ ...formData, boss: e.target.value })}
+                value={formData.bossUserId}
+                onChange={e => setFormData({ ...formData, bossUserId: e.target.value })}
                 className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none appearance-none font-medium"
               >
-                {availableBosses.length === 0 && <option value="">Sin jefes activos</option>}
-                {availableBosses.map((boss) => (
-                  <option key={boss} value={boss}>{boss}</option>
+                {availableBossOptions.length === 0 && <option value="">Sin jefes activos</option>}
+                {availableBossOptions.map((boss) => (
+                  <option key={boss.id} value={boss.id}>{boss.name}</option>
                 ))}
               </select>
               <div className="absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none">
@@ -383,6 +527,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
                     value={operatorInput}
                     onChange={e => {
                       setOperatorInput(e.target.value);
+                      setOperatorUserId(null);
                       setShowOperatorSuggestions(true);
                     }}
                     onFocus={handleOperatorFocus}
@@ -407,13 +552,13 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
                       <div className="divide-y divide-slate-50">
                         {filteredOperators.map((op, index) => (
                           <div
-                            key={index}
+                            key={`${op.id}-${index}`}
                             onClick={() => selectOperator(op)}
                             className="w-full text-left px-4 py-3.5 hover:bg-blue-50 active:bg-blue-100 text-slate-700 font-medium transition-colors flex items-center justify-between group touch-target cursor-pointer"
                           >
                             <div className="flex items-center gap-3 overflow-hidden">
                               <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 shrink-0"></span>
-                              <span className="truncate">{op}</span>
+                              <span className="truncate">{op.name}</span>
                             </div>
                           </div>
                         ))}
@@ -449,6 +594,94 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
             ))}
           </div>
         </div>
+
+        {machineFields.length > 0 && (
+          <div className="p-4 rounded-xl border border-emerald-100 bg-emerald-50/60 space-y-4">
+            <div>
+              <h3 className="text-sm font-bold text-emerald-800">Campos dinámicos de {formData.machine}</h3>
+              <p className="text-xs text-emerald-700 mt-1">Versión de esquema: {machineSchemaVersion}</p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {machineFields.map((field) => (
+                <div key={field.key} className="bg-white border border-emerald-100 rounded-lg p-3">
+                  <label className="block text-sm font-semibold text-slate-700 mb-2">
+                    {field.label} {field.required ? <span className="text-red-500">*</span> : null}
+                  </label>
+
+                  {field.type === 'number' && (
+                    <input
+                      type="number"
+                      value={(dynamicFieldValues[field.key] as number | string | undefined) ?? ''}
+                      min={field.rules?.min}
+                      max={field.rules?.max}
+                      onChange={(e) => updateDynamicFieldValue(field.key, e.target.value === '' ? '' : Number(e.target.value))}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                    />
+                  )}
+
+                  {field.type === 'short_text' && (
+                    <input
+                      type="text"
+                      value={(dynamicFieldValues[field.key] as string | undefined) ?? ''}
+                      maxLength={field.rules?.maxLength}
+                      onChange={(e) => updateDynamicFieldValue(field.key, e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                    />
+                  )}
+
+                  {field.type === 'select' && (
+                    <select
+                      value={(dynamicFieldValues[field.key] as string | undefined) ?? ''}
+                      onChange={(e) => updateDynamicFieldValue(field.key, e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                    >
+                      <option value="">Selecciona una opción</option>
+                      {(field.options || []).map((option) => (
+                        <option key={option} value={option}>{option}</option>
+                      ))}
+                    </select>
+                  )}
+
+                  {field.type === 'multi_select' && (
+                    <div className="space-y-2">
+                      {(field.options || []).map((option) => {
+                        const selected = Array.isArray(dynamicFieldValues[field.key])
+                          ? (dynamicFieldValues[field.key] as string[])
+                          : [];
+                        const isChecked = selected.includes(option);
+                        return (
+                          <label key={option} className="flex items-center gap-2 text-sm text-slate-700">
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={(e) => {
+                                const next = new Set(selected);
+                                if (e.target.checked) {
+                                  next.add(option);
+                                } else {
+                                  next.delete(option);
+                                }
+                                updateDynamicFieldValue(field.key, Array.from(next));
+                              }}
+                            />
+                            {option}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {dynamicFieldError && (
+          <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+            {dynamicFieldError}
+          </div>
+        )}
 
         {/* Production Data */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -578,12 +811,17 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
       {showSuccessModal && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm animate-fade-in">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden animate-scale-in text-center p-8 transform scale-100">
-            <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6 text-green-500 animate-bounce-short shadow-sm">
-              <CheckCircle className="w-10 h-10" />
+            <div className={`w-20 h-20 ${wasOfflineSave ? 'bg-amber-100' : 'bg-green-100'} rounded-full flex items-center justify-center mx-auto mb-6 ${wasOfflineSave ? 'text-amber-500' : 'text-green-500'} animate-bounce-short shadow-sm`}>
+              {wasOfflineSave ? <WifiOff className="w-10 h-10" /> : <CheckCircle className="w-10 h-10" />}
             </div>
-            <h2 className="text-2xl font-bold text-slate-900 mb-2">¡Registro Guardado!</h2>
+            <h2 className="text-2xl font-bold text-slate-900 mb-2">
+              {wasOfflineSave ? '¡Registro Guardado Localmente!' : '¡Registro Guardado!'}
+            </h2>
             <p className="text-slate-500 mb-8">
-              Los datos se han sincronizado correctamente con la nube y el historial.
+              {wasOfflineSave
+                ? 'Sin conexión a Internet. El registro se sincronizará automáticamente con la nube cuando se restablezca la conexión.'
+                : 'Los datos se han sincronizado correctamente con la nube y el historial.'
+              }
             </p>
             
             <button 
@@ -592,8 +830,11 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
             >
               Continuar
             </button>
-            <div className="mt-4 flex items-center justify-center gap-2 text-xs text-green-600 font-medium">
-               <Cloud className="w-3 h-3" /> Sincronizado
+            <div className={`mt-4 flex items-center justify-center gap-2 text-xs font-medium ${wasOfflineSave ? 'text-amber-600' : 'text-green-600'}`}>
+              {wasOfflineSave
+                ? <><WifiOff className="w-3 h-3" /> Pendiente de sincronización</>
+                : <><Cloud className="w-3 h-3" /> Sincronizado con la nube</>
+              }
             </div>
           </div>
         </div>
