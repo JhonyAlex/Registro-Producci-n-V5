@@ -17,7 +17,7 @@ type EditableField = {
   required: boolean;
   enabled: boolean;
   order: number;
-  optionsText: string;
+  options: string[];
   defaultValueText: string;
   min: string;
   max: string;
@@ -25,6 +25,13 @@ type EditableField = {
 };
 
 const FIELD_TYPES: DynamicFieldType[] = ['number', 'short_text', 'select', 'multi_select'];
+
+const FIELD_TYPE_LABELS: Record<DynamicFieldType, string> = {
+  number: 'Numero',
+  short_text: 'Texto corto',
+  select: 'Seleccion unica',
+  multi_select: 'Seleccion multiple',
+};
 
 const makeEmptyField = (order: number): EditableField => ({
   id: crypto.randomUUID(),
@@ -34,7 +41,7 @@ const makeEmptyField = (order: number): EditableField => ({
   required: false,
   enabled: true,
   order,
-  optionsText: '',
+  options: [],
   defaultValueText: '',
   min: '',
   max: '',
@@ -57,7 +64,7 @@ const toEditableField = (field: MachineFieldDefinition, index: number): Editable
     required: field.required === true,
     enabled: field.enabled !== false,
     order: Number.isFinite(field.order) ? field.order : index,
-    optionsText: Array.isArray(field.options) ? field.options.join(', ') : '',
+    options: Array.isArray(field.options) ? field.options : [],
     defaultValueText,
     min: field.rules?.min !== undefined ? String(field.rules.min) : '',
     max: field.rules?.max !== undefined ? String(field.rules.max) : '',
@@ -66,10 +73,7 @@ const toEditableField = (field: MachineFieldDefinition, index: number): Editable
 };
 
 const toMachineFieldDefinition = (field: EditableField, index: number): MachineFieldDefinition => {
-  const options = field.optionsText
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean);
+  const options = field.options.map((item) => item.trim()).filter(Boolean);
 
   const rules: MachineFieldDefinition['rules'] = {};
   if (field.min.trim().length > 0) rules.min = Number(field.min);
@@ -176,6 +180,213 @@ const MachineFieldManager: React.FC = () => {
 
   const updateField = (id: string, patch: Partial<EditableField>) => {
     setFields((prev) => prev.map((field) => (field.id === id ? { ...field, ...patch } : field)));
+  };
+
+  const updateFieldType = (id: string, type: DynamicFieldType) => {
+    setFields((prev) =>
+      prev.map((field) => {
+        if (field.id !== id) return field;
+
+        const next: EditableField = { ...field, type };
+
+        if (type === 'number') {
+          next.maxLength = '';
+          next.defaultValueText = field.defaultValueText.trim();
+        }
+
+        if (type === 'short_text') {
+          next.min = '';
+          next.max = '';
+          next.options = [];
+        }
+
+        if (type === 'select') {
+          next.min = '';
+          next.max = '';
+          next.maxLength = '';
+          if (next.options.length === 0) {
+            next.options = ['', ''];
+          }
+        }
+
+        if (type === 'multi_select') {
+          next.min = '';
+          next.max = '';
+          next.maxLength = '';
+          if (next.options.length === 0) {
+            next.options = ['', ''];
+          }
+        }
+
+        return next;
+      })
+    );
+  };
+
+  const addOption = (id: string) => {
+    setFields((prev) => prev.map((field) => (field.id === id ? { ...field, options: [...field.options, ''] } : field)));
+  };
+
+  const updateOption = (id: string, optionIndex: number, value: string) => {
+    setFields((prev) =>
+      prev.map((field) => {
+        if (field.id !== id) return field;
+        const nextOptions = [...field.options];
+        nextOptions[optionIndex] = value;
+        return { ...field, options: nextOptions };
+      })
+    );
+  };
+
+  const removeOption = (id: string, optionIndex: number) => {
+    setFields((prev) =>
+      prev.map((field) => {
+        if (field.id !== id) return field;
+        const nextOptions = field.options.filter((_, idx) => idx !== optionIndex);
+        return { ...field, options: nextOptions };
+      })
+    );
+  };
+
+  const renderOptionsEditor = (field: EditableField) => (
+    <div className="space-y-2 md:col-span-2">
+      <p className="text-xs font-semibold text-slate-600">Opciones</p>
+      {field.options.length === 0 && (
+        <p className="text-xs text-slate-500">Agrega al menos una opcion.</p>
+      )}
+      {field.options.map((option, optionIndex) => (
+        <div key={`${field.id}-option-${optionIndex}`} className="flex items-center gap-2">
+          <input
+            placeholder={`Opcion ${optionIndex + 1}`}
+            value={option}
+            onChange={(e) => updateOption(field.id, optionIndex, e.target.value)}
+            className="flex-1 px-3 py-2 border border-slate-300 rounded-lg bg-white"
+          />
+          <button
+            type="button"
+            onClick={() => removeOption(field.id, optionIndex)}
+            className="px-2 py-2 text-xs font-semibold rounded bg-red-50 border border-red-200 text-red-600"
+          >
+            Quitar
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={() => addOption(field.id)}
+        className="inline-flex items-center gap-1 px-3 py-2 rounded-lg bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800"
+      >
+        <Plus className="w-3 h-3" /> Agregar opcion
+      </button>
+    </div>
+  );
+
+  const renderFieldTypeSettings = (field: EditableField) => {
+    const cleanOptions = field.options.map((item) => item.trim()).filter(Boolean);
+
+    if (field.type === 'number') {
+      return (
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <input
+            placeholder="Valor por defecto"
+            value={field.defaultValueText}
+            onChange={(e) => updateField(field.id, { defaultValueText: e.target.value })}
+            className="px-3 py-2 border border-slate-300 rounded-lg bg-white"
+          />
+          <input
+            placeholder="Minimo"
+            value={field.min}
+            onChange={(e) => updateField(field.id, { min: e.target.value })}
+            className="px-3 py-2 border border-slate-300 rounded-lg bg-white"
+          />
+          <input
+            placeholder="Maximo"
+            value={field.max}
+            onChange={(e) => updateField(field.id, { max: e.target.value })}
+            className="px-3 py-2 border border-slate-300 rounded-lg bg-white"
+          />
+        </div>
+      );
+    }
+
+    if (field.type === 'short_text') {
+      return (
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <input
+            placeholder="Texto por defecto"
+            value={field.defaultValueText}
+            onChange={(e) => updateField(field.id, { defaultValueText: e.target.value })}
+            className="px-3 py-2 border border-slate-300 rounded-lg bg-white md:col-span-2"
+          />
+          <input
+            placeholder="Longitud maxima"
+            value={field.maxLength}
+            onChange={(e) => updateField(field.id, { maxLength: e.target.value })}
+            className="px-3 py-2 border border-slate-300 rounded-lg bg-white"
+          />
+        </div>
+      );
+    }
+
+    if (field.type === 'select') {
+      return (
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-start">
+          {renderOptionsEditor(field)}
+          <div className="space-y-2">
+            <p className="text-xs font-semibold text-slate-600">Valor por defecto</p>
+            <select
+              value={field.defaultValueText}
+              onChange={(e) => updateField(field.id, { defaultValueText: e.target.value })}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white"
+            >
+              <option value="">Sin valor por defecto</option>
+              {cleanOptions.map((option) => (
+                <option key={`${field.id}-default-${option}`} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-start">
+        {renderOptionsEditor(field)}
+        <div className="space-y-2 md:col-span-2">
+          <p className="text-xs font-semibold text-slate-600">Valores por defecto</p>
+          {cleanOptions.length === 0 ? (
+            <p className="text-xs text-slate-500">Primero agrega opciones para seleccionar valores por defecto.</p>
+          ) : (
+            <div className="space-y-2">
+              {cleanOptions.map((option) => {
+                const selectedDefaults = field.defaultValueText
+                  .split(',')
+                  .map((item) => item.trim())
+                  .filter(Boolean);
+                const checked = selectedDefaults.includes(option);
+                return (
+                  <label key={`${field.id}-multi-default-${option}`} className="flex items-center gap-2 text-sm text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(e) => {
+                        const nextDefaults = e.target.checked
+                          ? [...selectedDefaults, option]
+                          : selectedDefaults.filter((item) => item !== option);
+                        updateField(field.id, { defaultValueText: nextDefaults.join(', ') });
+                      }}
+                    />
+                    {option}
+                  </label>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    );
   };
 
   const removeField = (id: string) => {
@@ -408,12 +619,12 @@ const MachineFieldManager: React.FC = () => {
                   />
                   <select
                     value={field.type}
-                    onChange={(e) => updateField(field.id, { type: e.target.value as DynamicFieldType })}
+                    onChange={(e) => updateFieldType(field.id, e.target.value as DynamicFieldType)}
                     className="px-3 py-2 border border-slate-300 rounded-lg bg-white"
                   >
                     {FIELD_TYPES.map((type) => (
                       <option key={type} value={type}>
-                        {type}
+                        {FIELD_TYPE_LABELS[type]}
                       </option>
                     ))}
                   </select>
@@ -437,40 +648,7 @@ const MachineFieldManager: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                  <input
-                    placeholder="Opciones (coma separadas)"
-                    value={field.optionsText}
-                    onChange={(e) => updateField(field.id, { optionsText: e.target.value })}
-                    className="px-3 py-2 border border-slate-300 rounded-lg bg-white md:col-span-2"
-                  />
-                  <input
-                    placeholder="Valor por defecto"
-                    value={field.defaultValueText}
-                    onChange={(e) => updateField(field.id, { defaultValueText: e.target.value })}
-                    className="px-3 py-2 border border-slate-300 rounded-lg bg-white"
-                  />
-                  <div className="grid grid-cols-3 gap-2">
-                    <input
-                      placeholder="min"
-                      value={field.min}
-                      onChange={(e) => updateField(field.id, { min: e.target.value })}
-                      className="px-2 py-2 border border-slate-300 rounded-lg bg-white"
-                    />
-                    <input
-                      placeholder="max"
-                      value={field.max}
-                      onChange={(e) => updateField(field.id, { max: e.target.value })}
-                      className="px-2 py-2 border border-slate-300 rounded-lg bg-white"
-                    />
-                    <input
-                      placeholder="maxLength"
-                      value={field.maxLength}
-                      onChange={(e) => updateField(field.id, { maxLength: e.target.value })}
-                      className="px-2 py-2 border border-slate-300 rounded-lg bg-white"
-                    />
-                  </div>
-                </div>
+                {renderFieldTypeSettings(field)}
               </div>
             ))
           )}
