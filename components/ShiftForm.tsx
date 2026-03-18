@@ -276,6 +276,10 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
     setDynamicFieldValues((prev) => ({ ...prev, [fieldKey]: value }));
   };
 
+  const preventNumberScrollChange = (e: React.WheelEvent<HTMLInputElement>) => {
+    e.currentTarget.blur();
+  };
+
   // --- Comment Handlers ---
   const clearComment = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -581,6 +585,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
                     value={(dynamicFieldValues[field.key] as number | string | undefined) ?? ''}
                     min={field.rules?.min}
                     max={field.rules?.max}
+                    onWheel={preventNumberScrollChange}
                     onChange={(e) => updateDynamicFieldValue(field.key, e.target.value === '' ? '' : Number(e.target.value))}
                     className="w-full px-4 py-3 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-medium"
                   />
