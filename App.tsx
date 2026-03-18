@@ -31,7 +31,7 @@ const AppContent: React.FC = () => {
   const canAccessUsers = (user?.role === 'admin' || user?.role === 'jefe_planta') && hasPermission('admin.users.read');
   const canAccessAudit = (user?.role === 'admin' || user?.role === 'jefe_planta') && hasPermission('admin.audit.read');
   const canAccessPermissionsMatrix = user?.role === 'admin';
-  const canAccessFieldSchemas = (user?.role === 'admin' || user?.role === 'jefe_planta') && hasPermission('settings.manage');
+  const canAccessFieldSchemas = (user?.role === 'admin' || user?.role === 'jefe_planta') && hasPermission('settings.field_schemas');
 
   const [currentView, setCurrentView] = useState<View>('entry');
   const [records, setRecords] = useState<ProductionRecord[]>([]);

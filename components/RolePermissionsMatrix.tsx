@@ -14,6 +14,7 @@ const PERMISSION_LABELS: Record<string, string> = {
   'records.delete_all': 'Eliminar todos los registros',
   'settings.read': 'Ver comentarios y operarios',
   'settings.manage': 'Gestionar comentarios y operarios',
+  'settings.field_schemas': 'Gestionar campos dinámicos por máquina',
   'admin.users.read': 'Ver usuarios',
   'admin.users.approve': 'Aprobar usuarios',
   'admin.users.unlock': 'Desbloquear usuarios',

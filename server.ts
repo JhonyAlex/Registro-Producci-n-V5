@@ -248,6 +248,7 @@ const PERMISSION_KEYS = [
   'records.delete_all',
   'settings.read',
   'settings.manage',
+  'settings.field_schemas',
   'admin.users.read',
   'admin.users.approve',
   'admin.users.unlock',
@@ -266,6 +267,7 @@ const DEFAULT_ROLE_PERMISSIONS: Record<AppRole, string[]> = {
     'records.delete_all',
     'settings.read',
     'settings.manage',
+    'settings.field_schemas',
     'admin.users.read',
     'admin.users.approve',
     'admin.users.unlock',
@@ -1474,7 +1476,7 @@ app.get('/api/settings/machine-fields/:machine', authenticate, requirePermission
   }
 });
 
-app.put('/api/settings/machine-fields/:machine', authenticate, requirePermission('settings.manage'), requireDB, async (req, res) => {
+app.put('/api/settings/machine-fields/:machine', authenticate, requirePermission('settings.field_schemas'), requireDB, async (req, res) => {
   const user = (req as any).user;
   const machine = req.params.machine;
   const expectedVersion = Number(req.body?.expectedVersion || 1);

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Plus, Save, Trash2, RefreshCw, History, AlertCircle } from 'lucide-react';
+import { Plus, Save, Trash2, RefreshCw, History, AlertCircle, Copy } from 'lucide-react';
 import { MACHINES } from '../constants';
 import {
   getMachineFieldSchema,
@@ -119,6 +119,13 @@ const MachineFieldManager: React.FC = () => {
   const [copying, setCopying] = useState(false);
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+
+  // Import individual fields from another machine
+  const [showImportPanel, setShowImportPanel] = useState(false);
+  const [importSourceMachine, setImportSourceMachine] = useState<MachineType | ''>('');
+  const [importSourceFields, setImportSourceFields] = useState<EditableField[]>([]);
+  const [selectedImportIds, setSelectedImportIds] = useState<string[]>([]);
+  const [importLoading, setImportLoading] = useState(false);
 
   const sortedFields = useMemo(() => {
     return [...fields].sort((a, b) => a.order - b.order);
@@ -414,6 +421,60 @@ const MachineFieldManager: React.FC = () => {
     setFields((prev) => [...prev, makeEmptyField(prev.length)]);
   };
 
+  const openImportPanel = () => {
+    if (!showImportPanel) {
+      const first = availableTargetMachines[0];
+      if (first) {
+        setImportSourceMachine(first);
+        setImportSourceFields([]);
+        setSelectedImportIds([]);
+        void loadImportSourceFields(first);
+      }
+    }
+    setShowImportPanel((prev) => !prev);
+  };
+
+  const loadImportSourceFields = async (machine: MachineType) => {
+    setImportLoading(true);
+    try {
+      const schema = await getMachineFieldSchema(machine);
+      setImportSourceFields((schema.fields || []).map(toEditableField));
+      setSelectedImportIds([]);
+    } catch {
+      setImportSourceFields([]);
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
+  const toggleImportField = (id: string) => {
+    setSelectedImportIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const handleImportSelectedFields = () => {
+    const toAdd = importSourceFields.filter((f) => selectedImportIds.includes(f.id));
+    if (toAdd.length === 0) return;
+    setFields((prev) => {
+      const baseOrder = prev.length;
+      return [
+        ...prev,
+        ...toAdd.map((f, i) => ({ ...f, id: crypto.randomUUID(), order: baseOrder + i })),
+      ];
+    });
+    setSelectedImportIds([]);
+    setShowImportPanel(false);
+  };
+
+  const toggleSelectAllImport = () => {
+    if (selectedImportIds.length === importSourceFields.length) {
+      setSelectedImportIds([]);
+    } else {
+      setSelectedImportIds(importSourceFields.map((f) => f.id));
+    }
+  };
+
   const toggleTargetMachine = (machine: MachineType) => {
     setTargetMachines((prev) =>
       prev.includes(machine)
@@ -575,14 +636,104 @@ const MachineFieldManager: React.FC = () => {
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wide">Definición de Campos</h3>
-            <button
-              type="button"
-              onClick={addField}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700"
-            >
-              <Plus className="w-4 h-4" /> Agregar campo
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={openImportPanel}
+                className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-semibold ${
+                  showImportPanel
+                    ? 'bg-blue-600 border-blue-600 text-white hover:bg-blue-700'
+                    : 'bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100'
+                }`}
+              >
+                <Copy className="w-4 h-4" /> Importar campos
+              </button>
+              <button
+                type="button"
+                onClick={addField}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700"
+              >
+                <Plus className="w-4 h-4" /> Agregar campo
+              </button>
+            </div>
           </div>
+
+          {showImportPanel && (
+            <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Máquina de origen</label>
+                <select
+                  value={importSourceMachine}
+                  onChange={(e) => {
+                    const machine = e.target.value as MachineType;
+                    setImportSourceMachine(machine);
+                    void loadImportSourceFields(machine);
+                  }}
+                  className="w-full md:w-64 px-3 py-2 border border-slate-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 outline-none"
+                >
+                  {availableTargetMachines.map((machine) => (
+                    <option key={machine} value={machine}>{machine}</option>
+                  ))}
+                </select>
+              </div>
+
+              {importLoading ? (
+                <p className="text-sm text-slate-500">Cargando campos...</p>
+              ) : importSourceFields.length === 0 ? (
+                <p className="text-sm text-slate-500">Esta máquina no tiene campos configurados.</p>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-semibold text-slate-600">
+                      {importSourceFields.length} campo{importSourceFields.length !== 1 ? 's' : ''} disponibles
+                    </p>
+                    <button
+                      type="button"
+                      onClick={toggleSelectAllImport}
+                      className="text-xs font-semibold text-blue-600 hover:underline"
+                    >
+                      {selectedImportIds.length === importSourceFields.length ? 'Deseleccionar todos' : 'Seleccionar todos'}
+                    </button>
+                  </div>
+                  <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
+                    {importSourceFields.map((field) => {
+                      const checked = selectedImportIds.includes(field.id);
+                      return (
+                        <label
+                          key={field.id}
+                          className={`flex items-center gap-3 px-3 py-2 rounded-lg border text-sm cursor-pointer select-none ${
+                            checked ? 'bg-blue-100 border-blue-300' : 'bg-white border-slate-200 hover:border-blue-200'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleImportField(field.id)}
+                          />
+                          <span className="font-medium text-slate-800">{field.label || <em className="text-slate-400">{field.key || 'Sin etiqueta'}</em>}</span>
+                          {field.key && field.label && (
+                            <span className="text-xs text-slate-400">{field.key}</span>
+                          )}
+                          <span className="ml-auto text-xs font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
+                            {FIELD_TYPE_LABELS[field.type]}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleImportSelectedFields}
+                    disabled={selectedImportIds.length === 0}
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    <Copy className="w-4 h-4" />
+                    Agregar {selectedImportIds.length > 0 ? selectedImportIds.length : ''} campo{selectedImportIds.length !== 1 ? 's' : ''} seleccionado{selectedImportIds.length !== 1 ? 's' : ''}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
 
           {loading ? (
             <div className="p-6 text-slate-500 text-sm bg-slate-50 rounded-lg border border-slate-200">Cargando configuración...</div>
