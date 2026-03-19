@@ -504,6 +504,112 @@ const parseMachineSchema = (row: any): MachineFieldDefinition[] => {
   return sanitizeMachineFieldDefinitions(raw);
 };
 
+const computeSchemaVersionFromFields = (fields: MachineFieldDefinition[]): number => {
+  if (!Array.isArray(fields) || fields.length === 0) {
+    return 1;
+  }
+
+  // Deterministic hash so clients can detect schema changes without relying on legacy table versions.
+  const normalized = fields.map((field) => ({
+    key: field.key,
+    label: field.label,
+    type: field.type,
+    required: field.required,
+    enabled: field.enabled,
+    order: field.order,
+    options: field.options ?? [],
+    defaultValue: field.defaultValue ?? null,
+    rules: field.rules ?? {},
+  }));
+
+  const payload = JSON.stringify(normalized);
+  let hash = 0;
+  for (let i = 0; i < payload.length; i++) {
+    hash = ((hash * 31) + payload.charCodeAt(i)) >>> 0;
+  }
+
+  return hash === 0 ? 1 : hash;
+};
+
+const getEffectiveMachineSchema = async (machine: string): Promise<{
+  source: 'catalog' | 'legacy' | 'none';
+  fields: MachineFieldDefinition[];
+  version: number;
+  updatedByUserId: string | null;
+  updatedAt: string | null;
+}> => {
+  const catalogResult = await pool.query(
+    `SELECT fc.key, fc.label, fc.type, fc.required, fca.enabled,
+            fc.options, fc.default_value as "defaultValue", fc.rules,
+            fca.sort_order as "order", fc.updated_at as "updatedAt"
+     FROM field_catalog_assignments fca
+     JOIN field_catalog fc ON fc.id = fca.field_id
+     WHERE fca.machine = $1
+     ORDER BY fca.sort_order ASC`,
+    [machine]
+  );
+
+  if ((catalogResult.rowCount ?? 0) > 0) {
+    const fields = sanitizeMachineFieldDefinitions(
+      catalogResult.rows.map((row: any) => ({
+        key: row.key,
+        label: row.label,
+        type: row.type,
+        required: row.required,
+        enabled: row.enabled,
+        order: row.order,
+        options: row.options ?? [],
+        defaultValue: row.defaultValue ?? undefined,
+        rules: row.rules ?? {},
+      }))
+    );
+
+    const latestUpdatedAt = catalogResult.rows.reduce((latest: string | null, row: any) => {
+      const current = row.updatedAt ? new Date(row.updatedAt).toISOString() : null;
+      if (!current) return latest;
+      if (!latest) return current;
+      return current > latest ? current : latest;
+    }, null as string | null);
+
+    return {
+      source: 'catalog',
+      fields,
+      version: computeSchemaVersionFromFields(fields),
+      updatedByUserId: null,
+      updatedAt: latestUpdatedAt,
+    };
+  }
+
+  const legacyResult = await pool.query(
+    `SELECT machine, schema_version as version, fields_json as fields,
+            updated_by_user_id as "updatedByUserId", updated_at as "updatedAt"
+     FROM machine_field_schemas
+     WHERE machine = $1
+     LIMIT 1`,
+    [machine]
+  );
+
+  if (legacyResult.rowCount === 0) {
+    return {
+      source: 'none',
+      fields: [],
+      version: 1,
+      updatedByUserId: null,
+      updatedAt: null,
+    };
+  }
+
+  const row = legacyResult.rows[0];
+  const fields = parseMachineSchema({ fields_json: row.fields });
+  return {
+    source: 'legacy',
+    fields,
+    version: Number(row.version || 1),
+    updatedByUserId: row.updatedByUserId || null,
+    updatedAt: row.updatedAt ? new Date(row.updatedAt).toISOString() : null,
+  };
+};
+
 const sanitizeDashboardConfigPayload = (incoming: any): DashboardConfigPayload => {
   const name = String(incoming?.name || '').trim();
   const baseField = String(incoming?.baseField || '').trim();
@@ -1430,16 +1536,9 @@ app.post('/api/records', authenticate, requirePermission('records.write'), requi
       return res.status(400).json({ error: 'Cantidad de cambios inválida.' });
     }
 
-    const schemaResult = await pool.query(
-      `SELECT machine, schema_version, fields_json
-       FROM machine_field_schemas
-       WHERE machine = $1
-       LIMIT 1`,
-      [machine]
-    );
-    const schemaRow = schemaResult.rows[0] || null;
-    const currentSchemaVersion = schemaRow?.schema_version ? Number(schemaRow.schema_version) : 1;
-    const schemaFields = parseMachineSchema(schemaRow);
+    const effectiveSchema = await getEffectiveMachineSchema(machine);
+    const currentSchemaVersion = effectiveSchema.version;
+    const schemaFields = effectiveSchema.fields;
 
     if (schemaFields.length > 0 && Number(schemaVersionUsed ?? 0) !== currentSchemaVersion) {
       return res.status(409).json({
@@ -1647,56 +1746,20 @@ app.delete('/api/records', authenticate, requirePermission('records.delete_all')
 
 // --- SETTINGS (MACHINE DYNAMIC FIELDS) ---
 app.get('/api/settings/machine-fields/:machine', authenticate, requirePermission('settings.read'), requireDB, async (req, res) => {
-  const machine = req.params.machine;
+  const machine = String(req.params.machine || '');
   if (!MACHINE_VALUES.includes(machine as typeof MACHINE_VALUES[number])) {
     return res.status(400).json({ error: 'Máquina inválida.' });
   }
 
   try {
-    // Prefer fields defined in the global catalog for this machine
-    const catalogResult = await pool.query(
-      `SELECT fc.key, fc.label, fc.type, fc.required, fca.enabled,
-              fc.options, fc.default_value as "defaultValue", fc.rules,
-              fca.sort_order as "order"
-       FROM field_catalog_assignments fca
-       JOIN field_catalog fc ON fc.id = fca.field_id
-       WHERE fca.machine = $1
-       ORDER BY fca.sort_order ASC`,
-      [machine]
-    );
-
-    if ((catalogResult.rowCount ?? 0) > 0) {
-      const fields = catalogResult.rows.map((row: any) => ({
-        key: row.key,
-        label: row.label,
-        type: row.type,
-        required: row.required,
-        enabled: row.enabled,
-        order: row.order,
-        options: row.options ?? [],
-        defaultValue: row.defaultValue ?? undefined,
-        rules: row.rules ?? {},
-      }));
-      return res.json({ machine, version: 1, fields, updatedByUserId: null, updatedAt: null });
-    }
-
-    // Fallback: legacy per-machine schema
-    const result = await pool.query(
-      `SELECT machine, schema_version as version, fields_json as fields,
-              updated_by_user_id as "updatedByUserId", updated_at as "updatedAt"
-       FROM machine_field_schemas
-       WHERE machine = $1
-       LIMIT 1`,
-      [machine]
-    );
-
-    if (result.rowCount === 0) {
-      return res.json({ machine, version: 1, fields: [], updatedByUserId: null, updatedAt: null });
-    }
-
-    const row = result.rows[0];
-    const fields = parseMachineSchema({ fields_json: row.fields });
-    res.json({ ...row, fields });
+    const effectiveSchema = await getEffectiveMachineSchema(machine);
+    res.json({
+      machine,
+      version: effectiveSchema.version,
+      fields: effectiveSchema.fields,
+      updatedByUserId: effectiveSchema.updatedByUserId,
+      updatedAt: effectiveSchema.updatedAt,
+    });
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch machine field schema' });
   }
@@ -1704,7 +1767,7 @@ app.get('/api/settings/machine-fields/:machine', authenticate, requirePermission
 
 app.put('/api/settings/machine-fields/:machine', authenticate, requirePermission('settings.field_schemas'), requireDB, async (req, res) => {
   const user = (req as any).user;
-  const machine = req.params.machine;
+  const machine = String(req.params.machine || '');
   const expectedVersion = Number(req.body?.expectedVersion || 1);
   let hasOpenTransaction = false;
   if (!MACHINE_VALUES.includes(machine as typeof MACHINE_VALUES[number])) {
