@@ -1,6 +1,6 @@
 <div align="center">
   <div style="background-color:#1a1a2e;padding:40px 60px;border-radius:12px;display:inline-block;margin-bottom:16px;">
-    <img width="320" alt="Logo Pigmea" src="https://www.pigmea.es/wp-content/uploads/2018/05/logo-white.png" />
+    <img width="320" alt="Logo Pigmea" src="public/logo-white.png" />
   </div>
   <h1>Registro Producción Pigmea — V5</h1>
   <p><strong>Sistema web de registro y gestión de producción industrial en tiempo real</strong></p>
