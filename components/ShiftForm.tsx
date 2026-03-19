@@ -138,6 +138,20 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
         setFormData((prev) => ({ ...prev, bossUserId: bossOptions[0].id }));
       }
 
+      if (!editingRecord) {
+        if (!operatorInput && !operatorUserId && operatorOptions.length > 0) {
+          setOperatorInput(operatorOptions[0].name);
+          setOperatorUserId(operatorOptions[0].id);
+        } else if (operatorInput && !operatorUserId) {
+          const normalizedInput = operatorInput.trim().toLowerCase();
+          const matchedOperator = operatorOptions.find((option) => option.name.trim().toLowerCase() === normalizedInput);
+          if (matchedOperator) {
+            setOperatorInput(matchedOperator.name);
+            setOperatorUserId(matchedOperator.id);
+          }
+        }
+      }
+
       if (editingRecord && editingRecord.boss && !formData.bossUserId) {
         const matchedBoss = bossOptions.find((option) => option.name === editingRecord.boss);
         if (matchedBoss) {
@@ -153,7 +167,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
       }
     });
     return () => unsubscribe();
-  }, [editingRecord, formData.bossUserId, operatorUserId]);
+  }, [editingRecord, formData.bossUserId, operatorInput, operatorUserId]);
 
   useEffect(() => {
     const unsubscribe = subscribeToMachineFieldSchema(
@@ -359,9 +373,17 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
       return;
     }
 
-    if (operatorInput && !operatorUserId) {
+    const normalizedOperatorInput = operatorInput.trim();
+    const selectedOperator = operatorUserId
+      ? availableOperatorOptions.find((op) => op.id === operatorUserId)
+      : availableOperatorOptions.find((op) => op.name.trim().toLowerCase() === normalizedOperatorInput.toLowerCase());
+
+    if (normalizedOperatorInput && !selectedOperator) {
       alert('Selecciona un operario válido desde la lista de usuarios activos.');
       return;
+    }
+    if (selectedOperator && operatorUserId !== selectedOperator.id) {
+      setOperatorUserId(selectedOperator.id);
     }
 
     const dynamicValidationError = validateDynamicFields();
@@ -385,8 +407,8 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
       meters: 0,
       changesCount: 0,
       changesComment: commentInput,
-      operator: operatorInput,
-      operatorUserId,
+      operator: selectedOperator?.name || normalizedOperatorInput,
+      operatorUserId: selectedOperator?.id || null,
       dynamicFieldsValues: dynamicFieldValues,
       schemaVersionUsed: machineSchemaVersion
     };
