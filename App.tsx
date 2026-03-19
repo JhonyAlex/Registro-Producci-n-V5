@@ -11,6 +11,7 @@ import RolePermissionsMatrix from './components/RolePermissionsMatrix';
 import UserProfile from './components/UserProfile';
 import MachineFieldManager from './components/MachineFieldManager';
 import DashboardManager from './components/DashboardManager';
+import GlobalLockScreenGuard from './components/GlobalLockScreenGuard';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { subscribeToRecords, subscribeToSettings, clearAllRecords, deleteRecord, exportToExcel, exportAllData, importAllData, reconnectDatabase } from './services/storageService';
 import { getQueueCount, flushQueue, onQueueChanged } from './services/offlineQueue';
@@ -1067,33 +1068,37 @@ const App: React.FC = () => {
   const { user, loading } = useAuth();
   const [authView, setAuthView] = useState<'login' | 'register'>('login');
 
+  let appView: React.ReactNode;
+
   if (loading) {
-    return (
+    appView = (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
       </div>
     );
-  }
-
-  if (!user) {
-    return authView === 'login' ? (
+  } else if (!user) {
+    appView = authView === 'login' ? (
       <Login onSwitchToRegister={() => setAuthView('register')} />
     ) : (
       <Register onSwitchToLogin={() => setAuthView('login')} />
     );
+  } else if (user.status === 'pending') {
+    appView = <WaitingRoom />;
+  } else {
+    appView = <AppContent />;
   }
 
-  if (user.status === 'pending') {
-    return <WaitingRoom />;
-  }
-
-  return <AppContent />;
+  return (
+    <>{appView}</>
+  );
 };
 
 const AppWrapper: React.FC = () => {
   return (
     <AuthProvider>
-      <App />
+      <GlobalLockScreenGuard>
+        <App />
+      </GlobalLockScreenGuard>
     </AuthProvider>
   );
 };

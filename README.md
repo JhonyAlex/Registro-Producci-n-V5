@@ -18,3 +18,14 @@ View your app in AI Studio: https://ai.studio/apps/c03bac8f-2f64-4955-a317-769c5
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+
+## Lock Screen Implementation Delivery
+
+Detailed delivery documentation for "Registro producción pigmea" is available at:
+
+- [docs/REGISTRO_PRODUCCION_PIGMEA_IMPLEMENTACION.md](docs/REGISTRO_PRODUCCION_PIGMEA_IMPLEMENTACION.md)
+
+Useful commands:
+
+- Run tests: `npm run test`
+- Build production bundle: `npm run build`
