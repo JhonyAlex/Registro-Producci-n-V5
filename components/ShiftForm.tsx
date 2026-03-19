@@ -19,8 +19,8 @@ interface ShiftFormProps {
   onCancelEdit?: () => void;
 }
 
-const STORAGE_KEY = 'pigmea_form_defaults_v1';
 const MAX_PG_INT = 2147483647;
+const getStorageKey = (userId?: string | null) => `pigmea_form_defaults_v1_${userId || 'guest'}`;
 
 const sanitizeSchemaVersion = (value: unknown): number => {
   const numeric = Number(value);
@@ -75,10 +75,10 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
   const [dynamicFieldError, setDynamicFieldError] = useState('');
   const [isMachineSchemaReady, setIsMachineSchemaReady] = useState(false);
 
-  // 1. Load Defaults from LocalStorage on Mount (Only if not editing)
+  // 1. Load Defaults from LocalStorage when the user is identified (per-user key)
   useEffect(() => {
-    if (!editingRecord) {
-      const savedDefaults = localStorage.getItem(STORAGE_KEY);
+    if (!editingRecord && user?.id) {
+      const savedDefaults = localStorage.getItem(getStorageKey(user.id));
       if (savedDefaults) {
         try {
           const parsed = JSON.parse(savedDefaults);
@@ -96,7 +96,8 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
         }
       }
     }
-  }, []); // Run once on mount
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]); // Run when the logged-in user is identified
 
   useEffect(() => {
     if (!formData.bossUserId && availableBossOptions.length > 0) {
@@ -104,9 +105,9 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
     }
   }, [availableBossOptions, formData.bossUserId]);
 
-  // 2. Save Defaults to LocalStorage whenever context fields change (Only if not editing)
+  // 2. Save Defaults to LocalStorage whenever context fields change (per-user key, only if not editing)
   useEffect(() => {
-    if (!editingRecord) {
+    if (!editingRecord && user?.id) {
       const defaultsToSave = {
         date: formData.date,
         shift: formData.shift,
@@ -115,9 +116,9 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
         operator: operatorInput,
         operatorUserId
       };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(defaultsToSave));
+      localStorage.setItem(getStorageKey(user.id), JSON.stringify(defaultsToSave));
     }
-  }, [formData.date, formData.shift, formData.bossUserId, formData.machine, operatorInput, operatorUserId, editingRecord]);
+  }, [formData.date, formData.shift, formData.bossUserId, formData.machine, operatorInput, operatorUserId, editingRecord, user?.id]);
 
   // Load editing data when record changes
   useEffect(() => {
@@ -135,11 +136,27 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
       // Scroll to top when editing starts
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } else {
+      // Leaving edit mode — restore last persisted context so the operator/machine are not lost
       setCommentInput('');
-      setOperatorUserId(null);
       setDynamicFieldValues({});
+      if (user?.id) {
+        const saved = localStorage.getItem(getStorageKey(user.id));
+        if (saved) {
+          try {
+            const parsed = JSON.parse(saved);
+            setOperatorInput(parsed.operator || '');
+            setOperatorUserId(parsed.operatorUserId || null);
+          } catch {
+            setOperatorUserId(null);
+          }
+        } else {
+          setOperatorUserId(null);
+        }
+      } else {
+        setOperatorUserId(null);
+      }
     }
-  }, [editingRecord]);
+  }, [editingRecord]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Subscribe to real-time updates for Comments and Operators
   useEffect(() => {
