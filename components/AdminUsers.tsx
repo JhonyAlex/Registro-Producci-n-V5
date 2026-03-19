@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { CheckCircle, Unlock, ShieldAlert, UserCheck, Clock, Ban, Users, RefreshCw, Trash2, Edit3 } from 'lucide-react';
+import { CheckCircle, Unlock, ShieldAlert, UserCheck, Clock, Ban, Users, RefreshCw, Trash2, Edit3, Key } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { socket } from '../services/socket';
 
@@ -116,6 +116,39 @@ const AdminUsers: React.FC = () => {
       await fetchUsers();
     } catch (err: any) {
       alert(err.message);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleChangePassword = async (target: AdminUser) => {
+    const newPin = window.prompt(`Nuevo PIN para ${target.name} (mínimo 4 dígitos):`, '');
+    if (newPin === null) return;
+    const cleanPin = newPin.trim();
+    if (!cleanPin) {
+      alert('El PIN no puede estar vacío.');
+      return;
+    }
+    if (cleanPin.length < 4) {
+      alert('El PIN debe tener al menos 4 dígitos.');
+      return;
+    }
+
+    setActionLoading(target.id);
+    try {
+      const res = await fetch(`/api/admin/users/${target.id}/password`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: cleanPin })
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Error al cambiar la contraseña');
+      }
+      alert(`Contraseña de ${target.name} actualizada exitosamente.`);
+    } catch (err: any) {
+      alert(err.message || 'Error al cambiar la contraseña');
     } finally {
       setActionLoading(null);
     }
@@ -318,6 +351,17 @@ const AdminUsers: React.FC = () => {
                             >
                               <Unlock className="w-4 h-4" />
                               <span className="hidden sm:inline">Desbloquear</span>
+                            </button>
+                          )}
+                          {hasPermission('admin.users.change_password') && (
+                            <button
+                              onClick={() => handleChangePassword(u)}
+                              disabled={actionLoading === u.id}
+                              className="flex items-center gap-1 px-3 py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 font-medium rounded-lg transition-colors disabled:opacity-50"
+                              title="Cambiar contraseña"
+                            >
+                              <Key className="w-4 h-4" />
+                              <span className="hidden sm:inline">PIN</span>
                             </button>
                           )}
                           {currentUser?.role === 'admin' && (

@@ -18,6 +18,7 @@ const PERMISSION_LABELS: Record<string, string> = {
   'admin.users.read': 'Ver usuarios',
   'admin.users.approve': 'Aprobar usuarios',
   'admin.users.unlock': 'Desbloquear usuarios',
+  'admin.users.change_password': 'Cambiar contraseña de usuarios',
   'admin.users.delete': 'Eliminar usuarios',
   'admin.audit.read': 'Ver auditoría',
   'backup.export': 'Exportar backup',

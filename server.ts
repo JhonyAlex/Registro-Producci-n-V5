@@ -292,6 +292,7 @@ const PERMISSION_KEYS = [
   'admin.users.read',
   'admin.users.approve',
   'admin.users.unlock',
+  'admin.users.change_password',
   'admin.users.delete',
   'admin.audit.read',
   'backup.export',
@@ -311,6 +312,7 @@ const DEFAULT_ROLE_PERMISSIONS: Record<AppRole, string[]> = {
     'admin.users.read',
     'admin.users.approve',
     'admin.users.unlock',
+    'admin.users.change_password',
     'admin.audit.read',
     'backup.export',
     'backup.import'
@@ -946,7 +948,7 @@ app.put('/api/admin/users/:id/profile', authenticate, requireRole(['admin']), re
 });
 
 // --- ADMIN ROUTES ---
-app.get('/api/admin/users', authenticate, requireRole(['admin', 'jefe_planta']), requirePermission('admin.users.read'), async (req, res) => {
+app.get('/api/admin/users', authenticate, requirePermission('admin.users.read'), async (req, res) => {
   try {
     const result = await pool.query('SELECT id, operator_code, name, role, status, failed_attempts, created_at, last_login FROM users ORDER BY created_at DESC');
     res.json(result.rows);
@@ -955,7 +957,7 @@ app.get('/api/admin/users', authenticate, requireRole(['admin', 'jefe_planta']),
   }
 });
 
-app.post('/api/admin/users/:id/approve', authenticate, requireRole(['admin', 'jefe_planta']), requirePermission('admin.users.approve'), async (req, res) => {
+app.post('/api/admin/users/:id/approve', authenticate, requirePermission('admin.users.approve'), async (req, res) => {
   const admin = (req as any).user;
   const { id } = req.params;
   try {
@@ -971,7 +973,7 @@ app.post('/api/admin/users/:id/approve', authenticate, requireRole(['admin', 'je
   }
 });
 
-app.post('/api/admin/users/:id/unlock', authenticate, requireRole(['admin', 'jefe_planta']), requirePermission('admin.users.unlock'), async (req, res) => {
+app.post('/api/admin/users/:id/unlock', authenticate, requirePermission('admin.users.unlock'), async (req, res) => {
   const admin = (req as any).user;
   const { id } = req.params;
   try {
@@ -1022,7 +1024,44 @@ app.delete('/api/admin/users/:id', authenticate, requireRole(['admin']), require
   }
 });
 
-app.get('/api/admin/audit-logs', authenticate, requireRole(['admin', 'jefe_planta']), requirePermission('admin.audit.read'), async (req, res) => {
+app.patch('/api/admin/users/:id/password', authenticate, requirePermission('admin.users.change_password'), requireDB, async (req, res) => {
+  const admin = (req as any).user;
+  const targetUserId = String(req.params.id || '').trim();
+
+  if (!targetUserId) {
+    return res.status(400).json({ error: 'ID de usuario inválido' });
+  }
+
+  const newPin = normalizeOptionalString(req.body?.pin);
+
+  if (!newPin) {
+    return res.status(400).json({ error: 'El nuevo PIN es obligatorio' });
+  }
+
+  if (newPin.length < 4) {
+    return res.status(400).json({ error: 'El PIN debe tener al menos 4 dígitos' });
+  }
+
+  try {
+    const targetResult = await pool.query('SELECT id, name FROM users WHERE id = $1', [targetUserId]);
+    const targetUser = targetResult.rows[0];
+    if (!targetUser) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+    const pinHash = await bcrypt.hash(newPin, 10);
+    await pool.query('UPDATE users SET pin_hash = $1 WHERE id = $2', [pinHash, targetUserId]);
+
+    await logAudit(admin.id, 'admin_user_password_changed', {
+      target_user_id: targetUserId,
+      target_name: targetUser.name
+    }, req.ip || '');
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Error al cambiar la contraseña' });
+  }
+});
+
+app.get('/api/admin/audit-logs', authenticate, requirePermission('admin.audit.read'), async (req, res) => {
   const {
     q = '',
     action = '',
