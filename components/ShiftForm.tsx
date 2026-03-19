@@ -773,12 +773,6 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
           </div>
         )}
 
-        {!isMachineSchemaReady && (
-          <div className="px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700">
-            Sincronizando campos de la maquina. Espera unos segundos antes de guardar.
-          </div>
-        )}
-
         {dynamicFieldError && (
           <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
             {dynamicFieldError}
