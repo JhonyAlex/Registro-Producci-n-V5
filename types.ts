@@ -113,3 +113,39 @@ export interface FilterState {
   boss: string;
   operator: string;
 }
+
+export type DashboardFieldType = 'number' | 'text' | 'date';
+
+export type DashboardChartType = 'bar' | 'line' | 'area' | 'pie' | 'combined_trend';
+
+export type DashboardAggregationType = 'count' | 'sum' | 'avg';
+
+export interface DashboardFieldOption {
+  key: string;
+  label: string;
+  type: DashboardFieldType;
+  source: 'core' | 'dynamic';
+}
+
+export interface DashboardWidgetConfig {
+  id: string;
+  title: string;
+  chartType: DashboardChartType;
+  valueField: string;
+  secondaryValueField?: string;
+  aggregation: DashboardAggregationType;
+  limit?: number;
+}
+
+export interface DashboardConfig {
+  id: string;
+  name: string;
+  description?: string;
+  baseField: string;
+  relatedFields: string[];
+  widgets: DashboardWidgetConfig[];
+  isDefault: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  updatedByUserId?: string | null;
+}

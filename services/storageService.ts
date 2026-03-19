@@ -1,4 +1,5 @@
 import {
+  DashboardConfig,
   FieldCatalogEntry,
   MachineFieldDefinition,
   MachineFieldSchemaHistoryItem,
@@ -241,6 +242,51 @@ export const updateCatalogField = async (
 
 export const deleteCatalogField = async (id: string): Promise<void> => {
   await fetchJson(`/settings/field-catalog/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+};
+
+export const getDashboardConfigs = async (): Promise<DashboardConfig[]> => {
+  return fetchJson('/settings/dashboard-configs');
+};
+
+export const getDashboardConfig = async (id: string): Promise<DashboardConfig> => {
+  return fetchJson(`/settings/dashboard-configs/${encodeURIComponent(id)}`);
+};
+
+export const createDashboardConfig = async (data: {
+  name: string;
+  description?: string;
+  baseField: string;
+  relatedFields: string[];
+  widgets: DashboardConfig['widgets'];
+  isDefault: boolean;
+}): Promise<DashboardConfig> => {
+  return fetchJson('/settings/dashboard-configs', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+};
+
+export const updateDashboardConfig = async (
+  id: string,
+  data: {
+    name: string;
+    description?: string;
+    baseField: string;
+    relatedFields: string[];
+    widgets: DashboardConfig['widgets'];
+    isDefault: boolean;
+  }
+): Promise<DashboardConfig> => {
+  return fetchJson(`/settings/dashboard-configs/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+};
+
+export const deleteDashboardConfig = async (id: string): Promise<void> => {
+  await fetchJson(`/settings/dashboard-configs/${encodeURIComponent(id)}`, {
     method: 'DELETE',
   });
 };

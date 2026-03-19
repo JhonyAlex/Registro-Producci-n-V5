@@ -15,6 +15,7 @@ const PERMISSION_LABELS: Record<string, string> = {
   'settings.read': 'Ver comentarios y operarios',
   'settings.manage': 'Gestionar comentarios y operarios',
   'settings.field_schemas': 'Gestionar campos dinámicos por máquina',
+  'settings.dashboards': 'Gestionar dashboards dinámicos',
   'admin.users.read': 'Ver usuarios',
   'admin.users.approve': 'Aprobar usuarios',
   'admin.users.unlock': 'Desbloquear usuarios',

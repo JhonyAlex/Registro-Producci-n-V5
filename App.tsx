@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { LayoutDashboard, PlusCircle, List, User, Trash2, Lock, AlertCircle, Filter, X, Cloud, WifiOff, CloudOff, Edit, ChevronDown, ChevronUp, Calendar, Monitor, XCircle, FileDown, FileUp, AlertTriangle, Clock, ChevronLeft, ChevronRight, Database, LogOut, Users, History, ShieldCheck, CheckCircle, RefreshCw } from 'lucide-react';
 import ShiftForm from './components/ShiftForm';
-import Dashboard from './components/Dashboard';
+import Dashboard from './components/Dashboard.tsx';
 import Login from './components/Login';
 import Register from './components/Register';
 import WaitingRoom from './components/WaitingRoom';
@@ -10,6 +10,7 @@ import AuditLogs from './components/AuditLogs';
 import RolePermissionsMatrix from './components/RolePermissionsMatrix';
 import UserProfile from './components/UserProfile';
 import MachineFieldManager from './components/MachineFieldManager';
+import DashboardManager from './components/DashboardManager';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { subscribeToRecords, subscribeToSettings, clearAllRecords, deleteRecord, exportToExcel, exportAllData, importAllData, reconnectDatabase } from './services/storageService';
 import { getQueueCount, flushQueue, onQueueChanged } from './services/offlineQueue';
@@ -17,7 +18,7 @@ import { socket } from './services/socket';
 import { ProductionRecord, FilterState } from './types';
 import { MACHINES } from './constants';
 
-type View = 'dashboard' | 'entry' | 'list' | 'profile' | 'admin' | 'audit' | 'permissions' | 'fieldSchemas';
+type View = 'dashboard' | 'entry' | 'list' | 'profile' | 'admin' | 'audit' | 'permissions' | 'fieldSchemas' | 'dashboardAdmin';
 type DeleteMode = 'all' | 'single';
 
 const ITEMS_PER_PAGE = 15;
@@ -32,6 +33,7 @@ const AppContent: React.FC = () => {
   const canAccessAudit = (user?.role === 'admin' || user?.role === 'jefe_planta') && hasPermission('admin.audit.read');
   const canAccessPermissionsMatrix = user?.role === 'admin';
   const canAccessFieldSchemas = (user?.role === 'admin' || user?.role === 'jefe_planta') && hasPermission('settings.field_schemas');
+  const canAccessDashboardManager = (user?.role === 'admin' || user?.role === 'jefe_planta') && hasPermission('settings.dashboards');
 
   const [currentView, setCurrentView] = useState<View>('entry');
   const [records, setRecords] = useState<ProductionRecord[]>([]);
@@ -423,7 +425,7 @@ const AppContent: React.FC = () => {
           <NavItem view="list" icon={List} label="Historial" />
           <NavItem view="profile" icon={User} label="Mi Perfil" />
           
-          {(canAccessUsers || canAccessAudit || canAccessPermissionsMatrix || canAccessFieldSchemas) && (
+          {(canAccessUsers || canAccessAudit || canAccessPermissionsMatrix || canAccessFieldSchemas || canAccessDashboardManager) && (
             <>
               <div className="mt-8 mb-2 px-4">
                 <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Administración</h3>
@@ -431,6 +433,7 @@ const AppContent: React.FC = () => {
               {canAccessUsers && <NavItem view="admin" icon={Users} label="Usuarios" />}
               {canAccessAudit && <NavItem view="audit" icon={History} label="Actividad" />}
               {canAccessFieldSchemas && <NavItem view="fieldSchemas" icon={Monitor} label="Campos" />}
+              {canAccessDashboardManager && <NavItem view="dashboardAdmin" icon={LayoutDashboard} label="Dashboards" />}
               {canAccessPermissionsMatrix && <NavItem view="permissions" icon={ShieldCheck} label="Permisos" />}
             </>
           )}
@@ -539,6 +542,10 @@ const AppContent: React.FC = () => {
 
           {currentView === 'fieldSchemas' && canAccessFieldSchemas && (
             <MachineFieldManager />
+          )}
+
+          {currentView === 'dashboardAdmin' && canAccessDashboardManager && (
+            <DashboardManager records={filteredRecords} />
           )}
 
           {currentView === 'profile' && (
@@ -743,7 +750,11 @@ const AppContent: React.FC = () => {
 
           {currentView === 'dashboard' && (
             <div className="animate-fade-in">
-              <Dashboard records={filteredRecords} />
+              <Dashboard
+                records={filteredRecords}
+                canManageDashboards={canAccessDashboardManager}
+                onOpenAdmin={canAccessDashboardManager ? () => changeView('dashboardAdmin') : undefined}
+              />
             </div>
           )}
 

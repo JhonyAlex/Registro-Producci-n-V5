@@ -1,587 +1,651 @@
-import React, { useMemo, useState, useEffect, useRef } from 'react';
-import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-  Cell, PieChart, Pie, Legend, AreaChart, Area
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  ResponsiveContainer,
+  CartesianGrid,
+  XAxis,
+  YAxis,
+  Tooltip,
+  Legend,
+  BarChart,
+  Bar,
+  LineChart,
+  Line,
+  AreaChart,
+  Area,
+  PieChart,
+  Pie,
+  Cell,
+  ComposedChart,
 } from 'recharts';
-import { FileText, Table, Activity, AlertTriangle, Users, CalendarRange, Layers, Info, Loader2, Download, TrendingUp } from 'lucide-react';
-import { ProductionRecord } from '../types';
-import { exportToExcel, subscribeToSettings } from '../services/storageService';
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
+import {
+  LayoutDashboard,
+  Settings2,
+  Layers,
+  Activity,
+  AlertTriangle,
+  RefreshCw,
+  Table,
+  Filter,
+} from 'lucide-react';
+import { DashboardConfig, DashboardFieldOption, DashboardWidgetConfig, ProductionRecord } from '../types';
+import { exportToExcel, getDashboardConfigs, getFieldCatalog } from '../services/storageService';
 
 interface DashboardProps {
   records: ProductionRecord[];
+  canManageDashboards?: boolean;
+  onOpenAdmin?: () => void;
 }
 
-const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#6366f1', '#14b8a6', '#f43f5e'];
+type GroupAccumulator = {
+  label: string;
+  sum: number;
+  count: number;
+};
 
-// Internal Tooltip Component
-const InfoTooltip: React.FC<{ text: string }> = ({ text }) => (
-  <div className="group relative ml-2 inline-flex items-center">
-    <Info className="w-4 h-4 text-slate-300 hover:text-blue-500 cursor-help transition-colors" />
-    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2.5 bg-slate-800 text-white text-[11px] leading-tight rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 shadow-xl border border-slate-700">
-      {text}
-      <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 border-4 border-transparent border-t-slate-800"></div>
-    </div>
-  </div>
-);
+const CORE_FIELDS: DashboardFieldOption[] = [
+  { key: 'date', label: 'Fecha', type: 'date', source: 'core' },
+  { key: 'machine', label: 'Maquina', type: 'text', source: 'core' },
+  { key: 'shift', label: 'Turno', type: 'text', source: 'core' },
+  { key: 'boss', label: 'Jefe de Turno', type: 'text', source: 'core' },
+  { key: 'operator', label: 'Operario', type: 'text', source: 'core' },
+  { key: 'meters', label: 'Metros', type: 'number', source: 'core' },
+  { key: 'changesCount', label: 'Cantidad de Cambios', type: 'number', source: 'core' },
+  { key: 'changesComment', label: 'Comentario de Cambio', type: 'text', source: 'core' },
+];
 
-const Dashboard: React.FC<DashboardProps> = ({ records }) => {
-  // Ref for PDF capture
-  const dashboardRef = useRef<HTMLDivElement>(null);
-  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+const CHART_LABELS: Record<string, string> = {
+  bar: 'Barras',
+  line: 'Linea',
+  area: 'Area',
+  pie: 'Torta',
+  combined_trend: 'Tendencia Combinada',
+};
 
-  // State for available comments to canonicalize display names
-  const [availableComments, setAvailableComments] = useState<string[]>([]);
+const AGGREGATION_LABELS: Record<string, string> = {
+  count: 'Conteo',
+  sum: 'Suma',
+  avg: 'Promedio',
+};
 
-  // Subscribe to settings to get the official list of comments
-  useEffect(() => {
-    const unsubscribe = subscribeToSettings((comments) => {
-      setAvailableComments(comments);
-    });
-    return () => unsubscribe();
-  }, []);
+const COLORS = ['#0ea5e9', '#16a34a', '#f97316', '#ef4444', '#a855f7', '#f43f5e', '#14b8a6', '#6366f1'];
 
-  // 1. Calculate Summary Metrics based on FILTERED records
-  const summary = useMemo(() => {
-    const totalRecords = records.length;
-    
-    if (totalRecords === 0) {
-      return {
-        totalMeters: 0,
-        avgMeters: 0,
-        totalChanges: 0,
-        avgChanges: 0,
-        efficiency: 0,
-        count: 0
-      };
+const normalizeDynamicKey = (field: string) => (field.startsWith('dynamic.') ? field.slice(8) : field);
+
+const getRecordFieldValue = (record: ProductionRecord, field: string): unknown => {
+  if (field.startsWith('dynamic.')) {
+    const dynamicKey = normalizeDynamicKey(field);
+    return record.dynamicFieldsValues?.[dynamicKey];
+  }
+
+  return (record as any)[field];
+};
+
+const toDisplayString = (value: unknown): string => {
+  if (value === null || value === undefined || value === '') return 'Sin dato';
+  if (Array.isArray(value)) return value.join(', ') || 'Sin dato';
+  return String(value);
+};
+
+const toNumeric = (value: unknown): number => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+};
+
+const metricLabel = (valueField: string, fieldMap: Record<string, DashboardFieldOption>) => {
+  return fieldMap[valueField]?.label || valueField;
+};
+
+const buildGroupedData = (
+  records: ProductionRecord[],
+  baseField: string,
+  valueField: string,
+  aggregation: DashboardWidgetConfig['aggregation'],
+  limit?: number
+) => {
+  const groups = new Map<string, GroupAccumulator>();
+
+  records.forEach((record) => {
+    const key = toDisplayString(getRecordFieldValue(record, baseField));
+    const current = groups.get(key) || { label: key, sum: 0, count: 0 };
+
+    if (aggregation === 'count') {
+      current.sum += 1;
+      current.count += 1;
+    } else {
+      current.sum += toNumeric(getRecordFieldValue(record, valueField));
+      current.count += 1;
     }
 
-    const totalMeters = records.reduce((acc, r) => acc + r.meters, 0);
-    const avgMeters = Math.round(totalMeters / totalRecords);
+    groups.set(key, current);
+  });
 
-    const totalChanges = records.reduce((acc, r) => acc + r.changesCount, 0);
-    const avgChanges = (totalChanges / totalRecords).toFixed(1);
+  let rows = Array.from(groups.values()).map((entry) => ({
+    label: entry.label,
+    value: aggregation === 'avg' ? (entry.count > 0 ? entry.sum / entry.count : 0) : entry.sum,
+  }));
 
-    // Calculate dynamic efficiency based on filtered set
-    // Assuming target 5000m per shift as roughly 100%
-    const efficiency = Math.min(100, Math.round((avgMeters / 5000) * 100));
+  if (baseField === 'date') {
+    rows = rows.sort((a, b) => a.label.localeCompare(b.label));
+  } else {
+    rows = rows.sort((a, b) => b.value - a.value);
+  }
 
-    return {
-      totalMeters,
-      avgMeters,
-      totalChanges,
-      avgChanges,
-      efficiency,
-      count: totalRecords
+  if (limit && limit > 0) {
+    rows = rows.slice(0, limit);
+  }
+
+  return rows;
+};
+
+const buildCombinedTrendData = (
+  records: ProductionRecord[],
+  primaryField: string,
+  secondaryField: string,
+  aggregation: DashboardWidgetConfig['aggregation']
+) => {
+  const groups = new Map<string, { primary: GroupAccumulator; secondary: GroupAccumulator }>();
+
+  records.forEach((record) => {
+    const dateKey = toDisplayString(getRecordFieldValue(record, 'date'));
+    const current = groups.get(dateKey) || {
+      primary: { label: dateKey, sum: 0, count: 0 },
+      secondary: { label: dateKey, sum: 0, count: 0 },
     };
-  }, [records]);
 
-  // 2. Machine Performance Data
-  const machineData = useMemo(() => {
-    const grouped: Record<string, number> = {};
-    records.forEach(r => {
-      grouped[r.machine] = (grouped[r.machine] || 0) + r.meters;
-    });
-    return Object.entries(grouped)
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value);
-  }, [records]);
+    if (aggregation === 'count') {
+      current.primary.sum += 1;
+      current.secondary.sum += 1;
+      current.primary.count += 1;
+      current.secondary.count += 1;
+    } else {
+      current.primary.sum += toNumeric(getRecordFieldValue(record, primaryField));
+      current.secondary.sum += toNumeric(getRecordFieldValue(record, secondaryField));
+      current.primary.count += 1;
+      current.secondary.count += 1;
+    }
 
-  // 3. Operator Performance Data
-  const operatorData = useMemo(() => {
-    const grouped: Record<string, number> = {};
-    records.forEach(r => {
-      if (r.operator) {
-        grouped[r.operator] = (grouped[r.operator] || 0) + r.meters;
-      }
-    });
-    return Object.entries(grouped)
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 10); // Top 10
-  }, [records]);
+    groups.set(dateKey, current);
+  });
 
-  // 4. Shift Distribution
-  const shiftData = useMemo(() => {
-    const grouped: Record<string, number> = {};
-    records.forEach(r => {
-      grouped[r.shift] = (grouped[r.shift] || 0) + r.meters;
-    });
-    return Object.entries(grouped).map(([name, value]) => ({ name, value }));
-  }, [records]);
+  return Array.from(groups.entries())
+    .map(([date, values]) => ({
+      date,
+      primary:
+        aggregation === 'avg' ? (values.primary.count > 0 ? values.primary.sum / values.primary.count : 0) : values.primary.sum,
+      secondary:
+        aggregation === 'avg'
+          ? values.secondary.count > 0
+            ? values.secondary.sum / values.secondary.count
+            : 0
+          : values.secondary.sum,
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+};
 
-  // 5. Boss Performance
-  const bossData = useMemo(() => {
-    const grouped: Record<string, number> = {};
-    records.forEach(r => {
-      grouped[r.boss] = (grouped[r.boss] || 0) + r.meters;
-    });
-    return Object.entries(grouped).map(([name, value]) => ({ name, value }));
-  }, [records]);
+const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = false, onOpenAdmin }) => {
+  const [configs, setConfigs] = useState<DashboardConfig[]>([]);
+  const [fieldOptions, setFieldOptions] = useState<DashboardFieldOption[]>(CORE_FIELDS);
+  const [selectedConfigId, setSelectedConfigId] = useState('');
+  const [selectedBaseField, setSelectedBaseField] = useState('');
+  const [selectedRelatedFields, setSelectedRelatedFields] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  // 6. Incident/Comment Analytics (Normalized and Synchronized)
-  const incidentsData = useMemo(() => {
-    const groups: Record<string, { count: number, displayName: string }> = {};
+  const loadDashboardData = async () => {
+    setLoading(true);
+    setError('');
 
-    // Map normalized keys to canonical names from the settings
-    const canonicalMap: Record<string, string> = {};
-    availableComments.forEach(c => {
-        const key = c.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-        canonicalMap[key] = c;
-    });
-
-    records.forEach(r => {
-      if (r.changesComment && r.changesComment.trim().length > 1) {
-        const rawComment = r.changesComment.trim();
-        const normalizedKey = rawComment
-          .normalize("NFD")
-          .replace(/[\u0300-\u036f]/g, "")
-          .toLowerCase();
-
-        // Use canonical name if available (exact match from settings), otherwise use the raw comment
-        const canonicalName = canonicalMap[normalizedKey];
-        
-        if (!groups[normalizedKey]) {
-          groups[normalizedKey] = { 
-            count: 0, 
-            displayName: canonicalName || rawComment 
-          };
-        } else {
-            // If we found a canonical name later or it wasn't set correctly, update it
-            if (canonicalName) {
-                groups[normalizedKey].displayName = canonicalName;
-            }
-        }
-        groups[normalizedKey].count += 1;
-      }
-    });
-
-    return Object.values(groups)
-      .map((item) => ({ name: item.displayName, value: item.count }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 5);
-  }, [records, availableComments]);
-
-  // 7. Time Trend Data (Date vs Meters)
-  const trendData = useMemo(() => {
-    const grouped: Record<string, number> = {};
-    records.forEach(r => {
-      // Aggregate by date
-      grouped[r.date] = (grouped[r.date] || 0) + r.meters;
-    });
-    
-    return Object.entries(grouped)
-      .map(([date, value]) => ({ date, value }))
-      .sort((a, b) => a.date.localeCompare(b.date)); // Sort chronologically
-  }, [records]);
-
-  // Determine chart min-width based on data points to allow scrolling
-  const chartMinWidth = Math.max(trendData.length * 50, 600); 
-
-  // Handle PDF Generation using html2canvas for faithful visual reproduction
-  const handleExportDashboardPDF = async () => {
-    if (!dashboardRef.current || isGeneratingPdf) return;
-    
-    setIsGeneratingPdf(true);
-    
     try {
-      // Use html2canvas to capture the DOM
-      const canvas = await html2canvas(dashboardRef.current, {
-        scale: 2, // Improve quality
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#ffffff' // Ensure white background
+      const [dashboardConfigs, fieldCatalog] = await Promise.all([getDashboardConfigs(), getFieldCatalog()]);
+
+      const dynamicFromCatalog: DashboardFieldOption[] = fieldCatalog.map((field) => ({
+        key: `dynamic.${field.key}`,
+        label: field.label,
+        type: field.type === 'number' ? 'number' : 'text',
+        source: 'dynamic',
+      }));
+
+      const discoveredDynamicKeys = new Map<string, DashboardFieldOption>();
+      records.forEach((record) => {
+        Object.keys(record.dynamicFieldsValues || {}).forEach((key) => {
+          if (discoveredDynamicKeys.has(key)) return;
+          const value = record.dynamicFieldsValues?.[key];
+          discoveredDynamicKeys.set(key, {
+            key: `dynamic.${key}`,
+            label: key,
+            type: typeof value === 'number' ? 'number' : 'text',
+            source: 'dynamic',
+          });
+        });
       });
 
-      const imgData = canvas.toDataURL('image/png');
-      
-      // Calculate orientation based on aspect ratio
-      const imgWidth = canvas.width;
-      const imgHeight = canvas.height;
-      const orientation = imgWidth > imgHeight ? 'l' : 'p';
-      
-      const pdf = new jsPDF(orientation, 'mm', 'a4');
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = pdf.internal.pageSize.getHeight();
-      
-      // Add Title Header
-      pdf.setFontSize(16);
-      pdf.setTextColor(40);
-      pdf.text("Informe Visual de Dashboard - Pigmea", 10, 15);
-      
-      pdf.setFontSize(10);
-      pdf.setTextColor(100);
-      const dateStr = new Date().toLocaleString('es-ES');
-      pdf.text(`Generado: ${dateStr} | Registros analizados: ${summary.count}`, 10, 22);
+      const mergedDynamic = Array.from(
+        new Map([...dynamicFromCatalog, ...Array.from(discoveredDynamicKeys.values())].map((f) => [f.key, f])).values()
+      ).sort((a, b) => a.label.localeCompare(b.label));
 
-      // Calculate image dimensions to fit page maintaining aspect ratio
-      const margin = 10;
-      const availableWidth = pdfWidth - (margin * 2);
-      const availableHeight = pdfHeight - 30; // Minus header space
-      
-      const widthRatio = availableWidth / imgWidth;
-      const heightRatio = availableHeight / imgHeight;
-      const ratio = Math.min(widthRatio, heightRatio);
-      
-      const finalWidth = imgWidth * ratio;
-      const finalHeight = imgHeight * ratio;
-      
-      // Center horizontally
-      const xPos = (pdfWidth - finalWidth) / 2;
-      
-      pdf.addImage(imgData, 'PNG', xPos, 30, finalWidth, finalHeight);
-      pdf.save(`Dashboard_Pigmea_${new Date().toISOString().slice(0,10)}.pdf`);
+      const options = [...CORE_FIELDS, ...mergedDynamic];
+      const optionMap = new Map(options.map((f) => [f.key, f]));
 
-    } catch (error) {
-      console.error("Error generating PDF:", error);
-      alert("Error generando el PDF visual. Intente desde un navegador de escritorio.");
+      const normalizedConfigs = dashboardConfigs.map((config) => {
+        const safeBaseField = optionMap.has(config.baseField) ? config.baseField : 'machine';
+        const safeRelated = (config.relatedFields || []).filter((field) => optionMap.has(field) && field !== safeBaseField);
+        const safeWidgets = (config.widgets || []).map((widget, index) => {
+          const safeValueField = optionMap.has(widget.valueField) ? widget.valueField : 'meters';
+          const secondary = widget.secondaryValueField && optionMap.has(widget.secondaryValueField)
+            ? widget.secondaryValueField
+            : undefined;
+          return {
+            ...widget,
+            id: widget.id || `widget_${index + 1}`,
+            valueField: safeValueField,
+            secondaryValueField: secondary,
+          };
+        });
+
+        return {
+          ...config,
+          baseField: safeBaseField,
+          relatedFields: safeRelated,
+          widgets: safeWidgets,
+        };
+      });
+
+      setConfigs(normalizedConfigs);
+      setFieldOptions(options);
+
+      const defaultConfig = normalizedConfigs.find((config) => config.isDefault) || normalizedConfigs[0];
+      if (defaultConfig) {
+        setSelectedConfigId(defaultConfig.id);
+        setSelectedBaseField(defaultConfig.baseField);
+        setSelectedRelatedFields(defaultConfig.relatedFields || []);
+      } else {
+        setSelectedConfigId('');
+        setSelectedBaseField('machine');
+        setSelectedRelatedFields([]);
+      }
+    } catch (err: any) {
+      setError(err?.message || 'No se pudieron cargar los dashboards dinámicos.');
     } finally {
-      setIsGeneratingPdf(false);
+      setLoading(false);
     }
   };
 
-  return (
-    <div className="space-y-4 md:space-y-6 pb-24 md:pb-20">
-      
-      {/* Header Section */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white md:bg-transparent p-4 md:p-0 rounded-xl md:rounded-none shadow-sm md:shadow-none border border-slate-100 md:border-none">
-        <div>
-          <h2 className="text-xl md:text-2xl font-bold text-slate-800">Dashboard</h2>
-          <p className="text-xs md:text-sm text-slate-500 flex items-center gap-1 mt-1">
-             <CalendarRange className="w-3 h-3" />
-             Analizando <span className="font-bold text-slate-700">{summary.count}</span> registros.
-          </p>
+  useEffect(() => {
+    void loadDashboardData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [records.length]);
+
+  const allFieldOptions = useMemo<DashboardFieldOption[]>(() => {
+    return fieldOptions;
+  }, [fieldOptions]);
+
+  const fieldMap = useMemo<Record<string, DashboardFieldOption>>(() => {
+    const map: Record<string, DashboardFieldOption> = {};
+    allFieldOptions.forEach((field) => {
+      map[field.key] = field;
+    });
+    return map;
+  }, [allFieldOptions]);
+
+  const selectedConfig = useMemo(
+    () => configs.find((config) => config.id === selectedConfigId) || null,
+    [configs, selectedConfigId]
+  );
+
+  const activeBaseField = selectedBaseField || 'machine';
+  const activeRelatedFields = selectedRelatedFields;
+
+  const dimensionPreview = useMemo(() => {
+    return buildGroupedData(records, activeBaseField, 'meters', 'count', 15);
+  }, [records, activeBaseField]);
+
+  const relatedPreviewRows = useMemo(() => {
+    const grouped = new Map<string, Record<string, string>>();
+
+    records.forEach((record) => {
+      const baseKey = toDisplayString(getRecordFieldValue(record, activeBaseField));
+      const current = grouped.get(baseKey) || { dimension: baseKey };
+
+      activeRelatedFields.forEach((field) => {
+        current[field] = toDisplayString(getRecordFieldValue(record, field));
+      });
+
+      grouped.set(baseKey, current);
+    });
+
+    return Array.from(grouped.values()).slice(0, 15);
+  }, [records, activeBaseField, activeRelatedFields]);
+
+  const handleConfigSelection = (nextId: string) => {
+    setSelectedConfigId(nextId);
+    const next = configs.find((config) => config.id === nextId);
+    if (!next) return;
+    setSelectedBaseField(next.baseField);
+    setSelectedRelatedFields(next.relatedFields || []);
+  };
+
+  const renderWidget = (widget: DashboardWidgetConfig) => {
+    if (widget.chartType === 'combined_trend') {
+      const secondaryField = widget.secondaryValueField || widget.valueField;
+      const data = buildCombinedTrendData(records, widget.valueField, secondaryField, widget.aggregation);
+
+      return (
+        <div className="h-72">
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+              <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#64748b' }} />
+              <YAxis tick={{ fontSize: 11, fill: '#64748b' }} />
+              <Tooltip />
+              <Legend />
+              <Bar dataKey="primary" name={metricLabel(widget.valueField, fieldMap)} fill="#0ea5e9" radius={[6, 6, 0, 0]} />
+              <Line
+                type="monotone"
+                dataKey="secondary"
+                name={metricLabel(secondaryField, fieldMap)}
+                stroke="#f97316"
+                strokeWidth={2.5}
+                dot={{ r: 3 }}
+              />
+            </ComposedChart>
+          </ResponsiveContainer>
         </div>
-        <div className="flex gap-2 w-full md:w-auto">
-          <button 
-            onClick={() => exportToExcel(records)}
-            className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2.5 rounded-lg transition-colors text-xs md:text-sm font-bold shadow-sm active:scale-95 transform duration-100"
+      );
+    }
+
+    const data = buildGroupedData(records, activeBaseField, widget.valueField, widget.aggregation, widget.limit);
+
+    if (widget.chartType === 'pie') {
+      return (
+        <div className="h-72">
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie data={data} dataKey="value" nameKey="label" innerRadius={58} outerRadius={98} paddingAngle={3}>
+                {data.map((entry, index) => (
+                  <Cell key={`${entry.label}-${index}`} fill={COLORS[index % COLORS.length]} />
+                ))}
+              </Pie>
+              <Tooltip formatter={(value) => Number(value).toLocaleString()} />
+              <Legend wrapperStyle={{ fontSize: '12px' }} />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+      );
+    }
+
+    if (widget.chartType === 'line') {
+      return (
+        <div className="h-72">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+              <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748b' }} />
+              <YAxis tick={{ fontSize: 11, fill: '#64748b' }} />
+              <Tooltip formatter={(value) => Number(value).toLocaleString()} />
+              <Line type="monotone" dataKey="value" stroke="#0ea5e9" strokeWidth={2.5} dot={{ r: 3 }} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      );
+    }
+
+    if (widget.chartType === 'area') {
+      return (
+        <div className="h-72">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 8 }}>
+              <defs>
+                <linearGradient id={`gradient-${widget.id}`} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#16a34a" stopOpacity={0.7} />
+                  <stop offset="95%" stopColor="#16a34a" stopOpacity={0.05} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+              <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748b' }} />
+              <YAxis tick={{ fontSize: 11, fill: '#64748b' }} />
+              <Tooltip formatter={(value) => Number(value).toLocaleString()} />
+              <Area type="monotone" dataKey="value" stroke="#16a34a" fill={`url(#gradient-${widget.id})`} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      );
+    }
+
+    return (
+      <div className="h-72">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 8 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+            <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748b' }} />
+            <YAxis tick={{ fontSize: 11, fill: '#64748b' }} />
+            <Tooltip formatter={(value) => Number(value).toLocaleString()} />
+            <Bar dataKey="value" fill="#0ea5e9" radius={[6, 6, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    );
+  };
+
+  if (loading) {
+    return (
+      <div className="bg-white border border-slate-200 rounded-2xl p-8 flex flex-col items-center gap-3 text-slate-600">
+        <RefreshCw className="w-6 h-6 animate-spin text-blue-600" />
+        <p className="font-medium">Cargando dashboards dinamicos...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="bg-red-50 border border-red-200 rounded-2xl p-6 text-red-700 flex items-start gap-3">
+        <AlertTriangle className="w-5 h-5 mt-0.5" />
+        <div>
+          <p className="font-bold">No se pudo cargar el dashboard</p>
+          <p className="text-sm">{error}</p>
+          <button
+            onClick={() => void loadDashboardData()}
+            className="mt-3 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-semibold"
           >
-            <Table className="w-4 h-4" /> Excel
-          </button>
-          <button 
-            onClick={handleExportDashboardPDF}
-            disabled={isGeneratingPdf}
-            className={`flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg transition-colors text-xs md:text-sm font-bold shadow-sm active:scale-95 transform duration-100
-              ${isGeneratingPdf ? 'bg-slate-300 cursor-not-allowed text-slate-500' : 'bg-red-600 hover:bg-red-700 text-white'}
-            `}
-          >
-            {isGeneratingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} 
-            {isGeneratingPdf ? 'Generando...' : 'PDF Visual'}
+            Reintentar
           </button>
         </div>
       </div>
+    );
+  }
 
-      {/* Capture Area Ref */}
-      <div ref={dashboardRef} className="bg-slate-50 p-2 md:p-4 -m-2 md:-m-4 rounded-xl">
-        {/* KPI Cards - Dynamic based on filters */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4 mb-4 md:mb-6">
-          
-          {/* KPI 1 */}
-          <div className="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-slate-200">
-            <div className="flex justify-between items-start mb-2">
-              <div className="flex items-center">
-                 <p className="text-slate-500 text-xs md:text-sm font-bold uppercase tracking-wider">Producción Total</p>
-                 {!isGeneratingPdf && <InfoTooltip text="Suma total de metros producidos en todos los registros seleccionados." />}
-              </div>
-              <div className="p-2 bg-blue-50 rounded-lg">
-                <Layers className="w-5 h-5 text-blue-500" />
-              </div>
-            </div>
-            <div className="flex items-baseline gap-1">
-              <h3 className="text-2xl md:text-3xl font-bold text-slate-900">{summary.totalMeters.toLocaleString()}</h3>
-              <span className="text-sm font-medium text-slate-400">m</span>
-            </div>
-            <p className="text-xs mt-2 font-medium text-slate-500 bg-slate-50 inline-block px-2 py-1 rounded">
-               Promedio: <strong>{summary.avgMeters.toLocaleString()} m</strong> / turno
-            </p>
+  if (!selectedConfig) {
+    return (
+      <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center">
+        <LayoutDashboard className="w-8 h-8 mx-auto text-slate-400 mb-3" />
+        <h3 className="text-lg font-bold text-slate-800">Aun no hay dashboards configurados</h3>
+        <p className="text-sm text-slate-500 mt-1">Crea un panel desde administracion para habilitar visualizaciones dinamicas.</p>
+        {canManageDashboards && onOpenAdmin && (
+          <button
+            onClick={onOpenAdmin}
+            className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold"
+          >
+            Ir al gestor de dashboards
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5 pb-20">
+      <div className="bg-white border border-slate-200 rounded-2xl p-5">
+        <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
+          <div>
+            <h2 className="text-2xl font-bold text-slate-900">Dashboard Dinamico</h2>
+            <p className="text-sm text-slate-500 mt-1">Selecciona panel, campo base y campos relacionados para construir reportes personalizados.</p>
           </div>
 
-          {/* KPI 2 */}
-          <div className="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-slate-200">
-            <div className="flex justify-between items-start mb-2">
-              <div className="flex items-center">
-                <p className="text-slate-500 text-xs md:text-sm font-bold uppercase tracking-wider">Eficiencia</p>
-                {!isGeneratingPdf && <InfoTooltip text="Cálculo basado en una meta de 5000 metros por turno." />}
-              </div>
-              <div className="p-2 bg-green-50 rounded-lg">
-                <Activity className="w-5 h-5 text-green-500" />
-              </div>
-            </div>
-            <h3 className="text-2xl md:text-3xl font-bold text-slate-900">{summary.efficiency}%</h3>
-            <div className="w-full bg-slate-100 rounded-full h-2 mt-3 overflow-hidden">
-              <div 
-                className={`h-2 rounded-full transition-all duration-1000 ${summary.efficiency > 80 ? 'bg-green-500' : summary.efficiency > 50 ? 'bg-orange-500' : 'bg-red-500'}`}
-                style={{ width: `${summary.efficiency}%` }}
-              ></div>
-            </div>
-          </div>
-
-          {/* KPI 3 */}
-          <div className="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-slate-200">
-            <div className="flex justify-between items-start mb-2">
-              <div className="flex items-center">
-                <p className="text-slate-500 text-xs md:text-sm font-bold uppercase tracking-wider">Media Cambios</p>
-                {!isGeneratingPdf && <InfoTooltip text="Promedio de cambios realizados por turno registrado." />}
-              </div>
-              <div className="p-2 bg-orange-50 rounded-lg">
-                <Activity className="w-5 h-5 text-orange-500" />
-              </div>
-            </div>
-            <h3 className="text-2xl md:text-3xl font-bold text-slate-900">{summary.avgChanges}</h3>
-            <p className="text-xs text-slate-400 mt-2 font-medium">Por turno registrado</p>
-          </div>
-        </div>
-
-        {/* TIME TREND CHART (Full Width) */}
-        <div className="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-slate-200 mb-4 md:mb-6">
-            <h4 className="text-xs md:text-sm font-bold text-slate-700 mb-6 uppercase flex items-center gap-2">
-              <TrendingUp className="w-4 h-4 text-slate-400" /> Tendencia de Producción
-              {!isGeneratingPdf && <InfoTooltip text="Metros totales producidos por día." />}
-            </h4>
-            
-            {/* Scroll Container */}
-            <div className="w-full overflow-x-auto pb-2 scrollbar-hide">
-               {/* Inner container with min-width to force scroll if many items */}
-               <div style={{ minWidth: isGeneratingPdf ? '100%' : `${chartMinWidth}px`, height: '300px' }}>
-                 {trendData.length > 0 ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={trendData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
-                        <defs>
-                          <linearGradient id="colorMeters" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.8}/>
-                            <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                        <XAxis 
-                          dataKey="date" 
-                          axisLine={false}
-                          tickLine={false}
-                          tick={{fill: '#64748b', fontSize: 10}}
-                          dy={10}
-                        />
-                        <YAxis 
-                          axisLine={false}
-                          tickLine={false}
-                          tick={{fill: '#64748b', fontSize: 10}}
-                          tickFormatter={(val) => `${val/1000}k`}
-                        />
-                        <Tooltip 
-                          contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}}
-                          formatter={(value: number) => [`${value.toLocaleString()} m`, "Metros"]}
-                          labelStyle={{color: '#64748b', marginBottom: '0.5rem'}}
-                        />
-                        <Area 
-                          type="monotone" 
-                          dataKey="value" 
-                          stroke="#3b82f6" 
-                          fillOpacity={1} 
-                          fill="url(#colorMeters)" 
-                          strokeWidth={2}
-                          activeDot={{ r: 6 }}
-                        />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                 ) : (
-                    <div className="h-full flex items-center justify-center text-slate-400 text-sm italic">
-                       Sin datos en el periodo seleccionado
-                    </div>
-                 )}
-               </div>
-            </div>
-            {/* Scroll Hint only if not generating PDF and data is large */}
-            {!isGeneratingPdf && trendData.length > 10 && (
-                <div className="text-center text-[10px] text-slate-400 mt-2 md:hidden animate-pulse">
-                  Desliza para ver más →
-                </div>
-            )}
-        </div>
-
-        {/* Charts Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
-          
-          {/* Machine Performance */}
-          <div className="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-slate-200">
-            <h4 className="text-xs md:text-sm font-bold text-slate-700 mb-6 uppercase flex items-center gap-2">
-              <Activity className="w-4 h-4 text-slate-400" /> Producción por Máquina
-              {!isGeneratingPdf && <InfoTooltip text="Metros producidos por máquina." />}
-            </h4>
-            <div className="h-64 w-full">
-               {machineData.length > 0 ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={machineData}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                      <XAxis 
-                        dataKey="name" 
-                        axisLine={false} 
-                        tickLine={false} 
-                        tick={{fill: '#64748b', fontSize: 10}} 
-                        interval={0} 
-                      />
-                      <YAxis 
-                        axisLine={false} 
-                        tickLine={false} 
-                        tick={{fill: '#64748b', fontSize: 10}} 
-                        tickFormatter={(val) => `${val/1000}k`} 
-                        width={30}
-                      />
-                      <Tooltip 
-                        cursor={{fill: '#f1f5f9'}}
-                        contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}}
-                      />
-                      <Bar dataKey="value" radius={[4, 4, 0, 0]}>
-                        {machineData.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-               ) : (
-                  <div className="h-full flex items-center justify-center text-slate-400 text-sm">Sin datos</div>
-               )}
-            </div>
-          </div>
-
-          {/* Operator Performance */}
-          <div className="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-slate-200">
-            <h4 className="text-xs md:text-sm font-bold text-slate-700 mb-6 uppercase flex items-center gap-2">
-              <Users className="w-4 h-4 text-slate-400" /> Top Operarios
-              {!isGeneratingPdf && <InfoTooltip text="Los 10 operarios con mayor producción." />}
-            </h4>
-            {operatorData.length > 0 ? (
-              <div className="h-64 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={operatorData} layout="vertical" margin={{ left: 10, right: 10 }}>
-                    <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#e2e8f0" />
-                    <XAxis type="number" hide />
-                    <YAxis 
-                      dataKey="name" 
-                      type="category" 
-                      width={80} 
-                      axisLine={false} 
-                      tickLine={false} 
-                      tick={{fill: '#475569', fontSize: 10, fontWeight: 500}} 
-                    />
-                    <Tooltip cursor={{fill: '#f1f5f9'}} />
-                    <Bar dataKey="value" fill="#8b5cf6" radius={[0, 4, 4, 0]} barSize={16}>
-                      {operatorData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[(index + 4) % COLORS.length]} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            ) : (
-               <div className="h-64 flex flex-col items-center justify-center text-slate-400 gap-2 border-2 border-dashed border-slate-100 rounded-lg">
-                <Users className="w-8 h-8 opacity-50" />
-                <p className="text-sm">Sin datos de operarios</p>
-              </div>
-            )}
-          </div>
-
-          {/* Boss & Shift Distribution */}
-          <div className="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-slate-200 lg:col-span-2">
-             <h4 className="text-xs md:text-sm font-bold text-slate-700 mb-6 uppercase flex items-center gap-2">
-               Distribución de Carga
-               {!isGeneratingPdf && <InfoTooltip text="Proporción de metros producidos por Turno y por Jefe." />}
-             </h4>
-             
-             {/* On mobile, use auto height so graphs stack. On MD, use fixed height for side-by-side */}
-             <div className="grid grid-cols-1 md:grid-cols-2 gap-8 h-auto md:h-64">
-                
-                {/* Shift Pie Chart */}
-                <div className="w-full h-64 md:h-full relative">
-                   <h5 className="absolute top-0 left-0 text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-0.5 rounded">POR TURNO</h5>
-                   {shiftData.length > 0 ? (
-                     <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                          <Pie
-                            data={shiftData}
-                            cx="50%"
-                            cy="50%"
-                            innerRadius={50}
-                            outerRadius={70}
-                            paddingAngle={5}
-                            dataKey="value"
-                          >
-                            {shiftData.map((entry, index) => (
-                              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                            ))}
-                          </Pie>
-                          <Tooltip />
-                          <Legend verticalAlign="bottom" height={36} iconSize={10} wrapperStyle={{fontSize: '11px'}} />
-                        </PieChart>
-                     </ResponsiveContainer>
-                   ) : <div className="h-full flex items-center justify-center text-slate-300">Sin datos</div>}
-                </div>
-
-                {/* Boss Pie Chart */}
-                <div className="w-full h-64 md:h-full relative border-t md:border-t-0 border-slate-100 pt-6 md:pt-0">
-                   <h5 className="absolute top-6 md:top-0 left-0 text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-0.5 rounded">POR JEFE</h5>
-                   {bossData.length > 0 ? (
-                     <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                          <Pie
-                            data={bossData}
-                            cx="50%"
-                            cy="50%"
-                            innerRadius={50}
-                            outerRadius={70}
-                            paddingAngle={5}
-                            dataKey="value"
-                          >
-                            {bossData.map((entry, index) => (
-                              <Cell key={`cell-${index}`} fill={COLORS[(index + 3) % COLORS.length]} />
-                            ))}
-                          </Pie>
-                          <Tooltip />
-                          <Legend verticalAlign="bottom" height={36} iconSize={10} wrapperStyle={{fontSize: '11px'}} />
-                        </PieChart>
-                     </ResponsiveContainer>
-                   ) : <div className="h-full flex items-center justify-center text-slate-300">Sin datos</div>}
-                </div>
-             </div>
-          </div>
-
-          {/* Incidents Analytics */}
-          <div className="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-slate-200 lg:col-span-2">
-            <div className="flex justify-between items-center mb-6">
-               <h4 className="text-xs md:text-sm font-bold text-slate-700 uppercase flex items-center gap-2">
-                 Motivos de Cambios
-                 {!isGeneratingPdf && <InfoTooltip text="Palabras clave más frecuentes en incidencias." />}
-               </h4>
-               {incidentsData.length > 0 && <span className="text-[10px] text-orange-600 bg-orange-50 px-2 py-1 rounded-full font-bold">Patrones</span>}
-            </div>
-            
-            {incidentsData.length > 0 ? (
-              <div className="h-64 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={incidentsData} layout="vertical" margin={{ left: 10, right: 10 }}>
-                    <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#e2e8f0" />
-                    <XAxis type="number" hide />
-                    <YAxis 
-                      dataKey="name" 
-                      type="category" 
-                      width={100} 
-                      axisLine={false} 
-                      tickLine={false} 
-                      tick={{fill: '#475569', fontSize: 10, fontWeight: 500}} 
-                    />
-                    <Tooltip cursor={{fill: '#f1f5f9'}} />
-                    <Bar dataKey="value" fill="#ef4444" radius={[0, 4, 4, 0]} barSize={16} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            ) : (
-              <div className="h-64 flex flex-col items-center justify-center text-slate-400 gap-2 border-2 border-dashed border-slate-100 rounded-lg">
-                <AlertTriangle className="w-8 h-8 opacity-50" />
-                <p className="text-sm">Sin suficientes datos</p>
-              </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => exportToExcel(records)}
+              className="inline-flex items-center gap-2 px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-semibold"
+            >
+              <Table className="w-4 h-4" /> Excel
+            </button>
+            <button
+              onClick={() => void loadDashboardData()}
+              className="inline-flex items-center gap-2 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-semibold"
+            >
+              <RefreshCw className="w-4 h-4" /> Recargar
+            </button>
+            {canManageDashboards && onOpenAdmin && (
+              <button
+                onClick={onOpenAdmin}
+                className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold"
+              >
+                <Settings2 className="w-4 h-4" /> Administrar
+              </button>
             )}
           </div>
         </div>
+      </div>
+
+      <div className="bg-white border border-slate-200 rounded-2xl p-5">
+        <div className="flex items-center gap-2 text-slate-700 font-bold mb-4">
+          <Filter className="w-4 h-4" /> Constructor de Vista
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <label className="block text-xs font-bold text-slate-500 mb-1">Panel Configurado</label>
+            <select
+              value={selectedConfigId}
+              onChange={(e) => handleConfigSelection(e.target.value)}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+            >
+              {configs.map((config) => (
+                <option key={config.id} value={config.id}>
+                  {config.name}{config.isDefault ? ' (Default)' : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-500 mb-1">Campo Base (Dimension)</label>
+            <select
+              value={activeBaseField}
+              onChange={(e) => {
+                setSelectedBaseField(e.target.value);
+                setSelectedRelatedFields((prev) => prev.filter((field) => field !== e.target.value));
+              }}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+            >
+              {allFieldOptions.map((field) => (
+                <option key={field.key} value={field.key}>{field.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-500 mb-1">Campos Adicionales (Relacion)</label>
+            <select
+              multiple
+              value={activeRelatedFields}
+              onChange={(e) => {
+                const values = Array.from(e.target.selectedOptions)
+                  .map((option) => (option as HTMLOptionElement).value)
+                  .filter((field) => field !== activeBaseField);
+                setSelectedRelatedFields(values);
+              }}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm min-h-[96px]"
+            >
+              {allFieldOptions
+                .filter((field) => field.key !== activeBaseField)
+                .map((field) => (
+                  <option key={field.key} value={field.key}>{field.label}</option>
+                ))}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div className="bg-white border border-slate-200 rounded-2xl p-5">
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">Registros Analizados</p>
+          <p className="text-3xl font-black text-slate-900">{records.length.toLocaleString()}</p>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-2xl p-5">
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">Dimension Activa</p>
+          <p className="text-xl font-bold text-slate-900">{fieldMap[activeBaseField]?.label || activeBaseField}</p>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-2xl p-5">
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">Campos Relacionados</p>
+          <p className="text-xl font-bold text-slate-900">{activeRelatedFields.length}</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {selectedConfig.widgets.map((widget) => (
+          <div key={widget.id} className="bg-white border border-slate-200 rounded-2xl p-5">
+            <div className="mb-3">
+              <h4 className="font-bold text-slate-900">{widget.title}</h4>
+              <p className="text-xs text-slate-500 mt-1">
+                {CHART_LABELS[widget.chartType]} · {AGGREGATION_LABELS[widget.aggregation]} de {metricLabel(widget.valueField, fieldMap)}
+              </p>
+            </div>
+            {renderWidget(widget)}
+          </div>
+        ))}
+      </div>
+
+      <div className="bg-white border border-slate-200 rounded-2xl p-5">
+        <h4 className="font-bold text-slate-900 mb-3">Resumen por Campo Base</h4>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 text-left text-slate-500">
+                <th className="py-2 pr-3">Dimension</th>
+                <th className="py-2 pr-3">Registros</th>
+              </tr>
+            </thead>
+            <tbody>
+              {dimensionPreview.map((row) => (
+                <tr key={row.label} className="border-b border-slate-100">
+                  <td className="py-2 pr-3 font-medium text-slate-700">{row.label}</td>
+                  <td className="py-2 pr-3 text-slate-600">{row.value.toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {activeRelatedFields.length > 0 && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-5">
+          <h4 className="font-bold text-slate-900 mb-3">Relacion entre Campo Base y Campos Adicionales</h4>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 text-left text-slate-500">
+                  <th className="py-2 pr-3">{fieldMap[activeBaseField]?.label || activeBaseField}</th>
+                  {activeRelatedFields.map((field) => (
+                    <th key={field} className="py-2 pr-3">{fieldMap[field]?.label || field}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {relatedPreviewRows.map((row, index) => (
+                  <tr key={`${(row as any).dimension}-${index}`} className="border-b border-slate-100">
+                    <td className="py-2 pr-3 font-medium text-slate-700">{(row as any).dimension}</td>
+                    {activeRelatedFields.map((field) => (
+                      <td key={field} className="py-2 pr-3 text-slate-600">{(row as any)[field] || 'Sin dato'}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <div className="text-xs text-slate-500 px-1">
+        Tip: para guardar cambios permanentes de visualizacion, usa el boton Administrar y actualiza la configuracion del panel.
       </div>
     </div>
   );

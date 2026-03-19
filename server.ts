@@ -225,6 +225,19 @@ async function initDB() {
         sort_order INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (field_id, machine)
       )
+
+      CREATE TABLE IF NOT EXISTS dashboard_configs (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name VARCHAR(255) NOT NULL,
+        description TEXT,
+        base_field VARCHAR(255) NOT NULL,
+        related_fields JSONB NOT NULL DEFAULT '[]'::jsonb,
+        widgets JSONB NOT NULL DEFAULT '[]'::jsonb,
+        is_default BOOLEAN NOT NULL DEFAULT FALSE,
+        updated_by_user_id UUID,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      )
     `);
 
     await pool.query(`
@@ -238,8 +251,14 @@ async function initDB() {
           ALTER TABLE field_catalog_assignments ADD CONSTRAINT field_catalog_assignments_field_id_fkey
           FOREIGN KEY (field_id) REFERENCES field_catalog(id) ON DELETE CASCADE;
         END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'dashboard_configs_updated_by_user_id_fkey') THEN
+          ALTER TABLE dashboard_configs ADD CONSTRAINT dashboard_configs_updated_by_user_id_fkey
+          FOREIGN KEY (updated_by_user_id) REFERENCES users(id) ON DELETE SET NULL;
+        END IF;
       END $$;
     `);
+
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_dashboard_configs_default ON dashboard_configs(is_default DESC, updated_at DESC)');
 
     for (const role of APP_ROLES) {
       for (const key of PERMISSION_KEYS) {
@@ -289,6 +308,7 @@ const PERMISSION_KEYS = [
   'settings.read',
   'settings.manage',
   'settings.field_schemas',
+  'settings.dashboards',
   'admin.users.read',
   'admin.users.approve',
   'admin.users.unlock',
@@ -309,6 +329,7 @@ const DEFAULT_ROLE_PERMISSIONS: Record<AppRole, string[]> = {
     'settings.read',
     'settings.manage',
     'settings.field_schemas',
+    'settings.dashboards',
     'admin.users.read',
     'admin.users.approve',
     'admin.users.unlock',
@@ -332,6 +353,31 @@ const SHIFT_VALUES = ['Mañana', 'Tarde', 'Noche'] as const;
 const FIELD_TYPES = ['number', 'short_text', 'select', 'multi_select'] as const;
 
 type DynamicFieldType = typeof FIELD_TYPES[number];
+
+const DASHBOARD_CHART_TYPES = ['bar', 'line', 'area', 'pie', 'combined_trend'] as const;
+const DASHBOARD_AGGREGATIONS = ['count', 'sum', 'avg'] as const;
+
+type DashboardChartType = typeof DASHBOARD_CHART_TYPES[number];
+type DashboardAggregation = typeof DASHBOARD_AGGREGATIONS[number];
+
+type DashboardWidgetConfig = {
+  id: string;
+  title: string;
+  chartType: DashboardChartType;
+  valueField: string;
+  secondaryValueField?: string;
+  aggregation: DashboardAggregation;
+  limit?: number;
+};
+
+type DashboardConfigPayload = {
+  name: string;
+  description?: string;
+  baseField: string;
+  relatedFields: string[];
+  widgets: DashboardWidgetConfig[];
+  isDefault: boolean;
+};
 
 type MachineFieldDefinition = {
   key: string;
@@ -455,6 +501,84 @@ const parseMachineSchema = (row: any): MachineFieldDefinition[] => {
   const raw = row.fields_json;
   if (!Array.isArray(raw)) return [];
   return sanitizeMachineFieldDefinitions(raw);
+};
+
+const sanitizeDashboardConfigPayload = (incoming: any): DashboardConfigPayload => {
+  const name = String(incoming?.name || '').trim();
+  const baseField = String(incoming?.baseField || '').trim();
+  const description = normalizeOptionalString(incoming?.description) || undefined;
+  const isDefault = incoming?.isDefault === true;
+
+  if (!name) {
+    throw new Error('El nombre del dashboard es obligatorio.');
+  }
+
+  if (!baseField) {
+    throw new Error('El campo base es obligatorio.');
+  }
+
+  const relatedFields: string[] = Array.isArray(incoming?.relatedFields)
+    ? Array.from(
+        new Set<string>(
+          incoming.relatedFields
+            .map((field: any) => String(field || '').trim())
+            .filter((field: string) => field.length > 0)
+        )
+      )
+    : [];
+
+  if (!Array.isArray(incoming?.widgets)) {
+    throw new Error('La configuración requiere una lista de widgets.');
+  }
+
+  const widgets = incoming.widgets.map((widget: any, index: number) => {
+    const id = String(widget?.id || '').trim() || `widget_${index + 1}`;
+    const title = String(widget?.title || '').trim() || `Widget ${index + 1}`;
+    const chartType = String(widget?.chartType || '').trim() as DashboardChartType;
+    const valueField = String(widget?.valueField || '').trim();
+    const secondaryValueField = normalizeOptionalString(widget?.secondaryValueField) || undefined;
+    const aggregation = String(widget?.aggregation || 'count').trim() as DashboardAggregation;
+    const limit = Number(widget?.limit || 0);
+
+    if (!DASHBOARD_CHART_TYPES.includes(chartType)) {
+      throw new Error(`Tipo de gráfico inválido en ${title}.`);
+    }
+
+    if (!valueField) {
+      throw new Error(`El widget ${title} requiere un campo de valor.`);
+    }
+
+    if (!DASHBOARD_AGGREGATIONS.includes(aggregation)) {
+      throw new Error(`Agregación inválida en ${title}.`);
+    }
+
+    if (chartType === 'combined_trend' && !secondaryValueField) {
+      throw new Error(`El widget ${title} requiere un segundo campo para tendencia combinada.`);
+    }
+
+    return {
+      id,
+      title,
+      chartType,
+      valueField,
+      secondaryValueField,
+      aggregation,
+      limit: Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), 100) : undefined,
+    };
+  });
+
+  if (widgets.length === 0) {
+    throw new Error('Debes configurar al menos un widget.');
+  }
+
+  return {
+    name,
+    description,
+    baseField,
+    relatedFields,
+    widgets,
+    isDefault,
+  };
 };
 
 const validateDynamicFieldsAgainstSchema = (
@@ -1836,6 +1960,184 @@ app.delete('/api/settings/field-catalog/:id', authenticate, requirePermission('s
   }
 });
 
+// --- DASHBOARD CONFIGS ---
+app.get('/api/settings/dashboard-configs', authenticate, requirePermission('settings.read'), requireDB, async (_req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, name, description, base_field as "baseField", related_fields as "relatedFields",
+              widgets, is_default as "isDefault", updated_by_user_id as "updatedByUserId",
+              created_at as "createdAt", updated_at as "updatedAt"
+       FROM dashboard_configs
+       ORDER BY is_default DESC, updated_at DESC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: 'No se pudieron cargar los dashboards.' });
+  }
+});
+
+app.get('/api/settings/dashboard-configs/:id', authenticate, requirePermission('settings.read'), requireDB, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, name, description, base_field as "baseField", related_fields as "relatedFields",
+              widgets, is_default as "isDefault", updated_by_user_id as "updatedByUserId",
+              created_at as "createdAt", updated_at as "updatedAt"
+       FROM dashboard_configs
+       WHERE id = $1
+       LIMIT 1`,
+      [req.params.id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Dashboard no encontrado.' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'No se pudo cargar el dashboard.' });
+  }
+});
+
+app.post('/api/settings/dashboard-configs', authenticate, requirePermission('settings.dashboards'), requireDB, async (req, res) => {
+  const user = (req as any).user;
+  let hasOpenTransaction = false;
+  try {
+    const payload = sanitizeDashboardConfigPayload(req.body);
+
+    await pool.query('BEGIN');
+    hasOpenTransaction = true;
+
+    if (payload.isDefault) {
+      await pool.query('UPDATE dashboard_configs SET is_default = FALSE');
+    }
+
+    const result = await pool.query(
+      `INSERT INTO dashboard_configs (name, description, base_field, related_fields, widgets, is_default, updated_by_user_id, updated_at)
+       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, NOW())
+       RETURNING id, name, description, base_field as "baseField", related_fields as "relatedFields",
+                 widgets, is_default as "isDefault", updated_by_user_id as "updatedByUserId",
+                 created_at as "createdAt", updated_at as "updatedAt"`,
+      [
+        payload.name,
+        payload.description || null,
+        payload.baseField,
+        JSON.stringify(payload.relatedFields),
+        JSON.stringify(payload.widgets),
+        payload.isDefault,
+        user.id,
+      ]
+    );
+
+    await logAudit(user.id, 'dashboard_config_created', {
+      dashboard_id: result.rows[0].id,
+      name: payload.name,
+      isDefault: payload.isDefault,
+    }, req.ip || '');
+
+    await pool.query('COMMIT');
+    hasOpenTransaction = false;
+
+    io.emit('settings_changed');
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    if (hasOpenTransaction) {
+      await pool.query('ROLLBACK').catch(() => {});
+    }
+    if (err instanceof Error) {
+      return res.status(400).json({ error: err.message });
+    }
+    res.status(500).json({ error: 'No se pudo crear el dashboard.' });
+  }
+});
+
+app.put('/api/settings/dashboard-configs/:id', authenticate, requirePermission('settings.dashboards'), requireDB, async (req, res) => {
+  const user = (req as any).user;
+  let hasOpenTransaction = false;
+  try {
+    const payload = sanitizeDashboardConfigPayload(req.body);
+
+    await pool.query('BEGIN');
+    hasOpenTransaction = true;
+
+    if (payload.isDefault) {
+      await pool.query('UPDATE dashboard_configs SET is_default = FALSE WHERE id <> $1', [req.params.id]);
+    }
+
+    const result = await pool.query(
+      `UPDATE dashboard_configs
+       SET name = $1,
+           description = $2,
+           base_field = $3,
+           related_fields = $4::jsonb,
+           widgets = $5::jsonb,
+           is_default = $6,
+           updated_by_user_id = $7,
+           updated_at = NOW()
+       WHERE id = $8
+       RETURNING id, name, description, base_field as "baseField", related_fields as "relatedFields",
+                 widgets, is_default as "isDefault", updated_by_user_id as "updatedByUserId",
+                 created_at as "createdAt", updated_at as "updatedAt"`,
+      [
+        payload.name,
+        payload.description || null,
+        payload.baseField,
+        JSON.stringify(payload.relatedFields),
+        JSON.stringify(payload.widgets),
+        payload.isDefault,
+        user.id,
+        req.params.id,
+      ]
+    );
+
+    if (result.rowCount === 0) {
+      await pool.query('ROLLBACK');
+      hasOpenTransaction = false;
+      return res.status(404).json({ error: 'Dashboard no encontrado.' });
+    }
+
+    await logAudit(user.id, 'dashboard_config_updated', {
+      dashboard_id: req.params.id,
+      name: payload.name,
+      isDefault: payload.isDefault,
+    }, req.ip || '');
+
+    await pool.query('COMMIT');
+    hasOpenTransaction = false;
+
+    io.emit('settings_changed');
+    res.json(result.rows[0]);
+  } catch (err) {
+    if (hasOpenTransaction) {
+      await pool.query('ROLLBACK').catch(() => {});
+    }
+    if (err instanceof Error) {
+      return res.status(400).json({ error: err.message });
+    }
+    res.status(500).json({ error: 'No se pudo actualizar el dashboard.' });
+  }
+});
+
+app.delete('/api/settings/dashboard-configs/:id', authenticate, requirePermission('settings.dashboards'), requireDB, async (req, res) => {
+  const user = (req as any).user;
+  try {
+    const existing = await pool.query('SELECT id, name FROM dashboard_configs WHERE id = $1', [req.params.id]);
+    if (existing.rowCount === 0) {
+      return res.status(404).json({ error: 'Dashboard no encontrado.' });
+    }
+
+    await pool.query('DELETE FROM dashboard_configs WHERE id = $1', [req.params.id]);
+    await logAudit(user.id, 'dashboard_config_deleted', {
+      dashboard_id: req.params.id,
+      name: existing.rows[0].name,
+    }, req.ip || '');
+
+    io.emit('settings_changed');
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'No se pudo eliminar el dashboard.' });
+  }
+});
+
 // --- SETTINGS (COMMENTS) ---
 app.get('/api/settings/comments', authenticate, requirePermission('settings.read'), requireDB, async (req, res) => {
   try {
@@ -2006,12 +2308,18 @@ app.get('/api/export', authenticate, requireRole(['admin', 'jefe_planta']), requ
     const machineFieldSchemas = await pool.query(
       'SELECT machine, schema_version as version, fields_json as fields, updated_by_user_id as "updatedByUserId", updated_at as "updatedAt" FROM machine_field_schemas'
     );
+    const dashboardConfigs = await pool.query(
+      `SELECT id, name, description, base_field as "baseField", related_fields as "relatedFields", widgets,
+              is_default as "isDefault", updated_by_user_id as "updatedByUserId", created_at as "createdAt", updated_at as "updatedAt"
+       FROM dashboard_configs`
+    );
     
     res.json({
       records: records.rows.map(row => ({ ...row, timestamp: Number(row.timestamp) })),
       comments: comments.rows.map((r: any) => r.name),
       operators: operators.rows.map((r: any) => r.name),
-      machineFieldSchemas: machineFieldSchemas.rows
+      machineFieldSchemas: machineFieldSchemas.rows,
+      dashboardConfigs: dashboardConfigs.rows
     });
     await logAudit(user.id, 'backup_exported', { records: records.rowCount }, req.ip || '');
   } catch (err) {
@@ -2021,7 +2329,7 @@ app.get('/api/export', authenticate, requireRole(['admin', 'jefe_planta']), requ
 
 app.post('/api/import', authenticate, requireRole(['admin', 'jefe_planta']), requirePermission('backup.import'), requireDB, async (req, res) => {
   const user = (req as any).user;
-  const { records, comments, operators, machineFieldSchemas } = req.body;
+  const { records, comments, operators, machineFieldSchemas, dashboardConfigs } = req.body;
   try {
     await pool.query('BEGIN');
     
@@ -2092,6 +2400,50 @@ app.post('/api/import', authenticate, requireRole(['admin', 'jefe_planta']), req
         );
       }
     }
+
+    if (dashboardConfigs && Array.isArray(dashboardConfigs)) {
+      for (const config of dashboardConfigs) {
+        const payload = sanitizeDashboardConfigPayload(config);
+        const incomingId = normalizeOptionalString(config?.id);
+
+        await pool.query(
+          `INSERT INTO dashboard_configs (id, name, description, base_field, related_fields, widgets, is_default, updated_by_user_id, created_at, updated_at)
+           VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, COALESCE($9::timestamptz, NOW()), COALESCE($10::timestamptz, NOW()))
+           ON CONFLICT (id) DO UPDATE SET
+             name = EXCLUDED.name,
+             description = EXCLUDED.description,
+             base_field = EXCLUDED.base_field,
+             related_fields = EXCLUDED.related_fields,
+             widgets = EXCLUDED.widgets,
+             is_default = EXCLUDED.is_default,
+             updated_by_user_id = EXCLUDED.updated_by_user_id,
+             updated_at = NOW()`,
+          [
+            incomingId,
+            payload.name,
+            payload.description || null,
+            payload.baseField,
+            JSON.stringify(payload.relatedFields),
+            JSON.stringify(payload.widgets),
+            payload.isDefault,
+            config?.updatedByUserId || user.id,
+            config?.createdAt || null,
+            config?.updatedAt || null,
+          ]
+        );
+      }
+    }
+
+    await pool.query(
+      `WITH ranked AS (
+         SELECT id, ROW_NUMBER() OVER (ORDER BY is_default DESC, updated_at DESC, created_at DESC) AS rn
+         FROM dashboard_configs
+       )
+       UPDATE dashboard_configs dc
+       SET is_default = (ranked.rn = 1)
+       FROM ranked
+       WHERE dc.id = ranked.id`
+    );
     
     await pool.query('COMMIT');
     await logAudit(
@@ -2100,7 +2452,8 @@ app.post('/api/import', authenticate, requireRole(['admin', 'jefe_planta']), req
       {
         records: Array.isArray(records) ? records.length : 0,
         comments: Array.isArray(comments) ? comments.length : 0,
-        operators: Array.isArray(operators) ? operators.length : 0
+        operators: Array.isArray(operators) ? operators.length : 0,
+        dashboards: Array.isArray(dashboardConfigs) ? dashboardConfigs.length : 0
       },
       req.ip || ''
     );
