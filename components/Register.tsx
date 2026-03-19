@@ -138,7 +138,9 @@ const Register: React.FC<{ onSwitchToLogin: () => void }> = ({ onSwitchToLogin }
               <input
                 type="password"
                 value={formData.pin}
-                inputMode="numeric"
+                  onFocus={() => setFormData({ ...formData, pin: '' })}
+                  onClick={() => setFormData({ ...formData, pin: '' })}
+                  inputMode="numeric"
                 pattern="[0-9]*"
                 onChange={(e) => setFormData({ ...formData, pin: e.target.value.replace(/\D/g, '') })}
                 className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all font-mono tracking-widest text-lg"

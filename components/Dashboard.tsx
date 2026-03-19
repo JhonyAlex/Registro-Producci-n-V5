@@ -51,6 +51,27 @@ const CORE_FIELDS: DashboardFieldOption[] = [
   { key: 'changesComment', label: 'Comentario de Cambio', type: 'text', source: 'core' },
 ];
 
+const buildDynamicFieldOptionsFromCatalog = (fieldCatalog: Array<{ key: string; label: string; type: string }>): DashboardFieldOption[] => {
+  const uniqueByNormalizedKey = new Map<string, DashboardFieldOption>();
+
+  fieldCatalog.forEach((field) => {
+    const rawKey = String(field.key || '').trim();
+    if (!rawKey) return;
+
+    const normalizedKey = rawKey.toLowerCase();
+    if (uniqueByNormalizedKey.has(normalizedKey)) return;
+
+    uniqueByNormalizedKey.set(normalizedKey, {
+      key: `dynamic.${rawKey}`,
+      label: String(field.label || rawKey).trim() || rawKey,
+      type: field.type === 'number' ? 'number' : 'text',
+      source: 'dynamic',
+    });
+  });
+
+  return Array.from(uniqueByNormalizedKey.values()).sort((a, b) => a.label.localeCompare(b.label));
+};
+
 const CHART_LABELS: Record<string, string> = {
   kpi: 'Tarjeta KPI',
   bar: 'Barras',
@@ -218,32 +239,8 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
     try {
       const [dashboardConfigs, fieldCatalog] = await Promise.all([getDashboardConfigs(), getFieldCatalog()]);
 
-      const dynamicFromCatalog: DashboardFieldOption[] = fieldCatalog.map((field) => ({
-        key: `dynamic.${field.key}`,
-        label: field.label,
-        type: field.type === 'number' ? 'number' : 'text',
-        source: 'dynamic',
-      }));
-
-      const discoveredDynamicKeys = new Map<string, DashboardFieldOption>();
-      records.forEach((record) => {
-        Object.keys(record.dynamicFieldsValues || {}).forEach((key) => {
-          if (discoveredDynamicKeys.has(key)) return;
-          const value = record.dynamicFieldsValues?.[key];
-          discoveredDynamicKeys.set(key, {
-            key: `dynamic.${key}`,
-            label: key,
-            type: typeof value === 'number' ? 'number' : 'text',
-            source: 'dynamic',
-          });
-        });
-      });
-
-      const mergedDynamic = Array.from(
-        new Map([...dynamicFromCatalog, ...Array.from(discoveredDynamicKeys.values())].map((f) => [f.key, f])).values()
-      ).sort((a, b) => a.label.localeCompare(b.label));
-
-      const options = [...CORE_FIELDS, ...mergedDynamic];
+      const dynamicOptions = buildDynamicFieldOptionsFromCatalog(fieldCatalog);
+      const options = [...CORE_FIELDS, ...dynamicOptions];
       const optionMap = new Map(options.map((f) => [f.key, f]));
 
       const normalizedConfigs = dashboardConfigs.map((config) => {
@@ -532,7 +529,7 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
         <div className="flex items-center gap-2 text-slate-700 font-bold mb-3 text-sm">
           <Filter className="w-4 h-4" /> Filtros Globales del Dashboard
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div>
             <label className="block text-xs font-bold text-slate-500 mb-1">Fecha Inicio</label>
             <input

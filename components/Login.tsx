@@ -83,7 +83,9 @@ const Login: React.FC<{ onSwitchToRegister: () => void }> = ({ onSwitchToRegiste
               <input
                 type="password"
                 value={pin}
-                inputMode="numeric"
+                  onFocus={() => setPin('')}
+                  onClick={() => setPin('')}
+                  inputMode="numeric"
                 pattern="[0-9]*"
                 maxLength={6}
                 onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}

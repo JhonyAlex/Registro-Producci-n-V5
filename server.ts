@@ -378,8 +378,52 @@ const normalizeOptionalString = (value: any): string | null => {
 const MACHINE_VALUES = ['WH1', 'Giave', 'WH3', 'NEXUS', 'SL2', '21', '22', 'S2DT', 'PROSLIT'] as const;
 const SHIFT_VALUES = ['Mañana', 'Tarde', 'Noche'] as const;
 const FIELD_TYPES = ['number', 'short_text', 'select', 'multi_select'] as const;
+const CORE_FIELD_KEYS = new Set([
+  'date',
+  'machine',
+  'shift',
+  'boss',
+  'operator',
+  'meters',
+  'changescount',
+  'changescomment',
+]);
 
 type DynamicFieldType = typeof FIELD_TYPES[number];
+
+const ensureCatalogFieldKeyAllowed = (rawKey: string) => {
+  const normalized = String(rawKey || '').trim().toLowerCase();
+  if (!normalized) {
+    throw new Error('La clave técnica es obligatoria.');
+  }
+  if (CORE_FIELD_KEYS.has(normalized)) {
+    throw new Error('La clave técnica coincide con un campo base del sistema. Usa una clave diferente.');
+  }
+};
+
+const ensureCatalogFieldKeyIsUniqueCaseInsensitive = async (key: string, excludingId?: string) => {
+  const normalizedKey = String(key || '').trim();
+  if (!normalizedKey) return;
+
+  if (excludingId) {
+    const duplicate = await pool.query(
+      'SELECT id FROM field_catalog WHERE LOWER(key) = LOWER($1) AND id <> $2 LIMIT 1',
+      [normalizedKey, excludingId]
+    );
+    if ((duplicate.rowCount || 0) > 0) {
+      throw new Error('Ya existe un campo con esa clave técnica.');
+    }
+    return;
+  }
+
+  const duplicate = await pool.query(
+    'SELECT id FROM field_catalog WHERE LOWER(key) = LOWER($1) LIMIT 1',
+    [normalizedKey]
+  );
+  if ((duplicate.rowCount || 0) > 0) {
+    throw new Error('Ya existe un campo con esa clave técnica.');
+  }
+};
 
 const DASHBOARD_CHART_TYPES = ['bar', 'line', 'area', 'pie', 'combined_trend', 'kpi'] as const;
 const DASHBOARD_AGGREGATIONS = ['count', 'sum', 'avg'] as const;
@@ -1979,6 +2023,11 @@ app.post('/api/settings/field-catalog', authenticate, requirePermission('setting
     return res.status(400).json({ error: 'Datos inválidos: clave, etiqueta y tipo son obligatorios.' });
   }
   try {
+    const normalizedKey = String(key).trim();
+    const normalizedLabel = String(label).trim();
+    ensureCatalogFieldKeyAllowed(normalizedKey);
+    await ensureCatalogFieldKeyIsUniqueCaseInsensitive(normalizedKey);
+
     await pool.query('BEGIN');
     const fieldResult = await pool.query(
       `INSERT INTO field_catalog (key, label, type, required, options, default_value, rules, created_by_user_id)
@@ -1987,7 +2036,7 @@ app.post('/api/settings/field-catalog', authenticate, requirePermission('setting
                  default_value as "defaultValue", rules,
                  created_at as "createdAt", updated_at as "updatedAt"`,
       [
-        String(key).trim(), String(label).trim(), type, required ?? false,
+        normalizedKey, normalizedLabel, type, required ?? false,
         JSON.stringify(options ?? []),
         defaultValue !== undefined && defaultValue !== null ? JSON.stringify(defaultValue) : null,
         JSON.stringify(rules ?? {}),
@@ -1996,7 +2045,7 @@ app.post('/api/settings/field-catalog', authenticate, requirePermission('setting
     );
     const field = fieldResult.rows[0];
     const validMachines = Array.isArray(machines)
-      ? machines.filter((m: string) => MACHINE_VALUES.includes(m as any))
+      ? Array.from(new Set(machines.filter((m: string) => MACHINE_VALUES.includes(m as any))))
       : [];
     for (let i = 0; i < validMachines.length; i++) {
       await pool.query(
@@ -2011,6 +2060,7 @@ app.post('/api/settings/field-catalog', authenticate, requirePermission('setting
     res.status(201).json({ ...field, assignments: validMachines.map((m: string, i: number) => ({ machine: m, enabled: true, sortOrder: i })) });
   } catch (err: any) {
     await pool.query('ROLLBACK').catch(() => {});
+    if (err instanceof Error && err.message) return res.status(400).json({ error: err.message });
     if (err.code === '23505') return res.status(409).json({ error: 'Ya existe un campo con esa clave técnica.' });
     res.status(500).json({ error: 'No se pudo crear el campo.' });
   }
@@ -2018,12 +2068,20 @@ app.post('/api/settings/field-catalog', authenticate, requirePermission('setting
 
 app.put('/api/settings/field-catalog/:id', authenticate, requirePermission('settings.field_schemas'), requireDB, async (req, res) => {
   const user = (req as any).user;
-  const { id } = req.params;
+  const id = String(req.params.id || '').trim();
   const { key, label, type, required, options, defaultValue, rules, machines } = req.body;
+  if (!id) {
+    return res.status(400).json({ error: 'ID de campo inválido.' });
+  }
   if (!key || !label || !FIELD_TYPES.includes(type as any)) {
     return res.status(400).json({ error: 'Datos inválidos: clave, etiqueta y tipo son obligatorios.' });
   }
   try {
+    const normalizedKey = String(key).trim();
+    const normalizedLabel = String(label).trim();
+    ensureCatalogFieldKeyAllowed(normalizedKey);
+    await ensureCatalogFieldKeyIsUniqueCaseInsensitive(normalizedKey, id);
+
     await pool.query('BEGIN');
     const fieldResult = await pool.query(
       `UPDATE field_catalog
@@ -2034,7 +2092,7 @@ app.put('/api/settings/field-catalog/:id', authenticate, requirePermission('sett
                  default_value as "defaultValue", rules,
                  created_at as "createdAt", updated_at as "updatedAt"`,
       [
-        String(key).trim(), String(label).trim(), type, required ?? false,
+        normalizedKey, normalizedLabel, type, required ?? false,
         JSON.stringify(options ?? []),
         defaultValue !== undefined && defaultValue !== null ? JSON.stringify(defaultValue) : null,
         JSON.stringify(rules ?? {}),
@@ -2050,7 +2108,7 @@ app.put('/api/settings/field-catalog/:id', authenticate, requirePermission('sett
     const oldMachines = oldRows.rows.map((r: any) => r.machine);
     await pool.query('DELETE FROM field_catalog_assignments WHERE field_id = $1', [id]);
     const validMachines = Array.isArray(machines)
-      ? machines.filter((m: string) => MACHINE_VALUES.includes(m as any))
+      ? Array.from(new Set(machines.filter((m: string) => MACHINE_VALUES.includes(m as any))))
       : [];
     for (let i = 0; i < validMachines.length; i++) {
       await pool.query(
@@ -2066,6 +2124,7 @@ app.put('/api/settings/field-catalog/:id', authenticate, requirePermission('sett
     res.json({ ...field, assignments: validMachines.map((m: string, i: number) => ({ machine: m, enabled: true, sortOrder: i })) });
   } catch (err: any) {
     await pool.query('ROLLBACK').catch(() => {});
+    if (err instanceof Error && err.message) return res.status(400).json({ error: err.message });
     if (err.code === '23505') return res.status(409).json({ error: 'Ya existe un campo con esa clave técnica.' });
     res.status(500).json({ error: 'No se pudo actualizar el campo.' });
   }
