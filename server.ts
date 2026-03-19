@@ -277,6 +277,15 @@ async function initDB() {
 
     await pool.query('CREATE INDEX IF NOT EXISTS idx_dashboard_configs_default ON dashboard_configs(is_default DESC, updated_at DESC)');
 
+    await pool.query(`
+      DO $$
+      BEGIN
+        ALTER TABLE dashboard_configs ALTER COLUMN base_field DROP NOT NULL;
+      EXCEPTION
+        WHEN undefined_column THEN NULL;
+      END $$;
+    `);
+
     for (const role of APP_ROLES) {
       for (const key of PERMISSION_KEYS) {
         const allowed = DEFAULT_ROLE_PERMISSIONS[role].includes(key);
@@ -391,8 +400,8 @@ type DashboardWidgetConfig = {
 
 type DashboardConfigPayload = {
   name: string;
-  description?: string;
-  baseField?: string;
+  description?: string | null;
+  baseField?: string | null;
   relatedFields?: string[];
   widgets: DashboardWidgetConfig[];
   isDefault: boolean;
@@ -632,8 +641,8 @@ const getEffectiveMachineSchema = async (machine: string): Promise<{
 
 const sanitizeDashboardConfigPayload = (incoming: any): DashboardConfigPayload => {
   const name = String(incoming?.name || '').trim();
-  const baseField = String(incoming?.baseField || '').trim() || undefined;
-  const description = normalizeOptionalString(incoming?.description) || undefined;
+  const baseField = normalizeOptionalString(incoming?.baseField);
+  const description = normalizeOptionalString(incoming?.description);
   const isDefault = incoming?.isDefault === true;
 
   if (!name) {
