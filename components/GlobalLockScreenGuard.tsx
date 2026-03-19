@@ -14,7 +14,7 @@ interface GlobalLockScreenGuardProps {
 const DEFAULT_TIMEOUT_MS = 60000;
 const DEFAULT_APP_NAME = 'Registro producción pigmea';
 const DEFAULT_FOOTER_TEXT = 'soporte por Jhony A.';
-const DEFAULT_LOGO_URL = 'https://www.pigmea.es/wp-content/uploads/2018/05/logo-white.png';
+const DEFAULT_LOGO_URL = '/logo-white.png';
 
 const GlobalLockScreenGuard: React.FC<GlobalLockScreenGuardProps> = ({
   children,

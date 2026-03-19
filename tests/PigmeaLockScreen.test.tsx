@@ -8,7 +8,7 @@ const baseProps = {
   phrase: 'Hoy suma, aunque sea poco.',
   appName: 'Registro producción pigmea',
   footerText: 'soporte por Jhony A.',
-  logoUrl: 'https://www.pigmea.es/wp-content/uploads/2018/05/logo-white.png',
+  logoUrl: '/logo-white.png',
 };
 
 describe('PigmeaLockScreen', () => {
@@ -35,8 +35,8 @@ describe('PigmeaLockScreen', () => {
   it('shows required identity texts', () => {
     render(<PigmeaLockScreen {...baseProps} />);
 
-    expect(screen.getAllByText('Registro producción pigmea').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('soporte por Jhony A.').length).toBeGreaterThan(0);
-    expect(screen.getByText('Empuja hacia arriba para desbloquear')).toBeInTheDocument();
+    expect(screen.getByText('Registro producción pigmea')).toBeInTheDocument();
+    expect(screen.getByText('soporte por Jhony A.')).toBeInTheDocument();
+    expect(screen.getByText('Desbloquear')).toBeInTheDocument();
   });
 });
