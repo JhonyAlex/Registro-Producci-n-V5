@@ -60,6 +60,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
   const [machineSchemaVersion, setMachineSchemaVersion] = useState<number>(1);
   const [dynamicFieldValues, setDynamicFieldValues] = useState<Record<string, unknown>>({});
   const [dynamicFieldError, setDynamicFieldError] = useState('');
+  const [isMachineSchemaReady, setIsMachineSchemaReady] = useState(false);
 
   // 1. Load Defaults from LocalStorage on Mount (Only if not editing)
   useEffect(() => {
@@ -170,6 +171,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
   }, [editingRecord, formData.bossUserId, operatorInput, operatorUserId]);
 
   useEffect(() => {
+    setIsMachineSchemaReady(false);
     const unsubscribe = subscribeToMachineFieldSchema(
       formData.machine,
       (schema) => {
@@ -192,8 +194,12 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
           return next;
         });
         setDynamicFieldError('');
+        setIsMachineSchemaReady(true);
       },
-      (message) => setDynamicFieldError(message)
+      (message) => {
+        setDynamicFieldError(message);
+        setIsMachineSchemaReady(false);
+      }
     );
 
     return () => unsubscribe();
@@ -366,6 +372,11 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!isMachineSchemaReady) {
+      setDynamicFieldError('Espera un momento: se estan sincronizando los campos de la maquina.');
+      return;
+    }
 
     const selectedBoss = availableBossOptions.find((boss) => boss.id === formData.bossUserId);
     if (!selectedBoss) {
@@ -672,6 +683,12 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
           </div>
         )}
 
+        {!isMachineSchemaReady && (
+          <div className="px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700">
+            Sincronizando campos de la maquina. Espera unos segundos antes de guardar.
+          </div>
+        )}
+
         {dynamicFieldError && (
           <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
             {dynamicFieldError}
@@ -761,6 +778,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
           
           <button
             type="submit"
+            disabled={!isMachineSchemaReady}
             className={`flex-1 ${editingRecord ? 'bg-orange-600 hover:bg-orange-700 shadow-orange-200' : 'bg-blue-600 hover:bg-blue-700 shadow-blue-200'} text-white font-bold py-4 px-6 rounded-xl shadow-lg transition-all flex items-center justify-center gap-3 active:scale-[0.98] touch-target text-lg`}
           >
             <Save className="w-6 h-6" />
