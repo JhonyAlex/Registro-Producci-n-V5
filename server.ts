@@ -1618,6 +1618,7 @@ app.post('/api/records', authenticate, requirePermission('records.write'), requi
     const operatorId = resolvedOperator?.id || null;
     const bossName = resolvedBoss?.name || boss || '';
     const finalBossId = resolvedBoss?.id || null;
+    const normalizedComment = normalizeOptionalString(changesComment) || '';
 
     await pool.query(
       `INSERT INTO production_records (id, timestamp, recorded_at, created_by_user_id, last_modified_by_user_id, date, machine, meters, changesCount, changesComment, shift, boss, boss_user_id, operator, operator_user_id, dynamic_fields_values, schema_version_used)
@@ -1637,7 +1638,7 @@ app.post('/api/records', authenticate, requirePermission('records.write'), requi
         machine,
         Math.round(normalizedMeters),
         Math.round(normalizedChanges),
-        normalizeOptionalString(changesComment) || '',
+        normalizedComment,
         shift,
         bossName,
         finalBossId,
@@ -1647,6 +1648,13 @@ app.post('/api/records', authenticate, requirePermission('records.write'), requi
         currentSchemaVersion
       ]
     );
+
+    if (normalizedComment) {
+      await pool.query(
+        'INSERT INTO custom_comments (name) VALUES ($1) ON CONFLICT DO NOTHING',
+        [normalizedComment]
+      );
+    }
 
     const normalizeValue = (value: any) => {
       if (value === null || value === undefined) return '';
@@ -1678,7 +1686,7 @@ app.post('/api/records', authenticate, requirePermission('records.write'), requi
       operatorUserId: operatorId,
       meters: Math.round(normalizedMeters),
       changesCount: Math.round(normalizedChanges),
-      changesComment: normalizeOptionalString(changesComment) || '',
+      changesComment: normalizedComment,
       dynamicFieldsValues: validatedDynamicFields,
       schemaVersionUsed: currentSchemaVersion
     };
@@ -1721,6 +1729,9 @@ app.post('/api/records', authenticate, requirePermission('records.write'), requi
     }
 
     io.emit('records_changed');
+    if (normalizedComment) {
+      io.emit('settings_changed');
+    }
     io.emit('record_dynamic_fields_saved', { id, machine, schemaVersionUsed: currentSchemaVersion });
     res.json({ success: true });
   } catch (err) {

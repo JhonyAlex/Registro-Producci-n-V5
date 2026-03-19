@@ -43,8 +43,22 @@ type SettingsCallback = (
 ) => void;
 const settingsSubscribers: SettingsCallback[] = [];
 
+const buildGlobalCommentsList = (): string[] => {
+  const merged = new Map<string, string>();
+  [...COMMON_COMMENTS, ...localCommentsCache].forEach((raw) => {
+    const normalized = String(raw || '').trim();
+    if (!normalized) return;
+    const key = normalized.toLowerCase();
+    if (!merged.has(key)) {
+      merged.set(key, normalized);
+    }
+  });
+
+  return Array.from(merged.values()).sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+};
+
 const notifySettingsSubscribers = () => {
-  const comments = localCommentsCache.length > 0 ? localCommentsCache : COMMON_COMMENTS;
+  const comments = buildGlobalCommentsList();
   const operators = localOperatorsCache;
   const bosses = localBossesCache;
   const operatorOptions = localOperatorOptionsCache;
@@ -133,7 +147,7 @@ const pollSettings = async () => {
       fetchJson('/settings/user-options').catch(() => ({ operators: [], bosses: [], operatorOptions: [], bossOptions: [] }))
     ]);
     
-    localCommentsCache = comments.length > 0 ? comments : COMMON_COMMENTS;
+    localCommentsCache = Array.isArray(comments) ? comments : [];
     localOperatorsCache = Array.isArray(userOptions?.operators) ? userOptions.operators : [];
     localBossesCache = Array.isArray(userOptions?.bosses) ? userOptions.bosses : [];
     localOperatorOptionsCache = Array.isArray(userOptions?.operatorOptions) ? userOptions.operatorOptions : [];
@@ -186,7 +200,7 @@ startPollingSettings();
 export const subscribeToSettings = (callback: SettingsCallback) => {
   settingsSubscribers.push(callback);
   // Send immediate current state
-  const comments = localCommentsCache.length > 0 ? localCommentsCache : COMMON_COMMENTS;
+  const comments = buildGlobalCommentsList();
   const operators = localOperatorsCache;
   const bosses = localBossesCache;
   const operatorOptions = localOperatorOptionsCache;
@@ -203,7 +217,11 @@ export const subscribeToSettings = (callback: SettingsCallback) => {
 };
 
 export const getAvailableComments = (): string[] => {
-  return localCommentsCache.length > 0 ? localCommentsCache : COMMON_COMMENTS;
+  return buildGlobalCommentsList();
+};
+
+export const refreshSettings = async (): Promise<void> => {
+  await pollSettings();
 };
 
 export const getAvailableOperators = (): string[] => {

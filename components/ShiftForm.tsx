@@ -6,6 +6,7 @@ import {
   saveRecord, 
   deleteCustomComment, 
   renameCustomComment,
+  refreshSettings,
   subscribeToSettings,
   subscribeToMachineFieldSchema,
   UserOption
@@ -31,6 +32,7 @@ const sanitizeSchemaVersion = (value: unknown): number => {
 
 const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onCancelEdit }) => {
   const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
 
   const [formData, setFormData] = useState({
     date: new Date().toISOString().split('T')[0],
@@ -317,6 +319,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
   };
 
   const handleInputFocus = () => {
+    void refreshSettings();
     setShowSuggestions(true);
   };
 
@@ -349,6 +352,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
   // --- Management Handlers (Generic) ---
 
   const openManageModal = (mode: ModalMode) => {
+    if (!isAdmin) return;
     setManageMode(mode);
     setEditingItemOldName(null);
     setTempItemName('');
@@ -416,6 +420,8 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
     const id = editingRecord ? editingRecord.id : crypto.randomUUID();
     const timestamp = Date.now();
 
+    const normalizedCommentInput = commentInput.trim();
+
     const newRecord: ProductionRecord = {
       id,
       timestamp,
@@ -426,7 +432,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
       machine: formData.machine,
       meters: 0,
       changesCount: 0,
-      changesComment: commentInput,
+      changesComment: normalizedCommentInput,
       operator: selectedOperator?.name || normalizedOperatorInput,
       operatorUserId: selectedOperator?.id || null,
       dynamicFieldsValues: dynamicFieldValues,
@@ -552,6 +558,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
                       setShowOperatorSuggestions(true);
                     }}
                     onFocus={handleOperatorFocus}
+                    onClick={handleOperatorFocus}
                     className="w-full pl-4 pr-10 py-3 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
                     autoComplete="off"
                   />
@@ -710,13 +717,15 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
             <div className="md:col-span-2 relative" ref={dropdownRef}>
               <div className="flex justify-between items-center mb-2">
                   <label className="block text-sm font-semibold text-slate-700">Comentario / Incidencia</label>
-                  <button 
-                  type="button" 
-                  onClick={() => openManageModal('comments')}
-                  className="text-xs text-blue-600 font-bold flex items-center gap-1 hover:underline bg-blue-50 px-2 py-1 rounded"
-                  >
-                    <Settings className="w-3 h-3" /> Config
-                  </button>
+                  {isAdmin && (
+                    <button 
+                    type="button" 
+                    onClick={() => openManageModal('comments')}
+                    className="text-xs text-blue-600 font-bold flex items-center gap-1 hover:underline bg-blue-50 px-2 py-1 rounded"
+                    >
+                      <Settings className="w-3 h-3" /> Config
+                    </button>
+                  )}
               </div>
               
               <div className="relative w-full">
@@ -830,7 +839,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
       )}
 
       {/* --- MANAGE MODAL (Generic) --- */}
-      {showManageModal && (
+      {showManageModal && isAdmin && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[80vh]">
             <div className="bg-slate-50 p-4 border-b border-slate-200 flex justify-between items-center">
