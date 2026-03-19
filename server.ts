@@ -372,7 +372,7 @@ const FIELD_TYPES = ['number', 'short_text', 'select', 'multi_select'] as const;
 
 type DynamicFieldType = typeof FIELD_TYPES[number];
 
-const DASHBOARD_CHART_TYPES = ['bar', 'line', 'area', 'pie', 'combined_trend'] as const;
+const DASHBOARD_CHART_TYPES = ['bar', 'line', 'area', 'pie', 'combined_trend', 'kpi'] as const;
 const DASHBOARD_AGGREGATIONS = ['count', 'sum', 'avg'] as const;
 
 type DashboardChartType = typeof DASHBOARD_CHART_TYPES[number];
@@ -382,6 +382,7 @@ type DashboardWidgetConfig = {
   id: string;
   title: string;
   chartType: DashboardChartType;
+  groupBy?: string;
   valueField: string;
   secondaryValueField?: string;
   aggregation: DashboardAggregation;
@@ -391,8 +392,8 @@ type DashboardWidgetConfig = {
 type DashboardConfigPayload = {
   name: string;
   description?: string;
-  baseField: string;
-  relatedFields: string[];
+  baseField?: string;
+  relatedFields?: string[];
   widgets: DashboardWidgetConfig[];
   isDefault: boolean;
 };
@@ -631,16 +632,12 @@ const getEffectiveMachineSchema = async (machine: string): Promise<{
 
 const sanitizeDashboardConfigPayload = (incoming: any): DashboardConfigPayload => {
   const name = String(incoming?.name || '').trim();
-  const baseField = String(incoming?.baseField || '').trim();
+  const baseField = String(incoming?.baseField || '').trim() || undefined;
   const description = normalizeOptionalString(incoming?.description) || undefined;
   const isDefault = incoming?.isDefault === true;
 
   if (!name) {
     throw new Error('El nombre del dashboard es obligatorio.');
-  }
-
-  if (!baseField) {
-    throw new Error('El campo base es obligatorio.');
   }
 
   const relatedFields: string[] = Array.isArray(incoming?.relatedFields)
@@ -661,6 +658,7 @@ const sanitizeDashboardConfigPayload = (incoming: any): DashboardConfigPayload =
     const id = String(widget?.id || '').trim() || `widget_${index + 1}`;
     const title = String(widget?.title || '').trim() || `Widget ${index + 1}`;
     const chartType = String(widget?.chartType || '').trim() as DashboardChartType;
+    const groupBy = String(widget?.groupBy || '').trim() || undefined;
     const valueField = String(widget?.valueField || '').trim();
     const secondaryValueField = normalizeOptionalString(widget?.secondaryValueField) || undefined;
     const aggregation = String(widget?.aggregation || 'count').trim() as DashboardAggregation;
@@ -686,6 +684,7 @@ const sanitizeDashboardConfigPayload = (incoming: any): DashboardConfigPayload =
       id,
       title,
       chartType,
+      groupBy,
       valueField,
       secondaryValueField,
       aggregation,

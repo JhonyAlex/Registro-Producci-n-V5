@@ -7,7 +7,6 @@ import {
   MachineType,
   ProductionRecord,
 } from '../types';
-import { COMMON_COMMENTS } from '../constants';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
@@ -45,7 +44,7 @@ const settingsSubscribers: SettingsCallback[] = [];
 
 const buildGlobalCommentsList = (): string[] => {
   const merged = new Map<string, string>();
-  [...COMMON_COMMENTS, ...localCommentsCache].forEach((raw) => {
+  localCommentsCache.forEach((raw) => {
     const normalized = String(raw || '').trim();
     if (!normalized) return;
     const key = normalized.toLowerCase();
