@@ -20,14 +20,12 @@ import {
 import {
   LayoutDashboard,
   Settings2,
-  Layers,
-  Activity,
-  AlertTriangle,
   RefreshCw,
   Table,
   Filter,
+  AlertTriangle,
 } from 'lucide-react';
-import { DashboardConfig, DashboardFieldOption, DashboardWidgetConfig, ProductionRecord } from '../types';
+import { DashboardConfig, DashboardFieldOption, DashboardWidgetConfig, ProductionRecord, MachineType, ShiftType } from '../types';
 import { exportToExcel, getDashboardConfigs, getFieldCatalog } from '../services/storageService';
 
 interface DashboardProps {
@@ -54,6 +52,7 @@ const CORE_FIELDS: DashboardFieldOption[] = [
 ];
 
 const CHART_LABELS: Record<string, string> = {
+  kpi: 'Tarjeta KPI',
   bar: 'Barras',
   line: 'Linea',
   area: 'Area',
@@ -139,6 +138,7 @@ const buildGroupedData = (
 
 const buildCombinedTrendData = (
   records: ProductionRecord[],
+  baseField: string,
   primaryField: string,
   secondaryField: string,
   aggregation: DashboardWidgetConfig['aggregation']
@@ -146,10 +146,10 @@ const buildCombinedTrendData = (
   const groups = new Map<string, { primary: GroupAccumulator; secondary: GroupAccumulator }>();
 
   records.forEach((record) => {
-    const dateKey = toDisplayString(getRecordFieldValue(record, 'date'));
-    const current = groups.get(dateKey) || {
-      primary: { label: dateKey, sum: 0, count: 0 },
-      secondary: { label: dateKey, sum: 0, count: 0 },
+    const key = toDisplayString(getRecordFieldValue(record, baseField));
+    const current = groups.get(key) || {
+      primary: { label: key, sum: 0, count: 0 },
+      secondary: { label: key, sum: 0, count: 0 },
     };
 
     if (aggregation === 'count') {
@@ -164,12 +164,12 @@ const buildCombinedTrendData = (
       current.secondary.count += 1;
     }
 
-    groups.set(dateKey, current);
+    groups.set(key, current);
   });
 
   return Array.from(groups.entries())
-    .map(([date, values]) => ({
-      date,
+    .map(([label, values]) => ({
+      label,
       primary:
         aggregation === 'avg' ? (values.primary.count > 0 ? values.primary.sum / values.primary.count : 0) : values.primary.sum,
       secondary:
@@ -179,15 +179,35 @@ const buildCombinedTrendData = (
             : 0
           : values.secondary.sum,
     }))
-    .sort((a, b) => a.date.localeCompare(b.date));
+    .sort((a, b) => a.label.localeCompare(b.label)); // Default sort by label (useful if date)
+};
+
+const buildKpiData = (
+  records: ProductionRecord[],
+  valueField: string,
+  aggregation: DashboardWidgetConfig['aggregation']
+): number => {
+  if (records.length === 0) return 0;
+  if (aggregation === 'count') return records.length;
+
+  const totalSum = records.reduce((acc, record) => acc + toNumeric(getRecordFieldValue(record, valueField)), 0);
+  if (aggregation === 'avg') {
+    return totalSum / records.length;
+  }
+  return totalSum;
 };
 
 const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = false, onOpenAdmin }) => {
   const [configs, setConfigs] = useState<DashboardConfig[]>([]);
   const [fieldOptions, setFieldOptions] = useState<DashboardFieldOption[]>(CORE_FIELDS);
   const [selectedConfigId, setSelectedConfigId] = useState('');
-  const [selectedBaseField, setSelectedBaseField] = useState('');
-  const [selectedRelatedFields, setSelectedRelatedFields] = useState<string[]>([]);
+  
+  // Global Filters
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [filterMachine, setFilterMachine] = useState('');
+  const [filterShift, setFilterShift] = useState('');
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -227,8 +247,6 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
       const optionMap = new Map(options.map((f) => [f.key, f]));
 
       const normalizedConfigs = dashboardConfigs.map((config) => {
-        const safeBaseField = optionMap.has(config.baseField) ? config.baseField : 'machine';
-        const safeRelated = (config.relatedFields || []).filter((field) => optionMap.has(field) && field !== safeBaseField);
         const safeWidgets = (config.widgets || []).map((widget, index) => {
           const safeValueField = optionMap.has(widget.valueField) ? widget.valueField : 'meters';
           const secondary = widget.secondaryValueField && optionMap.has(widget.secondaryValueField)
@@ -237,6 +255,7 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
           return {
             ...widget,
             id: widget.id || `widget_${index + 1}`,
+            groupBy: widget.groupBy || config.baseField || 'machine', // fallback for old configs
             valueField: safeValueField,
             secondaryValueField: secondary,
           };
@@ -244,8 +263,6 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
 
         return {
           ...config,
-          baseField: safeBaseField,
-          relatedFields: safeRelated,
           widgets: safeWidgets,
         };
       });
@@ -256,15 +273,11 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
       const defaultConfig = normalizedConfigs.find((config) => config.isDefault) || normalizedConfigs[0];
       if (defaultConfig) {
         setSelectedConfigId(defaultConfig.id);
-        setSelectedBaseField(defaultConfig.baseField);
-        setSelectedRelatedFields(defaultConfig.relatedFields || []);
       } else {
         setSelectedConfigId('');
-        setSelectedBaseField('machine');
-        setSelectedRelatedFields([]);
       }
     } catch (err: any) {
-      setError(err?.message || 'No se pudieron cargar los dashboards dinámicos.');
+      setError(err?.message || 'No se pudieron cargar los dashboards dinamicos.');
     } finally {
       setLoading(false);
     }
@@ -273,70 +286,67 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
   useEffect(() => {
     void loadDashboardData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [records.length]);
+  }, [records.length]); // Reload structure if new dynamic fields appear in records
 
-  const allFieldOptions = useMemo<DashboardFieldOption[]>(() => {
-    return fieldOptions;
-  }, [fieldOptions]);
+  const filteredRecords = useMemo(() => {
+    return records.filter((r) => {
+      let keep = true;
+      if (startDate && r.date < startDate) keep = false;
+      if (endDate && r.date > endDate) keep = false;
+      if (filterMachine && r.machine !== filterMachine) keep = false;
+      if (filterShift && r.shift !== filterShift) keep = false;
+      return keep;
+    });
+  }, [records, startDate, endDate, filterMachine, filterShift]);
 
   const fieldMap = useMemo<Record<string, DashboardFieldOption>>(() => {
     const map: Record<string, DashboardFieldOption> = {};
-    allFieldOptions.forEach((field) => {
+    fieldOptions.forEach((field) => {
       map[field.key] = field;
     });
     return map;
-  }, [allFieldOptions]);
+  }, [fieldOptions]);
 
   const selectedConfig = useMemo(
     () => configs.find((config) => config.id === selectedConfigId) || null,
     [configs, selectedConfigId]
   );
 
-  const activeBaseField = selectedBaseField || 'machine';
-  const activeRelatedFields = selectedRelatedFields;
-
-  const dimensionPreview = useMemo(() => {
-    return buildGroupedData(records, activeBaseField, 'meters', 'count', 15);
-  }, [records, activeBaseField]);
-
-  const relatedPreviewRows = useMemo(() => {
-    const grouped = new Map<string, Record<string, string>>();
-
-    records.forEach((record) => {
-      const baseKey = toDisplayString(getRecordFieldValue(record, activeBaseField));
-      const current = grouped.get(baseKey) || { dimension: baseKey };
-
-      activeRelatedFields.forEach((field) => {
-        current[field] = toDisplayString(getRecordFieldValue(record, field));
-      });
-
-      grouped.set(baseKey, current);
-    });
-
-    return Array.from(grouped.values()).slice(0, 15);
-  }, [records, activeBaseField, activeRelatedFields]);
-
-  const handleConfigSelection = (nextId: string) => {
-    setSelectedConfigId(nextId);
-    const next = configs.find((config) => config.id === nextId);
-    if (!next) return;
-    setSelectedBaseField(next.baseField);
-    setSelectedRelatedFields(next.relatedFields || []);
+  const formatNumber = (val: number) => {
+    if (val >= 1000000) return (val / 1000000).toFixed(2) + 'M';
+    if (val >= 1000) return (val / 1000).toFixed(2) + 'K';
+    return val.toLocaleString(undefined, { maximumFractionDigits: 2 });
   };
 
   const renderWidget = (widget: DashboardWidgetConfig) => {
+    const groupByField = widget.groupBy || 'machine';
+
+    if (widget.chartType === 'kpi') {
+      const val = buildKpiData(filteredRecords, widget.valueField, widget.aggregation);
+      return (
+        <div className="flex flex-col items-center justify-center h-40">
+          <p className="text-[3rem] font-black text-slate-800 leading-none tracking-tight">
+            {formatNumber(val)}
+          </p>
+          <p className="text-sm font-medium text-slate-500 mt-2 uppercase tracking-wide">
+            {AGGREGATION_LABELS[widget.aggregation]} de {metricLabel(widget.valueField, fieldMap)}
+          </p>
+        </div>
+      );
+    }
+
     if (widget.chartType === 'combined_trend') {
       const secondaryField = widget.secondaryValueField || widget.valueField;
-      const data = buildCombinedTrendData(records, widget.valueField, secondaryField, widget.aggregation);
+      const data = buildCombinedTrendData(filteredRecords, groupByField, widget.valueField, secondaryField, widget.aggregation);
 
       return (
         <div className="h-72">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#64748b' }} />
+              <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748b' }} />
               <YAxis tick={{ fontSize: 11, fill: '#64748b' }} />
-              <Tooltip />
+              <Tooltip formatter={(value) => Number(value).toLocaleString()} />
               <Legend />
               <Bar dataKey="primary" name={metricLabel(widget.valueField, fieldMap)} fill="#0ea5e9" radius={[6, 6, 0, 0]} />
               <Line
@@ -353,7 +363,7 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
       );
     }
 
-    const data = buildGroupedData(records, activeBaseField, widget.valueField, widget.aggregation, widget.limit);
+    const data = buildGroupedData(filteredRecords, groupByField, widget.valueField, widget.aggregation, widget.limit);
 
     if (widget.chartType === 'pie') {
       return (
@@ -430,7 +440,7 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
     return (
       <div className="bg-white border border-slate-200 rounded-2xl p-8 flex flex-col items-center gap-3 text-slate-600">
         <RefreshCw className="w-6 h-6 animate-spin text-blue-600" />
-        <p className="font-medium">Cargando dashboards dinamicos...</p>
+        <p className="font-medium">Cargando dashboards V2...</p>
       </div>
     );
   }
@@ -458,7 +468,7 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
       <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center">
         <LayoutDashboard className="w-8 h-8 mx-auto text-slate-400 mb-3" />
         <h3 className="text-lg font-bold text-slate-800">Aun no hay dashboards configurados</h3>
-        <p className="text-sm text-slate-500 mt-1">Crea un panel desde administracion para habilitar visualizaciones dinamicas.</p>
+        <p className="text-sm text-slate-500 mt-1">Crea un panel desde administracion para habilitar visualizaciones.</p>
         {canManageDashboards && onOpenAdmin && (
           <button
             onClick={onOpenAdmin}
@@ -476,13 +486,25 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
       <div className="bg-white border border-slate-200 rounded-2xl p-5">
         <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
           <div>
-            <h2 className="text-2xl font-bold text-slate-900">Dashboard Dinamico</h2>
-            <p className="text-sm text-slate-500 mt-1">Selecciona panel, campo base y campos relacionados para construir reportes personalizados.</p>
+            <h2 className="text-2xl font-bold text-slate-900">Vista de Dashboards</h2>
+            <p className="text-sm text-slate-500 mt-1">Analiza las metricas de produccion en tiempo real a traves de paneles configurables.</p>
           </div>
 
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={selectedConfigId}
+              onChange={(e) => setSelectedConfigId(e.target.value)}
+              className="px-3 py-2 border border-slate-300 rounded-lg text-sm font-semibold text-blue-700 bg-blue-50 focus:ring-2 focus:ring-blue-500"
+            >
+              {configs.map((config) => (
+                <option key={config.id} value={config.id}>
+                  {config.name}{config.isDefault ? ' (Default)' : ''}
+                </option>
+              ))}
+            </select>
+
             <button
-              onClick={() => exportToExcel(records)}
+              onClick={() => exportToExcel(filteredRecords)}
               className="inline-flex items-center gap-2 px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-semibold"
             >
               <Table className="w-4 h-4" /> Excel
@@ -505,148 +527,87 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
         </div>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-2xl p-5">
-        <div className="flex items-center gap-2 text-slate-700 font-bold mb-4">
-          <Filter className="w-4 h-4" /> Constructor de Vista
+      {/* Global Filters Bar */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-4">
+        <div className="flex items-center gap-2 text-slate-700 font-bold mb-3 text-sm">
+          <Filter className="w-4 h-4" /> Filtros Globales del Dashboard
         </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
           <div>
-            <label className="block text-xs font-bold text-slate-500 mb-1">Panel Configurado</label>
+            <label className="block text-xs font-bold text-slate-500 mb-1">Fecha Inicio</label>
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-500 mb-1">Fecha Fin</label>
+            <input
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-500 mb-1">Maquina</label>
             <select
-              value={selectedConfigId}
-              onChange={(e) => handleConfigSelection(e.target.value)}
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+              value={filterMachine}
+              onChange={(e) => setFilterMachine(e.target.value)}
+              className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm"
             >
-              {configs.map((config) => (
-                <option key={config.id} value={config.id}>
-                  {config.name}{config.isDefault ? ' (Default)' : ''}
-                </option>
+              <option value="">Todas</option>
+              {Object.values(MachineType).map((m) => (
+                <option key={m} value={m}>{m}</option>
               ))}
             </select>
           </div>
-
           <div>
-            <label className="block text-xs font-bold text-slate-500 mb-1">Campo Base (Dimension)</label>
+            <label className="block text-xs font-bold text-slate-500 mb-1">Turno</label>
             <select
-              value={activeBaseField}
-              onChange={(e) => {
-                setSelectedBaseField(e.target.value);
-                setSelectedRelatedFields((prev) => prev.filter((field) => field !== e.target.value));
-              }}
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+              value={filterShift}
+              onChange={(e) => setFilterShift(e.target.value)}
+              className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm"
             >
-              {allFieldOptions.map((field) => (
-                <option key={field.key} value={field.key}>{field.label}</option>
+              <option value="">Todos</option>
+              {Object.values(ShiftType).map((s) => (
+                <option key={s} value={s}>{s}</option>
               ))}
             </select>
           </div>
-
-          <div>
-            <label className="block text-xs font-bold text-slate-500 mb-1">Campos Adicionales (Relacion)</label>
-            <select
-              multiple
-              value={activeRelatedFields}
-              onChange={(e) => {
-                const values = Array.from(e.target.selectedOptions)
-                  .map((option) => (option as HTMLOptionElement).value)
-                  .filter((field) => field !== activeBaseField);
-                setSelectedRelatedFields(values);
-              }}
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm min-h-[96px]"
-            >
-              {allFieldOptions
-                .filter((field) => field.key !== activeBaseField)
-                .map((field) => (
-                  <option key={field.key} value={field.key}>{field.label}</option>
-                ))}
-            </select>
-          </div>
+        </div>
+        <div className="mt-3 text-xs font-medium text-slate-500 text-right">
+          Mostrando {filteredRecords.length.toLocaleString()} de {records.length.toLocaleString()} registros totales
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        <div className="bg-white border border-slate-200 rounded-2xl p-5">
-          <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">Registros Analizados</p>
-          <p className="text-3xl font-black text-slate-900">{records.length.toLocaleString()}</p>
-        </div>
-        <div className="bg-white border border-slate-200 rounded-2xl p-5">
-          <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">Dimension Activa</p>
-          <p className="text-xl font-bold text-slate-900">{fieldMap[activeBaseField]?.label || activeBaseField}</p>
-        </div>
-        <div className="bg-white border border-slate-200 rounded-2xl p-5">
-          <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">Campos Relacionados</p>
-          <p className="text-xl font-bold text-slate-900">{activeRelatedFields.length}</p>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         {selectedConfig.widgets.map((widget) => (
-          <div key={widget.id} className="bg-white border border-slate-200 rounded-2xl p-5">
+          <div
+            key={widget.id}
+            className={`bg-white border border-slate-200 rounded-2xl p-5 ${
+              widget.chartType === 'kpi' ? 'col-span-1' : 'col-span-1 md:col-span-2'
+            }`}
+          >
             <div className="mb-3">
               <h4 className="font-bold text-slate-900">{widget.title}</h4>
               <p className="text-xs text-slate-500 mt-1">
-                {CHART_LABELS[widget.chartType]} · {AGGREGATION_LABELS[widget.aggregation]} de {metricLabel(widget.valueField, fieldMap)}
+                {CHART_LABELS[widget.chartType]} 
+                {widget.chartType !== 'kpi' && ` · Agrupado por ${metricLabel(widget.groupBy || 'machine', fieldMap)}`}
               </p>
             </div>
             {renderWidget(widget)}
           </div>
         ))}
-      </div>
-
-      <div className="bg-white border border-slate-200 rounded-2xl p-5">
-        <h4 className="font-bold text-slate-900 mb-3">Resumen por Campo Base</h4>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-slate-200 text-left text-slate-500">
-                <th className="py-2 pr-3">Dimension</th>
-                <th className="py-2 pr-3">Registros</th>
-              </tr>
-            </thead>
-            <tbody>
-              {dimensionPreview.map((row) => (
-                <tr key={row.label} className="border-b border-slate-100">
-                  <td className="py-2 pr-3 font-medium text-slate-700">{row.label}</td>
-                  <td className="py-2 pr-3 text-slate-600">{row.value.toLocaleString()}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {activeRelatedFields.length > 0 && (
-        <div className="bg-white border border-slate-200 rounded-2xl p-5">
-          <h4 className="font-bold text-slate-900 mb-3">Relacion entre Campo Base y Campos Adicionales</h4>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 text-left text-slate-500">
-                  <th className="py-2 pr-3">{fieldMap[activeBaseField]?.label || activeBaseField}</th>
-                  {activeRelatedFields.map((field) => (
-                    <th key={field} className="py-2 pr-3">{fieldMap[field]?.label || field}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {relatedPreviewRows.map((row, index) => (
-                  <tr key={`${(row as any).dimension}-${index}`} className="border-b border-slate-100">
-                    <td className="py-2 pr-3 font-medium text-slate-700">{(row as any).dimension}</td>
-                    {activeRelatedFields.map((field) => (
-                      <td key={field} className="py-2 pr-3 text-slate-600">{(row as any)[field] || 'Sin dato'}</td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        {selectedConfig.widgets.length === 0 && (
+          <div className="col-span-full py-10 text-center text-slate-500">
+            Este dashboard no tiene widgets configurados.
           </div>
-        </div>
-      )}
-
-      <div className="text-xs text-slate-500 px-1">
-        Tip: para guardar cambios permanentes de visualizacion, usa el boton Administrar y actualiza la configuracion del panel.
+        )}
       </div>
+
     </div>
   );
 };

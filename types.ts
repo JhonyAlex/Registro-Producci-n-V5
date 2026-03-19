@@ -116,7 +116,7 @@ export interface FilterState {
 
 export type DashboardFieldType = 'number' | 'text' | 'date';
 
-export type DashboardChartType = 'bar' | 'line' | 'area' | 'pie' | 'combined_trend';
+export type DashboardChartType = 'bar' | 'line' | 'area' | 'pie' | 'combined_trend' | 'kpi';
 
 export type DashboardAggregationType = 'count' | 'sum' | 'avg';
 
@@ -131,6 +131,7 @@ export interface DashboardWidgetConfig {
   id: string;
   title: string;
   chartType: DashboardChartType;
+  groupBy?: string; // New field for V2
   valueField: string;
   secondaryValueField?: string;
   aggregation: DashboardAggregationType;
@@ -141,8 +142,8 @@ export interface DashboardConfig {
   id: string;
   name: string;
   description?: string;
-  baseField: string;
-  relatedFields: string[];
+  baseField?: string; // Made optional for V2
+  relatedFields?: string[]; // Made optional for V2
   widgets: DashboardWidgetConfig[];
   isDefault: boolean;
   createdAt?: string;

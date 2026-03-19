@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Plus, Save, Trash2, RefreshCw, Settings2, BarChart3 } from 'lucide-react';
+import { Plus, Save, Trash2, RefreshCw, Settings2, BarChart3, Info } from 'lucide-react';
 import { DashboardConfig, DashboardFieldOption, DashboardWidgetConfig, ProductionRecord } from '../types';
 import {
   createDashboardConfig,
@@ -17,8 +17,6 @@ type EditableDashboard = {
   id: string | null;
   name: string;
   description: string;
-  baseField: string;
-  relatedFields: string[];
   widgets: DashboardWidgetConfig[];
   isDefault: boolean;
 };
@@ -35,6 +33,7 @@ const CORE_FIELDS: DashboardFieldOption[] = [
 ];
 
 const CHART_TYPES = [
+  { value: 'kpi', label: 'KPI (Numero Grande)' },
   { value: 'bar', label: 'Barras' },
   { value: 'line', label: 'Linea' },
   { value: 'area', label: 'Area' },
@@ -52,13 +51,12 @@ const makeEmptyDashboard = (): EditableDashboard => ({
   id: null,
   name: '',
   description: '',
-  baseField: 'machine',
-  relatedFields: [],
   widgets: [
     {
-      id: 'widget_1',
-      title: 'Produccion por Dimension',
+      id: `widget_${Date.now()}`,
+      title: 'Produccion por Maquina',
       chartType: 'bar',
+      groupBy: 'machine',
       valueField: 'meters',
       aggregation: 'sum',
       limit: 12,
@@ -114,16 +112,26 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
       ).sort((a, b) => a.label.localeCompare(b.label));
 
       setFieldOptions([...CORE_FIELDS, ...mergedDynamic]);
-      setConfigs(dashboardConfigs);
 
-      const first = dashboardConfigs[0];
+      // Migrar al vuelo configs antiguos
+      const normalizedConfigs = dashboardConfigs.map(config => {
+        return {
+          ...config,
+          widgets: (config.widgets || []).map(w => ({
+            ...w,
+            groupBy: w.groupBy || config.baseField || 'machine'
+          }))
+        };
+      });
+
+      setConfigs(normalizedConfigs);
+
+      const first = normalizedConfigs[0];
       if (first) {
         setForm({
           id: first.id,
           name: first.name,
           description: first.description || '',
-          baseField: first.baseField,
-          relatedFields: first.relatedFields || [],
           widgets: first.widgets || [],
           isDefault: first.isDefault,
         });
@@ -147,8 +155,6 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
       id: config.id,
       name: config.name,
       description: config.description || '',
-      baseField: config.baseField,
-      relatedFields: config.relatedFields || [],
       widgets: config.widgets || [],
       isDefault: config.isDefault,
     });
@@ -174,8 +180,9 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
         ...prev.widgets,
         {
           id: `widget_${Date.now()}`,
-          title: `Widget ${prev.widgets.length + 1}`,
+          title: `Nuevo Widget`,
           chartType: 'bar',
+          groupBy: 'machine',
           valueField: 'meters',
           aggregation: 'sum',
           limit: 12,
@@ -197,11 +204,6 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
       return;
     }
 
-    if (!form.baseField) {
-      setError('Debes seleccionar un campo base.');
-      return;
-    }
-
     if (form.widgets.length === 0) {
       setError('Agrega al menos un widget.');
       return;
@@ -214,8 +216,6 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
       const payload = {
         name: form.name.trim(),
         description: form.description.trim(),
-        baseField: form.baseField,
-        relatedFields: form.relatedFields.filter((field) => field !== form.baseField),
         widgets: form.widgets,
         isDefault: form.isDefault,
       };
@@ -223,10 +223,8 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
       let saved: DashboardConfig;
       if (form.id) {
         saved = await updateDashboardConfig(form.id, payload);
-        showSuccess('Dashboard actualizado.');
       } else {
         saved = await createDashboardConfig(payload);
-        showSuccess('Dashboard creado.');
       }
 
       await loadData();
@@ -235,8 +233,6 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
         id: updated.id,
         name: updated.name,
         description: updated.description || '',
-        baseField: updated.baseField,
-        relatedFields: updated.relatedFields || [],
         widgets: updated.widgets || [],
         isDefault: updated.isDefault,
       });
@@ -273,7 +269,7 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
     return (
       <div className="bg-white border border-slate-200 rounded-2xl p-8 flex flex-col items-center gap-3 text-slate-600">
         <RefreshCw className="w-6 h-6 animate-spin text-blue-600" />
-        <p className="font-medium">Cargando gestor de dashboards...</p>
+        <p className="font-medium">Cargando gestor de dashboards (V2)...</p>
       </div>
     );
   }
@@ -284,9 +280,9 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
           <div>
             <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
-              <Settings2 className="w-6 h-6 text-blue-600" /> Gestor de Dashboards Dinamicos
+              <Settings2 className="w-6 h-6 text-blue-600" /> Gestor de Dashboards V2
             </h2>
-            <p className="text-sm text-slate-500 mt-1">Configura paneles visuales sin tocar codigo: campo base, campos relacionados y widgets.</p>
+            <p className="text-sm text-slate-500 mt-1">Configura paneles visuales con metricas combinadas e independientes.</p>
           </div>
           <div className="flex gap-2">
             <button
@@ -322,7 +318,7 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
                   className="w-full text-left"
                 >
                   <p className="font-semibold text-slate-800 text-sm">{config.name}</p>
-                  <p className="text-xs text-slate-500 mt-1">Base: {config.baseField}</p>
+                  <p className="text-xs text-slate-500 mt-1">{config.widgets.length} widget(s)</p>
                   {config.isDefault && <p className="text-[10px] mt-1 text-blue-700 font-bold">DEFAULT</p>}
                 </button>
                 <button
@@ -339,58 +335,25 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
         </div>
 
         <div className="bg-white border border-slate-200 rounded-2xl p-4 xl:col-span-2 space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-bold text-slate-500 mb-1">Nombre</label>
-              <input
-                value={form.name}
-                onChange={(e) => updateForm({ name: e.target.value })}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                placeholder="Ej: Panel Produccion por Maquina"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-500 mb-1">Campo Base</label>
-              <select
-                value={form.baseField}
-                onChange={(e) => updateForm({ baseField: e.target.value, relatedFields: form.relatedFields.filter((f) => f !== e.target.value) })}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
-              >
-                {fieldOptions.map((field) => (
-                  <option key={field.key} value={field.key}>{field.label}</option>
-                ))}
-              </select>
-            </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-500 mb-1">Nombre del Dashboard</label>
+            <input
+              value={form.name}
+              onChange={(e) => updateForm({ name: e.target.value })}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+              placeholder="Ej: Vista General de Produccion"
+            />
           </div>
 
           <div>
-            <label className="block text-xs font-bold text-slate-500 mb-1">Descripcion</label>
+            <label className="block text-xs font-bold text-slate-500 mb-1">Descripcion (Opcional)</label>
             <textarea
               value={form.description}
               onChange={(e) => updateForm({ description: e.target.value })}
               className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
               rows={2}
-              placeholder="Objetivo del panel y contexto para la gerencia"
+              placeholder="Objetivo del panel"
             />
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold text-slate-500 mb-1">Campos Relacionados</label>
-            <select
-              multiple
-              value={form.relatedFields}
-              onChange={(e) => {
-                const values = Array.from(e.target.selectedOptions)
-                  .map((option) => (option as HTMLOptionElement).value)
-                  .filter((f) => f !== form.baseField);
-                updateForm({ relatedFields: values });
-              }}
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm min-h-[96px]"
-            >
-              {fieldOptions.filter((field) => field.key !== form.baseField).map((field) => (
-                <option key={field.key} value={field.key}>{field.label}</option>
-              ))}
-            </select>
           </div>
 
           <div className="flex items-center gap-2">
@@ -401,105 +364,149 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
               onChange={(e) => updateForm({ isDefault: e.target.checked })}
               className="h-4 w-4 accent-blue-600"
             />
-            <label htmlFor="isDefaultDashboard" className="text-sm font-semibold text-slate-700">Marcar como dashboard por defecto</label>
+            <label htmlFor="isDefaultDashboard" className="text-sm font-semibold text-slate-700">Mostrar por defecto al entrar</label>
           </div>
 
-          <div className="border border-slate-200 rounded-xl p-3 space-y-3">
+          <div className="border border-slate-200 rounded-xl p-3 space-y-4 bg-slate-50">
             <div className="flex items-center justify-between">
-              <h4 className="font-bold text-slate-800 flex items-center gap-2"><BarChart3 className="w-4 h-4" /> Widgets</h4>
+              <div>
+                <h4 className="font-bold text-slate-800 flex items-center gap-2"><BarChart3 className="w-4 h-4" /> Widgets del Dashboard</h4>
+                <p className="text-xs text-slate-500 mt-1">Agrega graficas o KPIs individuales. Cada uno puede tener su propia dimension.</p>
+              </div>
               <button
                 type="button"
                 onClick={addWidget}
-                className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold rounded bg-blue-600 text-white hover:bg-blue-700"
+                className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-lg bg-blue-600 text-white hover:bg-blue-700"
               >
-                <Plus className="w-3 h-3" /> Agregar Widget
+                <Plus className="w-4 h-4" /> Agregar Widget
               </button>
             </div>
 
             {form.widgets.map((widget, index) => (
-              <div key={widget.id} className="border border-slate-200 rounded-lg p-3 space-y-2">
-                <div className="flex justify-between items-center">
-                  <p className="text-xs font-bold text-slate-500">Widget {index + 1}</p>
+              <div key={widget.id} className="bg-white border border-slate-200 shadow-sm rounded-xl p-4 space-y-3">
+                <div className="flex justify-between items-center pb-2 border-b border-slate-100">
+                  <p className="text-sm font-bold text-slate-800">Widget {index + 1}</p>
                   <button
                     type="button"
                     onClick={() => removeWidget(index)}
-                    className="text-xs font-semibold text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1 hover:bg-red-100"
+                    className="text-xs font-semibold text-red-600 hover:text-red-800 flex items-center gap-1"
                   >
-                    Quitar
+                    <Trash2 className="w-3 h-3" /> Eliminar
                   </button>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  <input
-                    value={widget.title}
-                    onChange={(e) => updateWidget(index, { title: e.target.value })}
-                    className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                    placeholder="Titulo del widget"
-                  />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Titulo</label>
+                    <input
+                      value={widget.title}
+                      onChange={(e) => updateWidget(index, { title: e.target.value })}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                      placeholder="Titulo del widget"
+                    />
+                  </div>
 
-                  <select
-                    value={widget.chartType}
-                    onChange={(e) => updateWidget(index, { chartType: e.target.value as DashboardWidgetConfig['chartType'] })}
-                    className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                  >
-                    {CHART_TYPES.map((type) => (
-                      <option key={type.value} value={type.value}>{type.label}</option>
-                    ))}
-                  </select>
-
-                  <select
-                    value={widget.valueField}
-                    onChange={(e) => updateWidget(index, { valueField: e.target.value })}
-                    className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                  >
-                    {(widget.aggregation === 'count' ? fieldOptions : numericFieldOptions).map((field) => (
-                      <option key={field.key} value={field.key}>{field.label}</option>
-                    ))}
-                  </select>
-
-                  <select
-                    value={widget.aggregation}
-                    onChange={(e) => updateWidget(index, { aggregation: e.target.value as DashboardWidgetConfig['aggregation'] })}
-                    className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                  >
-                    {AGGREGATIONS.map((agg) => (
-                      <option key={agg.value} value={agg.value}>{agg.label}</option>
-                    ))}
-                  </select>
-
-                  {widget.chartType === 'combined_trend' && (
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Tipo de Grafico</label>
                     <select
-                      value={widget.secondaryValueField || 'meters'}
-                      onChange={(e) => updateWidget(index, { secondaryValueField: e.target.value })}
-                      className="px-3 py-2 border border-slate-300 rounded-lg text-sm md:col-span-2"
+                      value={widget.chartType}
+                      onChange={(e) => updateWidget(index, { chartType: e.target.value as DashboardWidgetConfig['chartType'] })}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium text-blue-700 bg-blue-50"
                     >
-                      {numericFieldOptions.map((field) => (
-                        <option key={field.key} value={field.key}>{field.label} (Serie 2)</option>
+                      {CHART_TYPES.map((type) => (
+                        <option key={type.value} value={type.value}>{type.label}</option>
                       ))}
                     </select>
+                  </div>
+
+                  {widget.chartType !== 'kpi' && (
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Dimension (Eje X / Agrupar por)</label>
+                      <select
+                        value={widget.groupBy || 'machine'}
+                        onChange={(e) => updateWidget(index, { groupBy: e.target.value })}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                      >
+                        {fieldOptions.map((field) => (
+                          <option key={field.key} value={field.key}>{field.label}</option>
+                        ))}
+                      </select>
+                    </div>
                   )}
 
-                  <input
-                    type="number"
-                    min={1}
-                    max={100}
-                    value={widget.limit || 12}
-                    onChange={(e) => updateWidget(index, { limit: Number(e.target.value) || 12 })}
-                    className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                    placeholder="Limite de categorias"
-                  />
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Metrica a Calcular (Valor)</label>
+                    <select
+                      value={widget.valueField}
+                      onChange={(e) => updateWidget(index, { valueField: e.target.value })}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                    >
+                      {(widget.aggregation === 'count' ? fieldOptions : numericFieldOptions).map((field) => (
+                        <option key={field.key} value={field.key}>{field.label}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Operacion</label>
+                    <select
+                      value={widget.aggregation}
+                      onChange={(e) => updateWidget(index, { aggregation: e.target.value as DashboardWidgetConfig['aggregation'] })}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                    >
+                      {AGGREGATIONS.map((agg) => (
+                        <option key={agg.value} value={agg.value}>{agg.label}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {widget.chartType === 'combined_trend' && (
+                    <div className="md:col-span-2">
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Metrica Secundaria (Linea superpuesta)</label>
+                      <select
+                        value={widget.secondaryValueField || 'meters'}
+                        onChange={(e) => updateWidget(index, { secondaryValueField: e.target.value })}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                      >
+                        {numericFieldOptions.map((field) => (
+                          <option key={field.key} value={field.key}>{field.label} (Serie 2)</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {widget.chartType !== 'kpi' && (
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Limite (Top N)</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={100}
+                        value={widget.limit || 12}
+                        onChange={(e) => updateWidget(index, { limit: Number(e.target.value) || 12 })}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                        placeholder="Mostrar maximo N barras/tramos"
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
+            {form.widgets.length === 0 && (
+              <div className="text-center py-6 text-slate-500 text-sm flex flex-col items-center">
+                <Info className="w-8 h-8 text-slate-300 mb-2" />
+                Agrega widgets para empezar a visualizar datos.
+              </div>
+            )}
           </div>
 
           <div className="pt-2">
             <button
               onClick={() => void handleSave()}
               disabled={saving}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-bold disabled:opacity-60"
+              className="inline-flex items-center gap-2 px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-bold shadow-md disabled:opacity-60 transition-all"
             >
-              <Save className="w-4 h-4" /> {saving ? 'Guardando...' : form.id ? 'Actualizar Dashboard' : 'Crear Dashboard'}
+              <Save className="w-5 h-5" /> {saving ? 'Guardando...' : form.id ? 'Guardar Cambios' : 'Crear Dashboard'}
             </button>
           </div>
         </div>

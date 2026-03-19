@@ -224,6 +224,21 @@ export const refreshSettings = async (): Promise<void> => {
   await pollSettings();
 };
 
+export const getCustomComments = async (): Promise<string[]> => {
+  const comments = await fetchJson('/settings/comments');
+  return Array.isArray(comments) ? comments : [];
+};
+
+export const createCustomComment = async (name: string): Promise<void> => {
+  const normalized = String(name || '').trim();
+  if (!normalized) return;
+  await fetchJson('/settings/comments', {
+    method: 'POST',
+    body: JSON.stringify({ name: normalized }),
+  });
+  await pollSettings();
+};
+
 export const getAvailableOperators = (): string[] => {
   return localOperatorsCache;
 };
@@ -317,8 +332,8 @@ export const getDashboardConfig = async (id: string): Promise<DashboardConfig> =
 export const createDashboardConfig = async (data: {
   name: string;
   description?: string;
-  baseField: string;
-  relatedFields: string[];
+  baseField?: string;
+  relatedFields?: string[];
   widgets: DashboardConfig['widgets'];
   isDefault: boolean;
 }): Promise<DashboardConfig> => {
@@ -333,8 +348,8 @@ export const updateDashboardConfig = async (
   data: {
     name: string;
     description?: string;
-    baseField: string;
-    relatedFields: string[];
+    baseField?: string;
+    relatedFields?: string[];
     widgets: DashboardConfig['widgets'];
     isDefault: boolean;
   }
@@ -488,9 +503,10 @@ export const deleteCustomComment = async (commentToDelete: string): Promise<void
     await fetchJson(`/settings/comments/${encodeURIComponent(commentToDelete)}`, {
       method: 'DELETE'
     });
-    pollSettings();
+    await pollSettings();
   } catch (e) {
     console.error("Error deleting comment:", e);
+    throw new Error("No se pudo borrar la incidencia.");
   }
 };
 
@@ -501,7 +517,7 @@ export const renameCustomComment = async (oldName: string, newName: string): Pro
       method: 'PUT',
       body: JSON.stringify({ newName })
     });
-    pollSettings();
+    await pollSettings();
   } catch (e) {
     console.error("Error renaming comment globally:", e);
     throw new Error("No se pudo renombrar el comentario.");

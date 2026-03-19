@@ -4,7 +4,9 @@ import { MachineFieldDefinition, MachineType, ShiftType, ProductionRecord } from
 import { MACHINES, SHIFTS } from '../constants';
 import { 
   saveRecord, 
+  createCustomComment,
   deleteCustomComment, 
+  getCustomComments,
   renameCustomComment,
   refreshSettings,
   subscribeToSettings,
@@ -32,7 +34,7 @@ const sanitizeSchemaVersion = (value: unknown): number => {
 
 const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onCancelEdit }) => {
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const canManageComments = user?.role === 'admin' || Boolean(user?.permissions?.some((perm) => perm.key === 'settings.manage'));
 
   const [formData, setFormData] = useState({
     date: new Date().toISOString().split('T')[0],
@@ -51,6 +53,8 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
   const operatorDropdownRef = useRef<HTMLDivElement>(null);
   // Tracks when the user has intentionally opened the picker (prevents subscription from re-filling the field)
   const operatorPickingRef = useRef(false);
+  // True after localStorage defaults have been loaded — prevents the subscription callback from overriding them
+  const defaultsLoadedRef = useRef(false);
 
   // Custom Comment Field State
   const [commentInput, setCommentInput] = useState('');
@@ -65,6 +69,9 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
   const [manageMode, setManageMode] = useState<ModalMode>('comments');
   const [editingItemOldName, setEditingItemOldName] = useState<string | null>(null);
   const [tempItemName, setTempItemName] = useState('');
+  const [manageableComments, setManageableComments] = useState<string[]>([]);
+  const [newManageComment, setNewManageComment] = useState('');
+  const [manageError, setManageError] = useState('');
 
   // Success Modal State
   const [showSuccessModal, setShowSuccessModal] = useState(false);
@@ -77,11 +84,14 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
 
   // 1. Load Defaults from LocalStorage when the user is identified (per-user key)
   useEffect(() => {
+    defaultsLoadedRef.current = false; // reset on user change
     if (!editingRecord && user?.id) {
       const savedDefaults = localStorage.getItem(getStorageKey(user.id));
       if (savedDefaults) {
         try {
           const parsed = JSON.parse(savedDefaults);
+          // Mark BEFORE state updates so the subscription callback sees it synchronously
+          defaultsLoadedRef.current = true;
           setFormData(prev => ({
             ...prev,
             date: parsed.date || prev.date,
@@ -165,12 +175,12 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
       setAvailableOperatorOptions(operatorOptions);
       setAvailableBossOptions(bossOptions);
 
-      if (!editingRecord && !formData.bossUserId && bossOptions.length > 0) {
+      if (!editingRecord && !formData.bossUserId && !defaultsLoadedRef.current && bossOptions.length > 0) {
         setFormData((prev) => ({ ...prev, bossUserId: bossOptions[0].id }));
       }
 
       if (!editingRecord) {
-        if (!operatorPickingRef.current && !operatorInput && !operatorUserId && operatorOptions.length > 0) {
+        if (!operatorPickingRef.current && !defaultsLoadedRef.current && !operatorInput && !operatorUserId && operatorOptions.length > 0) {
           setOperatorInput(operatorOptions[0].name);
           setOperatorUserId(operatorOptions[0].id);
         } else if (!operatorPickingRef.current && operatorInput && !operatorUserId) {
@@ -374,16 +384,47 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
   // --- Management Handlers (Generic) ---
 
   const openManageModal = (mode: ModalMode) => {
-    if (!isAdmin) return;
+    if (!canManageComments) return;
     setManageMode(mode);
     setEditingItemOldName(null);
     setTempItemName('');
+    setManageError('');
+    setNewManageComment('');
     setShowManageModal(true);
+    void loadManageableComments();
+  };
+
+  const loadManageableComments = async () => {
+    try {
+      const items = await getCustomComments();
+      setManageableComments(items);
+    } catch (error: any) {
+      setManageError(String(error?.message || 'No se pudo cargar la lista editable de incidencias.'));
+    }
+  };
+
+  const handleCreateManageComment = async () => {
+    const normalized = newManageComment.trim();
+    if (!normalized) return;
+    try {
+      await createCustomComment(normalized);
+      setNewManageComment('');
+      setManageError('');
+      await loadManageableComments();
+    } catch (error: any) {
+      setManageError(String(error?.message || 'No se pudo crear la incidencia.'));
+    }
   };
 
   const handleDeleteItem = async (item: string) => {
     if (confirm(`¿Borrar "${item}" de la lista de incidencias?\n\nNota: Los registros históricos NO se borrarán.`)) {
-      await deleteCustomComment(item);
+      try {
+        await deleteCustomComment(item);
+        setManageError('');
+        await loadManageableComments();
+      } catch (error: any) {
+        setManageError(String(error?.message || 'No se pudo borrar la incidencia.'));
+      }
     }
   };
 
@@ -394,11 +435,23 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
 
   const saveEditedItem = async () => {
     if (!editingItemOldName || !tempItemName) return;
+    const normalizedTemp = tempItemName.trim();
+    if (!normalizedTemp) {
+      setManageError('El nombre no puede quedar vacío.');
+      return;
+    }
     
-    if (tempItemName !== editingItemOldName) {
-      if (confirm(`¿Renombrar "${editingItemOldName}" a "${tempItemName}"?\n\nEsto actualizará TODOS los registros históricos.`)) {
-        await renameCustomComment(editingItemOldName, tempItemName);
-        if (commentInput === editingItemOldName) setCommentInput(tempItemName);
+    if (normalizedTemp !== editingItemOldName) {
+      if (confirm(`¿Renombrar "${editingItemOldName}" a "${normalizedTemp}"?\n\nEsto actualizará TODOS los registros históricos.`)) {
+        try {
+          await renameCustomComment(editingItemOldName, normalizedTemp);
+          if (commentInput === editingItemOldName) setCommentInput(normalizedTemp);
+          setManageError('');
+          await loadManageableComments();
+        } catch (error: any) {
+          setManageError(String(error?.message || 'No se pudo renombrar la incidencia.'));
+          return;
+        }
       }
     }
     setEditingItemOldName(null);
@@ -738,7 +791,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
             <div className="md:col-span-2 relative" ref={dropdownRef}>
               <div className="flex justify-between items-center mb-2">
                   <label className="block text-sm font-semibold text-slate-700">Comentario / Incidencia</label>
-                  {isAdmin && (
+                  {canManageComments && (
                     <button 
                     type="button" 
                     onClick={() => openManageModal('comments')}
@@ -860,7 +913,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
       )}
 
       {/* --- MANAGE MODAL (Generic) --- */}
-      {showManageModal && isAdmin && (
+      {showManageModal && canManageComments && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[80vh]">
             <div className="bg-slate-50 p-4 border-b border-slate-200 flex justify-between items-center">
@@ -875,11 +928,42 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
             
             <div className="p-4 bg-blue-50 border-b border-blue-100 text-xs text-blue-800">
               <span className="font-bold block mb-1">Modo Edición Global:</span>
-              Al renombrar, se actualizarán todos los registros históricos. Los cambios son permanentes en la nube.
+              Esta sección gestiona incidencias personalizadas globales. Al renombrar, se actualizarán los registros históricos que usen ese texto.
+            </div>
+
+            <div className="p-3 border-b border-slate-100 bg-white">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={newManageComment}
+                  onChange={(e) => setNewManageComment(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      void handleCreateManageComment();
+                    }
+                  }}
+                  placeholder="Nueva incidencia global"
+                  className="flex-1 px-3 py-2 text-sm border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => void handleCreateManageComment()}
+                  className="px-3 py-2 text-sm font-semibold bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                >
+                  Agregar
+                </button>
+              </div>
+              {manageError && <p className="mt-2 text-xs text-red-600">{manageError}</p>}
             </div>
 
             <div className="overflow-y-auto flex-1 p-2 space-y-1">
-              {availableComments.map((item, index) => {
+              {manageableComments.length === 0 && (
+                <div className="p-4 text-sm text-slate-500 text-center">
+                  No hay incidencias personalizadas para gestionar.
+                </div>
+              )}
+              {manageableComments.map((item, index) => {
                  const isEditing = editingItemOldName === item;
                  
                  return (
