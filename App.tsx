@@ -734,8 +734,17 @@ const AppContent: React.FC = () => {
                           <span className="text-xs text-slate-500">{r.shift} • {r.boss}</span>
                         </div>
                         <div className="text-right">
-                          <span className="font-mono font-bold text-blue-600 block">{r.meters.toLocaleString()} m</span>
-                          <span className="text-xs text-slate-400">{r.changesCount} cambios</span>
+                          {Object.keys(r.dynamicFieldsValues || {}).length > 0
+                            ? Object.entries(r.dynamicFieldsValues || {}).slice(0, 2).map(([k, v]) => (
+                                <span key={k} className="font-mono font-bold text-blue-600 block text-sm">
+                                  {k}: {Array.isArray(v) ? v.join(', ') : String(v)}
+                                </span>
+                              ))
+                            : <>
+                                <span className="font-mono font-bold text-blue-600 block">{r.meters.toLocaleString()} m</span>
+                                <span className="text-xs text-slate-400">{r.changesCount} cambios</span>
+                              </>
+                          }
                         </div>
                       </div>
                     ))}
@@ -826,10 +835,20 @@ const AppContent: React.FC = () => {
                             {r.operator || '-'}
                           </td>
                           <td className="px-6 py-4 text-right font-mono text-slate-700">
-                            {r.meters.toLocaleString()}
+                            {Object.keys(r.dynamicFieldsValues || {}).length > 0
+                              ? <div className="text-left space-y-0.5">
+                                  {Object.entries(r.dynamicFieldsValues || {}).map(([k, v]) => (
+                                    <div key={k} className="text-xs whitespace-nowrap">
+                                      <span className="text-slate-400">{k}:</span>{' '}
+                                      <span className="font-medium">{Array.isArray(v) ? v.join(', ') : String(v)}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              : r.meters.toLocaleString()
+                            }
                           </td>
                           <td className="px-6 py-4 text-center text-slate-600 hidden sm:table-cell">
-                            {r.changesCount}
+                            {Object.keys(r.dynamicFieldsValues || {}).length > 0 ? '—' : r.changesCount}
                           </td>
                           <td className="px-6 py-4 text-slate-500 max-w-xs truncate hidden sm:table-cell" title={r.changesComment}>
                             {r.changesComment}

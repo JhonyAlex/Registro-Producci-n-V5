@@ -134,6 +134,23 @@ async function initDB() {
     await pool.query(`ALTER TABLE production_records
       ADD COLUMN IF NOT EXISTS dynamic_fields_values JSONB NOT NULL DEFAULT '{}'::jsonb`);
     await pool.query('ALTER TABLE production_records ADD COLUMN IF NOT EXISTS schema_version_used INTEGER');
+    await pool.query(`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'production_records' AND column_name = 'meters' AND data_type = 'integer'
+        ) THEN
+          ALTER TABLE production_records ALTER COLUMN meters TYPE BIGINT USING meters::bigint;
+        END IF;
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'production_records' AND column_name = 'changescount' AND data_type = 'integer'
+        ) THEN
+          ALTER TABLE production_records ALTER COLUMN changescount TYPE BIGINT USING changescount::bigint;
+        END IF;
+      END$$;
+    `);
 
     await pool.query(
       'CREATE INDEX IF NOT EXISTS idx_production_records_machine ON production_records(machine)'

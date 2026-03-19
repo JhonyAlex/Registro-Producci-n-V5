@@ -305,6 +305,9 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
   };
 
   const handleOperatorFocus = () => {
+    setOperatorInput('');
+    setOperatorUserId(null);
+    setFilteredOperators(availableOperatorOptions);
     setShowOperatorSuggestions(true);
   };
 
