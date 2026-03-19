@@ -19,6 +19,15 @@ interface ShiftFormProps {
 }
 
 const STORAGE_KEY = 'pigmea_form_defaults_v1';
+const MAX_PG_INT = 2147483647;
+
+const sanitizeSchemaVersion = (value: unknown): number => {
+  const numeric = Number(value);
+  if (!Number.isInteger(numeric) || numeric <= 0 || numeric > MAX_PG_INT) {
+    return 1;
+  }
+  return numeric;
+};
 
 const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onCancelEdit }) => {
   const { user } = useAuth();
@@ -177,7 +186,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
       (schema) => {
         const enabledFields = (schema.fields || []).filter((field) => field.enabled !== false);
         setMachineFields(enabledFields);
-        setMachineSchemaVersion(Number(schema.version || 1));
+        setMachineSchemaVersion(sanitizeSchemaVersion(schema.version));
         setDynamicFieldValues((prev) => {
           const next: Record<string, unknown> = {};
           for (const field of enabledFields) {

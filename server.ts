@@ -522,6 +522,7 @@ const parseMachineSchema = (row: any): MachineFieldDefinition[] => {
 };
 
 const computeSchemaVersionFromFields = (fields: MachineFieldDefinition[]): number => {
+  const MAX_PG_INT = 2147483647;
   if (!Array.isArray(fields) || fields.length === 0) {
     return 1;
   }
@@ -545,7 +546,8 @@ const computeSchemaVersionFromFields = (fields: MachineFieldDefinition[]): numbe
     hash = ((hash * 31) + payload.charCodeAt(i)) >>> 0;
   }
 
-  return hash === 0 ? 1 : hash;
+  const positiveInt32Hash = hash % MAX_PG_INT;
+  return positiveInt32Hash === 0 ? 1 : positiveInt32Hash;
 };
 
 const getEffectiveMachineSchema = async (machine: string): Promise<{
@@ -1531,6 +1533,16 @@ app.post('/api/records', authenticate, requirePermission('records.write'), requi
   } = req.body;
   const persistedTimestamp = Date.now();
   try {
+    const requestSchemaVersion = Number(schemaVersionUsed ?? 0);
+    console.info('[records.save] incoming', {
+      id,
+      machine,
+      requestSchemaVersion,
+      persistedTimestamp,
+      meters,
+      changesCount,
+    });
+
     if (!id || typeof id !== 'string') {
       return res.status(400).json({ error: 'ID de registro inválido.' });
     }
@@ -1557,13 +1569,21 @@ app.post('/api/records', authenticate, requirePermission('records.write'), requi
     const currentSchemaVersion = effectiveSchema.version;
     const schemaFields = effectiveSchema.fields;
 
-    if (schemaFields.length > 0 && Number(schemaVersionUsed ?? 0) !== currentSchemaVersion) {
+    console.info('[records.save] schema-check', {
+      id,
+      machine,
+      requestSchemaVersion,
+      currentSchemaVersion,
+      fieldCount: schemaFields.length,
+    });
+
+    if (schemaFields.length > 0 && requestSchemaVersion !== currentSchemaVersion) {
       return res.status(409).json({
         error: 'El formulario cambió. Recarga para usar la versión vigente.',
         code: 'SCHEMA_VERSION_MISMATCH',
         machine,
         currentSchemaVersion,
-        receivedSchemaVersion: Number(schemaVersionUsed ?? 0),
+        receivedSchemaVersion: requestSchemaVersion,
       });
     }
 
@@ -1704,6 +1724,15 @@ app.post('/api/records', authenticate, requirePermission('records.write'), requi
     io.emit('record_dynamic_fields_saved', { id, machine, schemaVersionUsed: currentSchemaVersion });
     res.json({ success: true });
   } catch (err) {
+    console.error('[records.save] failed', {
+      id,
+      machine,
+      schemaVersionUsed,
+      persistedTimestamp,
+      meters,
+      changesCount,
+      message: err instanceof Error ? err.message : String(err),
+    });
     if (err instanceof Error) {
       return res.status(400).json({ error: err.message });
     }
