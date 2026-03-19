@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { LayoutDashboard, PlusCircle, List, User, Trash2, Lock, AlertCircle, Filter, X, Cloud, WifiOff, CloudOff, Edit, ChevronDown, ChevronUp, Calendar, Monitor, XCircle, FileDown, FileUp, AlertTriangle, Clock, ChevronLeft, ChevronRight, Database, LogOut, Users, History, ShieldCheck, CheckCircle, RefreshCw } from 'lucide-react';
 import ShiftForm from './components/ShiftForm';
-import Dashboard from './components/Dashboard.tsx';
+import Dashboard from './components/Dashboard';
 import Login from './components/Login';
 import Register from './components/Register';
 import WaitingRoom from './components/WaitingRoom';
@@ -350,7 +350,7 @@ const AppContent: React.FC = () => {
   const NavItem = ({ view, icon: Icon, label, mobileOnly = false }: { view: View; icon: any; label: string, mobileOnly?: boolean }) => (
     <button
       onClick={() => changeView(view)}
-      className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all w-full lg:w-auto 
+      className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all w-full xl:w-auto 
         ${mobileOnly ? 'flex-col gap-1 py-1 px-1 justify-center' : ''}
         ${currentView === view 
           ? 'bg-blue-600 text-white shadow-md' 
@@ -363,7 +363,7 @@ const AppContent: React.FC = () => {
   );
 
   return (
-    <div className="min-h-screen flex flex-col lg:flex-row bg-slate-50 relative">
+    <div className="min-h-screen flex flex-col xl:flex-row bg-slate-50 relative">
       {/* ---- Offline / Sync Banner ---- */}
       {(!isOnline || isSyncing || syncMessage) && (
         <div
@@ -400,7 +400,7 @@ const AppContent: React.FC = () => {
         className="hidden" 
       />
       
-      <aside className="hidden lg:flex bg-white border-r border-slate-200 w-64 flex-shrink-0 z-20 h-screen sticky top-0 flex-col">
+      <aside className="hidden xl:flex bg-white border-r border-slate-200 w-64 flex-shrink-0 z-20 h-screen sticky top-0 flex-col">
         <div className="p-6 border-b border-slate-100 flex items-center gap-3">
           <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold text-xl shadow-lg shadow-blue-900/50">
             R
@@ -506,12 +506,13 @@ const AppContent: React.FC = () => {
         </div>
       </aside>
 
-      <main className="flex-1 p-4 lg:p-8 overflow-y-auto h-screen pb-28 lg:pb-8">
+      <main className="flex-1 p-4 xl:p-8 overflow-y-auto h-screen pb-28 xl:pb-8">
         <div className="max-w-6xl mx-auto space-y-6">
 
             
-            {/* Top Bar for Mobile/Tablet */}
-            <div className="lg:hidden flex items-center justify-between bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-2">
+            {/* Top Bar for Mobile/Tablet — solo visible en vista Perfil */}
+            {currentView === 'profile' && (
+            <div className="xl:hidden flex items-center justify-between bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-2">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center text-slate-600 font-bold">
                   {user?.name?.charAt(0).toUpperCase()}
@@ -529,6 +530,7 @@ const AppContent: React.FC = () => {
                 <LogOut className="w-5 h-5" />
               </button>
             </div>
+            )}
             {dbError && !dbError.includes('Offline') && (
               <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-r shadow-sm animate-fade-in mb-4">
               <div className="flex items-start justify-between">
@@ -728,7 +730,7 @@ const AppContent: React.FC = () => {
                     {editingRecord ? 'Modificando datos existentes.' : 'Ingresa los datos de producción.'}
                   </p>
                 </div>
-                <div className="lg:hidden">
+                <div className="xl:hidden">
                    <Cloud className="w-5 h-5 text-green-500" />
                 </div>
               </div>
@@ -739,7 +741,7 @@ const AppContent: React.FC = () => {
               />
               
               {!editingRecord && (
-                <div className="mt-8 mb-20 lg:mb-0">
+                <div className="mt-8 mb-20 xl:mb-0">
                   <div className="flex justify-between items-end mb-4">
                      <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider">Últimos Registros</h3>
                      <span className="text-xs text-green-600 font-medium flex items-center gap-1">
@@ -789,7 +791,7 @@ const AppContent: React.FC = () => {
           )}
 
           {currentView === 'list' && (
-            <div className="animate-fade-in mb-20 lg:mb-0">
+            <div className="animate-fade-in mb-20 xl:mb-0">
               <div className="flex justify-between items-center mb-6 flex-wrap gap-4">
                 <div>
                   <h2 className="text-2xl font-bold text-slate-900">Historial</h2>
@@ -935,7 +937,7 @@ const AppContent: React.FC = () => {
         </div>
       </main>
 
-      <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 pb-safe z-40 flex justify-around items-center px-1 shadow-[0_-4px_10px_rgba(0,0,0,0.05)] h-[70px]">
+      <nav className="xl:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 pb-safe z-40 flex justify-around items-center px-1 shadow-[0_-4px_10px_rgba(0,0,0,0.05)] h-[70px]">
         <NavItem view="entry" icon={PlusCircle} label="Registro" mobileOnly />
         <NavItem view="dashboard" icon={LayoutDashboard} label="Data" mobileOnly />
         <NavItem view="list" icon={List} label="Historial" mobileOnly />
