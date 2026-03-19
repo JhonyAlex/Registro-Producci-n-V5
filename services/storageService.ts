@@ -54,6 +54,48 @@ const notifySettingsSubscribers = () => {
 
 // --- API HELPERS ---
 const API_BASE = '/api';
+const INT32_MAX = 2147483647;
+const INT32_MIN = -2147483648;
+
+interface NumericOverflowCandidate {
+  path: string;
+  value: number;
+}
+
+const findInt32OverflowCandidates = (input: unknown): NumericOverflowCandidate[] => {
+  const candidates: NumericOverflowCandidate[] = [];
+  const visited = new WeakSet<object>();
+
+  const visit = (value: unknown, path: string) => {
+    if (typeof value === 'number') {
+      if (Number.isInteger(value) && (value > INT32_MAX || value < INT32_MIN)) {
+        candidates.push({ path, value });
+      }
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      value.forEach((item, index) => visit(item, `${path}[${index}]`));
+      return;
+    }
+
+    if (!value || typeof value !== 'object') {
+      return;
+    }
+
+    if (visited.has(value as object)) {
+      return;
+    }
+    visited.add(value as object);
+
+    Object.entries(value as Record<string, unknown>).forEach(([key, entry]) => {
+      visit(entry, `${path}.${key}`);
+    });
+  };
+
+  visit(input, 'record');
+  return candidates;
+};
 
 const fetchJson = async (url: string, options?: RequestInit) => {
   const method = (options?.method || 'GET').toUpperCase();
@@ -347,6 +389,20 @@ export const saveRecord = async (
   }
 
   try {
+    const overflowCandidates = findInt32OverflowCandidates(record);
+    console.groupCollapsed('[saveRecord] POST /api/records payload');
+    console.log('record.id:', record.id);
+    console.log('record.machine:', record.machine);
+    console.log('record.schemaVersionUsed:', record.schemaVersionUsed);
+    console.log('record.timestamp:', record.timestamp);
+    console.log('record payload:', record);
+    if (overflowCandidates.length > 0) {
+      console.warn('Potential int32 overflow candidates in payload:', overflowCandidates);
+    } else {
+      console.log('No int32 overflow candidates detected in frontend payload.');
+    }
+    console.groupEnd();
+
     // 1. Save the record to PostgreSQL
     await fetchJson('/records', {
       method: 'POST',
@@ -367,6 +423,18 @@ export const saveRecord = async (
 
   } catch (e: any) {
     console.error("Error saving record:", e);
+    const overflowCandidates = findInt32OverflowCandidates(record);
+    console.groupCollapsed('[saveRecord] POST /api/records failed');
+    console.error('Backend error message:', e?.message || e);
+    console.log('record.id:', record.id);
+    console.log('record.machine:', record.machine);
+    console.log('record.schemaVersionUsed:', record.schemaVersionUsed);
+    console.log('record.timestamp:', record.timestamp);
+    console.log('record payload:', record);
+    if (overflowCandidates.length > 0) {
+      console.warn('Potential int32 overflow candidates in payload:', overflowCandidates);
+    }
+    console.groupEnd();
 
     // On network / connectivity errors: queue locally instead of showing an error
     const isConnectivityError =
