@@ -508,6 +508,7 @@ const AppContent: React.FC = () => {
       <main className="flex-1 p-4 lg:p-8 overflow-y-auto h-screen pb-28 lg:pb-8">
         <div className="max-w-6xl mx-auto space-y-6">
 
+            
             {/* Top Bar for Mobile/Tablet */}
             <div className="lg:hidden flex items-center justify-between bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-2">
               <div className="flex items-center gap-3">
@@ -527,7 +528,8 @@ const AppContent: React.FC = () => {
                 <LogOut className="w-5 h-5" />
               </button>
             </div>
-            <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-r shadow-sm animate-fade-in mb-4">
+            {dbError && !dbError.includes('Offline') && (
+              <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-r shadow-sm animate-fade-in mb-4">
               <div className="flex items-start justify-between">
                 <div className="flex items-start">
                   <AlertCircle className="w-5 h-5 text-red-500 mt-0.5 mr-3 flex-shrink-0" />
