@@ -49,6 +49,8 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
   const [filteredOperators, setFilteredOperators] = useState<UserOption[]>([]);
   const [showOperatorSuggestions, setShowOperatorSuggestions] = useState(false);
   const operatorDropdownRef = useRef<HTMLDivElement>(null);
+  // Tracks when the user has intentionally opened the picker (prevents subscription from re-filling the field)
+  const operatorPickingRef = useRef(false);
 
   // Custom Comment Field State
   const [commentInput, setCommentInput] = useState('');
@@ -151,10 +153,10 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
       }
 
       if (!editingRecord) {
-        if (!operatorInput && !operatorUserId && operatorOptions.length > 0) {
+        if (!operatorPickingRef.current && !operatorInput && !operatorUserId && operatorOptions.length > 0) {
           setOperatorInput(operatorOptions[0].name);
           setOperatorUserId(operatorOptions[0].id);
-        } else if (operatorInput && !operatorUserId) {
+        } else if (!operatorPickingRef.current && operatorInput && !operatorUserId) {
           const normalizedInput = operatorInput.trim().toLowerCase();
           const matchedOperator = operatorOptions.find((option) => option.name.trim().toLowerCase() === normalizedInput);
           if (matchedOperator) {
@@ -247,6 +249,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
         setShowSuggestions(false);
       }
       if (operatorDropdownRef.current && !operatorDropdownRef.current.contains(event.target as Node)) {
+        operatorPickingRef.current = false;
         setShowOperatorSuggestions(false);
       }
     };
@@ -337,6 +340,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
   };
 
   const handleOperatorFocus = () => {
+    operatorPickingRef.current = true;
     setOperatorInput('');
     setOperatorUserId(null);
     setFilteredOperators(availableOperatorOptions);
@@ -344,6 +348,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
   };
 
   const selectOperator = (op: UserOption) => {
+    operatorPickingRef.current = false;
     setOperatorInput(op.name);
     setOperatorUserId(op.id);
     setShowOperatorSuggestions(false);
@@ -558,7 +563,6 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
                       setShowOperatorSuggestions(true);
                     }}
                     onFocus={handleOperatorFocus}
-                    onClick={handleOperatorFocus}
                     className="w-full pl-4 pr-10 py-3 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
                     autoComplete="off"
                   />
