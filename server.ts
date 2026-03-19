@@ -224,7 +224,7 @@ async function initDB() {
         enabled BOOLEAN NOT NULL DEFAULT TRUE,
         sort_order INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (field_id, machine)
-      )
+      );
 
       CREATE TABLE IF NOT EXISTS dashboard_configs (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -275,7 +275,8 @@ async function initDB() {
     console.log('Database tables initialized in PostgreSQL.');
     isDbConnected = true;
   } catch (err) {
-    console.error('Failed to connect to PostgreSQL. API will return 503 for database operations.');
+    console.error('Failed to connect/init PostgreSQL. API will return 503 for database operations.');
+    console.error(err);
     isDbConnected = false;
   }
 }
@@ -2498,3 +2499,4 @@ async function startServer() {
 }
 
 startServer();
+
