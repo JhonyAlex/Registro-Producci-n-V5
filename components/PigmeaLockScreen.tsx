@@ -190,7 +190,7 @@ const PigmeaLockScreen: React.FC<PigmeaLockScreenProps> = ({
       {/* Mobile swipe hint */}
       {isMobilePointer && (
         <>
-          <p className="mt-6 text-xs text-slate-400 select-none" aria-hidden="true">
+          <p className="relative z-10 mt-6 text-xs text-slate-400 select-none" aria-hidden="true">
             Desliza hacia arriba para desbloquear
           </p>
           <div className="relative z-10 mt-3 w-16 h-1.5 rounded-full bg-white/40" aria-hidden="true" />

@@ -10,6 +10,15 @@ import { Server } from 'socket.io';
 import cookieParser from 'cookie-parser';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import { isSessionTokenCurrent } from './utils/sessionAuth';
+
+type AuthTokenPayload = {
+  id: string;
+  role: string;
+  sv: number;
+  iat?: number;
+  exp?: number;
+};
 
 dotenv.config();
 
@@ -20,9 +29,9 @@ const io = new Server(httpServer, {
   cors: { origin: '*' }
 });
 
-app.use(cors());
-app.use(express.json({ limit: '50mb' }));
-app.use(cookieParser());
+(app as any).use(cors());
+(app as any).use(express.json({ limit: '50mb' }));
+(app as any).use(cookieParser());
 app.use('/api', (_req, res, next) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.setHeader('Pragma', 'no-cache');
@@ -86,6 +95,7 @@ async function initDB() {
         pin_hash VARCHAR(255) NOT NULL,
         role VARCHAR(50) NOT NULL,
         status VARCHAR(50) NOT NULL DEFAULT 'pending',
+        session_version INTEGER NOT NULL DEFAULT 0,
         failed_attempts INTEGER DEFAULT 0,
         name VARCHAR(255) NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -127,6 +137,7 @@ async function initDB() {
     `);
 
     await pool.query('ALTER TABLE production_records ADD COLUMN IF NOT EXISTS recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
+  await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS session_version INTEGER NOT NULL DEFAULT 0');
     await pool.query('ALTER TABLE production_records ADD COLUMN IF NOT EXISTS created_by_user_id UUID');
     await pool.query('ALTER TABLE production_records ADD COLUMN IF NOT EXISTS last_modified_by_user_id UUID');
     await pool.query('ALTER TABLE production_records ADD COLUMN IF NOT EXISTS boss_user_id UUID');
@@ -308,7 +319,7 @@ async function initDB() {
 }
 
 // Middleware to check DB connection
-const requireDB = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+const requireDB = (_req, res, next) => {
   if (!isDbConnected) {
     return res.status(503).json({ error: 'Database unavailable' });
   }
@@ -864,19 +875,59 @@ async function logAudit(userId: string | null, action: string, details: any, ipA
   }
 }
 
+const getUserSocketRoom = (userId: string) => `user:${userId}`;
+
+const parseCookieHeader = (cookieHeader?: string) => {
+  if (!cookieHeader) return new Map<string, string>();
+
+  return cookieHeader.split(';').reduce((cookies, part) => {
+    const [rawName, ...rawValue] = part.trim().split('=');
+    if (!rawName) return cookies;
+    cookies.set(rawName, decodeURIComponent(rawValue.join('=')));
+    return cookies;
+  }, new Map<string, string>());
+};
+
+const getSocketAuthenticatedUser = async (cookieHeader?: string) => {
+  const token = parseCookieHeader(cookieHeader).get('token');
+  if (!token) return null;
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET) as AuthTokenPayload;
+    const userResult = await pool.query('SELECT id, status, session_version FROM users WHERE id = $1', [decoded.id]);
+    const user = userResult.rows[0];
+
+    if (!user || user.status !== 'active' || !isSessionTokenCurrent(decoded.sv, user.session_version)) {
+      return null;
+    }
+
+    return { id: user.id };
+  } catch {
+    return null;
+  }
+};
+
+const notifySessionReplaced = (userId: string, sessionVersion: number) => {
+  io.to(getUserSocketRoom(userId)).emit('session_replaced', { userId, sessionVersion });
+};
+
 // Middleware: Authenticate
-export const authenticate = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+export const authenticate = async (req, res, next) => {
   const token = req.cookies.token;
   if (!token) return res.status(401).json({ error: 'No autorizado' });
 
   try {
-    const decoded: any = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, JWT_SECRET) as AuthTokenPayload;
     const userResult = await pool.query('SELECT * FROM users WHERE id = $1', [decoded.id]);
     const user = userResult.rows[0];
 
     if (!user) return res.status(401).json({ error: 'Usuario no encontrado' });
     if (user.status === 'locked') return res.status(403).json({ error: 'Cuenta bloqueada. Contacte a un administrador.' });
     if (user.status === 'pending') return res.status(403).json({ error: 'Cuenta pendiente de aprobación.' });
+    if (!isSessionTokenCurrent(decoded.sv, user.session_version)) {
+      res.clearCookie('token');
+      return res.status(401).json({ error: 'Sesión cerrada por un nuevo inicio de sesión', reason: 'session_replaced' });
+    }
 
     // Check timeout
     const lastActivity = new Date(user.last_activity).getTime();
@@ -899,7 +950,7 @@ export const authenticate = async (req: express.Request, res: express.Response, 
 
 // Middleware: Require Role
 export const requireRole = (roles: string[]) => {
-  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  return (req, res, next) => {
     const user = (req as any).user;
     if (!user || !roles.includes(user.role)) {
       return res.status(403).json({ error: 'Permisos insuficientes' });
@@ -928,7 +979,7 @@ const getRolePermissions = async (role: string) => {
 };
 
 export const requirePermission = (permissionKey: string) => {
-  return async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  return async (req, res, next) => {
     const user = (req as any).user;
     if (!user) return res.status(401).json({ error: 'No autorizado' });
 
@@ -1044,25 +1095,41 @@ app.post('/api/auth/login', requireDB, async (req, res) => {
     }
 
     // Success
-    await pool.query('UPDATE users SET failed_attempts = 0, last_login = CURRENT_TIMESTAMP, last_activity = CURRENT_TIMESTAMP WHERE id = $1', [user.id]);
+    const updatedUserResult = await pool.query(
+      `UPDATE users
+       SET failed_attempts = 0,
+           last_login = CURRENT_TIMESTAMP,
+           last_activity = CURRENT_TIMESTAMP,
+           session_version = session_version + 1
+       WHERE id = $1
+       RETURNING id, operator_code, name, role, session_version`,
+      [user.id]
+    );
+    const updatedUser = updatedUserResult.rows[0];
     await logAudit(user.id, 'login_success', {}, req.ip || '');
 
-    const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: '12h' });
+    notifySessionReplaced(updatedUser.id, updatedUser.session_version);
+
+    const token = jwt.sign(
+      { id: updatedUser.id, role: updatedUser.role, sv: updatedUser.session_version },
+      JWT_SECRET,
+      { expiresIn: '12h' }
+    );
     
-    res.cookie('token', token, {
+    (res as any).cookie('token', token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict',
       maxAge: 12 * 60 * 60 * 1000 // 12 hours
-    });
+    } as any);
 
     res.json({
       success: true,
       user: {
-        id: user.id,
-        operator_code: user.operator_code,
-        name: user.name,
-        role: user.role
+        id: updatedUser.id,
+        operator_code: updatedUser.operator_code,
+        name: updatedUser.name,
+        role: updatedUser.role
       }
     });
   } catch (err) {
@@ -2753,21 +2820,30 @@ app.post('/api/import', authenticate, requireRole(['admin', 'jefe_planta']), req
 async function startServer() {
   await initDB();
 
+  io.on('connection', async (socket) => {
+    const authenticatedUser = await getSocketAuthenticatedUser(socket.handshake.headers.cookie);
+    if (!authenticatedUser) {
+      return;
+    }
+
+    socket.join(getUserSocketRoom(authenticatedUser.id));
+  });
+
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
-    app.use(vite.middlewares);
+    (app as any).use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     const assetsPath = path.join(distPath, 'assets');
 
     // Hashed assets can be cached aggressively.
-    app.use('/assets', express.static(assetsPath, { immutable: true, maxAge: '1y' }));
+    (app as any).use('/assets', express.static(assetsPath, { immutable: true, maxAge: '1y' }));
 
     // Other static files may change between deploys.
-    app.use(express.static(distPath, { maxAge: '1h' }));
+    (app as any).use(express.static(distPath, { maxAge: '1h' }));
 
     // Always serve the SPA shell without cache to avoid stale bundle references.
     app.get('*all', (req, res) => {

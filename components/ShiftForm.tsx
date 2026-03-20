@@ -17,6 +17,8 @@ interface ShiftFormProps {
   onCancelEdit?: () => void;
 }
 
+type FocusableFieldElement = HTMLInputElement | HTMLSelectElement;
+
 const MAX_PG_INT = 2147483647;
 const getStorageKey = (userId?: string | null) => `pigmea_form_defaults_v1_${userId || 'guest'}`;
 
@@ -66,6 +68,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
   const [dynamicFieldValues, setDynamicFieldValues] = useState<Record<string, unknown>>({});
   const [dynamicFieldError, setDynamicFieldError] = useState('');
   const [isMachineSchemaReady, setIsMachineSchemaReady] = useState(false);
+  const focusableFieldRefs = useRef<Record<string, FocusableFieldElement | null>>({});
 
   // 1. Load Defaults from LocalStorage when the user is identified (per-user key)
   useEffect(() => {
@@ -322,6 +325,79 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
     setDynamicFieldValues((prev) => ({ ...prev, [fieldKey]: value }));
   };
 
+  const setFocusableFieldRef = (fieldKey: string) => (element: FocusableFieldElement | null) => {
+    if (element) {
+      focusableFieldRefs.current[fieldKey] = element;
+      return;
+    }
+
+    delete focusableFieldRefs.current[fieldKey];
+  };
+
+  const getFocusableFieldOrder = () => {
+    const dynamicKeys = machineFields
+      .filter((field) => field.type === 'number' || field.type === 'short_text' || field.type === 'select')
+      .map((field) => `dynamic:${field.key}`);
+
+    return ['operator', ...dynamicKeys, 'comment'];
+  };
+
+  const moveFocusToNextField = (currentFieldKey: string) => {
+    const focusableFieldOrder = getFocusableFieldOrder();
+    const currentFieldIndex = focusableFieldOrder.indexOf(currentFieldKey);
+    const currentField = focusableFieldRefs.current[currentFieldKey];
+
+    if (currentFieldIndex === -1) {
+      currentField?.blur();
+      return;
+    }
+
+    const nextFieldKey = focusableFieldOrder[currentFieldIndex + 1];
+    if (!nextFieldKey) {
+      currentField?.blur();
+      return;
+    }
+
+    const nextField = focusableFieldRefs.current[nextFieldKey];
+    if (!nextField) {
+      currentField?.blur();
+      return;
+    }
+
+    nextField.focus();
+    if (nextField instanceof HTMLInputElement) {
+      nextField.select();
+    }
+  };
+
+  const getEnterKeyHint = (fieldKey: string): 'next' | 'done' => {
+    const focusableFieldOrder = getFocusableFieldOrder();
+    return focusableFieldOrder[focusableFieldOrder.length - 1] === fieldKey ? 'done' : 'next';
+  };
+
+  const handleFieldAdvance = (fieldKey: string) => (event: React.KeyboardEvent<FocusableFieldElement>) => {
+    if (event.key !== 'Enter') {
+      return;
+    }
+
+    event.preventDefault();
+    moveFocusToNextField(fieldKey);
+  };
+
+  const moveFocusAfterSelection = (fieldKey: string) => {
+    window.setTimeout(() => {
+      moveFocusToNextField(fieldKey);
+    }, 0);
+  };
+
+  const maybeAdvanceTextField = (fieldKey: string, value: string, maxLength?: number) => {
+    if (!maxLength || value.length < maxLength) {
+      return;
+    }
+
+    moveFocusToNextField(fieldKey);
+  };
+
   const preventNumberScrollChange = (e: React.WheelEvent<HTMLInputElement>) => {
     e.currentTarget.blur();
   };
@@ -532,6 +608,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
               <div className="relative w-full">
                 <div className="relative">
                   <input
+                    ref={setFocusableFieldRef('operator')}
                     type="text"
                     placeholder="Nombre del operario..."
                     value={operatorInput}
@@ -541,6 +618,8 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
                       setShowOperatorSuggestions(true);
                     }}
                     onFocus={handleOperatorFocus}
+                    onKeyDown={handleFieldAdvance('operator')}
+                    enterKeyHint={getEnterKeyHint('operator')}
                     className="w-full pl-4 pr-10 py-3 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
                     autoComplete="off"
                   />
@@ -624,22 +703,31 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
 
               {field.type === 'number' && (
                 <input
+                  ref={setFocusableFieldRef(`dynamic:${field.key}`)}
                   type="number"
                   value={(dynamicFieldValues[field.key] as number | string | undefined) ?? ''}
                   min={field.rules?.min}
                   max={field.rules?.max}
                   onWheel={preventNumberScrollChange}
                   onChange={(e) => updateDynamicFieldValue(field.key, e.target.value === '' ? '' : Number(e.target.value))}
+                  onKeyDown={handleFieldAdvance(`dynamic:${field.key}`)}
+                  enterKeyHint={getEnterKeyHint(`dynamic:${field.key}`)}
                   className="w-full rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 font-medium outline-none focus:ring-2 focus:ring-blue-500"
                 />
               )}
 
               {field.type === 'short_text' && (
                 <input
+                  ref={setFocusableFieldRef(`dynamic:${field.key}`)}
                   type="text"
                   value={(dynamicFieldValues[field.key] as string | undefined) ?? ''}
                   maxLength={field.rules?.maxLength}
-                  onChange={(e) => updateDynamicFieldValue(field.key, e.target.value)}
+                  onChange={(e) => {
+                    updateDynamicFieldValue(field.key, e.target.value);
+                    maybeAdvanceTextField(`dynamic:${field.key}`, e.target.value, field.rules?.maxLength);
+                  }}
+                  onKeyDown={handleFieldAdvance(`dynamic:${field.key}`)}
+                  enterKeyHint={getEnterKeyHint(`dynamic:${field.key}`)}
                   className="w-full rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 font-medium outline-none focus:ring-2 focus:ring-blue-500"
                 />
               )}
@@ -647,8 +735,13 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
               {field.type === 'select' && (
                 <div className="relative">
                   <select
+                    ref={setFocusableFieldRef(`dynamic:${field.key}`)}
                     value={(dynamicFieldValues[field.key] as string | undefined) ?? ''}
-                    onChange={(e) => updateDynamicFieldValue(field.key, e.target.value)}
+                    onChange={(e) => {
+                      updateDynamicFieldValue(field.key, e.target.value);
+                      moveFocusAfterSelection(`dynamic:${field.key}`);
+                    }}
+                    onKeyDown={handleFieldAdvance(`dynamic:${field.key}`)}
                     className="w-full appearance-none rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 pr-10 font-medium outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="">Selecciona una opción</option>
@@ -709,6 +802,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
             <div className="relative w-full">
               <div className="relative">
                 <input
+                  ref={setFocusableFieldRef('comment')}
                   type="text"
                   placeholder="Escribir..."
                   value={commentInput}
@@ -717,6 +811,8 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
                     setShowSuggestions(true);
                   }}
                   onFocus={handleInputFocus}
+                  onKeyDown={handleFieldAdvance('comment')}
+                  enterKeyHint={getEnterKeyHint('comment')}
                   className="w-full rounded-xl border border-slate-300 bg-slate-50 pl-4 pr-10 py-3 text-base font-medium outline-none transition-all focus:ring-2 focus:ring-blue-500 sm:text-lg"
                   autoComplete="off"
                 />

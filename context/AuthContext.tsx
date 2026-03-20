@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { socket } from '../services/socket';
 
 const AUTH_EXPIRED_EVENT = 'app:auth-expired';
+const SESSION_REPLACED_EVENT = 'app:session-replaced';
 
 export interface User {
   id: string;
@@ -51,6 +53,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const originalFetch = window.fetch.bind(window);
 
     const handleAuthExpired = () => {
+      socket.disconnect();
+      setUser(null);
+    };
+
+    const handleSessionReplaced = () => {
+      socket.disconnect();
       setUser(null);
     };
 
@@ -66,7 +74,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         const isAuthFormRequest = requestUrl.includes('/api/auth/login') || requestUrl.includes('/api/auth/register');
         if (!isAuthFormRequest) {
-          window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+          let eventName = AUTH_EXPIRED_EVENT;
+
+          try {
+            const data = await response.clone().json();
+            if (data?.reason === 'session_replaced') {
+              eventName = SESSION_REPLACED_EVENT;
+            }
+          } catch {
+            // Ignore non-JSON 401 bodies and fallback to generic auth expiration handling.
+          }
+
+          window.dispatchEvent(new Event(eventName));
         }
       }
 
@@ -74,12 +93,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+    window.addEventListener(SESSION_REPLACED_EVENT, handleSessionReplaced);
+
+    const handleSocketSessionReplaced = () => {
+      window.dispatchEvent(new Event(SESSION_REPLACED_EVENT));
+    };
+
+    socket.on('session_replaced', handleSocketSessionReplaced);
 
     return () => {
       window.fetch = originalFetch;
       window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+      window.removeEventListener(SESSION_REPLACED_EVENT, handleSessionReplaced);
+      socket.off('session_replaced', handleSocketSessionReplaced);
     };
   }, []);
+
+  useEffect(() => {
+    if (user) {
+      socket.disconnect();
+      socket.connect();
+      return;
+    }
+
+    socket.disconnect();
+  }, [user?.id]);
 
   const login = async (operator_code: string, pin: string) => {
     const res = await fetch('/api/auth/login', {
@@ -115,6 +153,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (e) {
       console.error(e);
     }
+    socket.disconnect();
     setUser(null);
   };
 

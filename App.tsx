@@ -511,29 +511,6 @@ const AppContent: React.FC = () => {
 
       <main className="flex-1 p-4 xl:p-8 overflow-y-auto h-screen pb-28 xl:pb-8">
         <div className="max-w-6xl mx-auto space-y-6">
-
-            
-            {/* Top Bar for Mobile/Tablet — solo visible en vista Perfil */}
-            {currentView === 'profile' && (
-            <div className="xl:hidden flex items-center justify-between bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-2">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center text-slate-600 font-bold">
-                  {user?.name?.charAt(0).toUpperCase()}
-                </div>
-                <div>
-                  <p className="text-sm font-bold text-slate-800 leading-tight">{user?.name}</p>
-                  <p className="text-xs text-slate-500 capitalize">{user?.role.replace('_', ' ')}</p>
-                </div>
-              </div>
-              <button
-                onClick={logout}
-                className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors flex items-center gap-2"
-                title="Cerrar SesiÃ³n"
-              >
-                <LogOut className="w-5 h-5" />
-              </button>
-            </div>
-            )}
             {dbError && !dbError.includes('Offline') && (
               <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-r shadow-sm animate-fade-in mb-4">
               <div className="flex items-start justify-between">
