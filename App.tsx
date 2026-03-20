@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { LayoutDashboard, PlusCircle, List, User, Trash2, Lock, AlertCircle, Filter, X, Cloud, WifiOff, CloudOff, Edit, ChevronDown, ChevronUp, Calendar, Monitor, XCircle, FileDown, FileUp, AlertTriangle, Clock, ChevronLeft, ChevronRight, Database, LogOut, Users, History, ShieldCheck, CheckCircle, RefreshCw } from 'lucide-react';
+import { LayoutDashboard, PlusCircle, List, User, Trash2, Lock, AlertCircle, Filter, X, Cloud, WifiOff, CloudOff, Edit, ChevronDown, ChevronUp, Calendar, Monitor, XCircle, FileDown, FileUp, AlertTriangle, Clock, ChevronLeft, ChevronRight, Database, LogOut, Users, History, ShieldCheck, CheckCircle, RefreshCw, Menu } from 'lucide-react';
 import ShiftForm from './components/ShiftForm';
 import Dashboard from './components/Dashboard';
 import Login from './components/Login';
@@ -82,6 +82,9 @@ const AppContent: React.FC = () => {
 
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
+
+  // More Panel State (mobile/tablet)
+  const [showMorePanel, setShowMorePanel] = useState(false);
 
   // Delete Modal State
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -405,7 +408,7 @@ const AppContent: React.FC = () => {
           <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold text-xl shadow-lg shadow-blue-900/50">
             R
           </div>
-          <h1 className="text-lg font-bold text-slate-900 tracking-tight leading-tight">Registro Jefe<br/>de Turnos</h1>
+          <h1 className="text-lg font-bold text-slate-900 tracking-tight leading-tight">Registro Producción<br/>Pigmea</h1>
         </div>
         
         <div className="p-4 border-b border-slate-100 bg-slate-50">
@@ -937,26 +940,106 @@ const AppContent: React.FC = () => {
         </div>
       </main>
 
+      {/* Bottom Nav — Mobile/Tablet */}
       <nav className="xl:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 pb-safe z-40 flex justify-around items-center px-1 shadow-[0_-4px_10px_rgba(0,0,0,0.05)] h-[70px]">
         <NavItem view="entry" icon={PlusCircle} label="Registro" mobileOnly />
-        <NavItem view="dashboard" icon={LayoutDashboard} label="Data" mobileOnly />
+        <NavItem view="dashboard" icon={LayoutDashboard} label="Dashboard" mobileOnly />
         <NavItem view="list" icon={List} label="Historial" mobileOnly />
-        <NavItem view="profile" icon={User} label="Perfil" mobileOnly />
-        {(canAccessUsers || canAccessAudit || canAccessPermissionsMatrix) && (
-          <>
-            {canAccessUsers && <NavItem view="admin" icon={Users} label="Usuarios" mobileOnly />}
-            {canAccessAudit && <NavItem view="audit" icon={History} label="Actividad" mobileOnly />}
-            {canAccessPermissionsMatrix && <NavItem view="permissions" icon={ShieldCheck} label="Permisos" mobileOnly />}
-          </>
-        )}
+        <NavItem view="profile" icon={User} label="Mi Perfil" mobileOnly />
         <button
-          onClick={exportAllData}
-          className="flex flex-col items-center gap-1 py-1 px-1 justify-center rounded-lg transition-all w-auto text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+          onClick={() => setShowMorePanel(true)}
+          className="flex flex-col items-center gap-1 py-1 px-3 justify-center rounded-lg transition-all text-slate-500 hover:bg-slate-100 hover:text-slate-800"
         >
-          <Database className="w-6 h-6" />
-          <span className="text-[10px]">Exportar</span>
+          <Menu className="w-6 h-6" />
+          <span className="text-[10px]">Más</span>
         </button>
       </nav>
+
+      {/* Right Side Panel — opciones adicionales móvil/tablet */}
+      {showMorePanel && (
+        <>
+          {/* Overlay */}
+          <div
+            className="xl:hidden fixed inset-0 bg-slate-900/50 z-50 backdrop-blur-sm"
+            onClick={() => setShowMorePanel(false)}
+          />
+          {/* Panel */}
+          <div className="xl:hidden fixed top-0 right-0 bottom-0 w-72 bg-white z-50 flex flex-col shadow-2xl animate-slide-in-right">
+            <div className="flex items-center justify-between p-5 border-b border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold text-lg shadow-lg shadow-blue-900/50">R</div>
+                <div>
+                  <p className="text-sm font-bold text-slate-800 leading-tight">{user?.name}</p>
+                  <p className="text-xs text-slate-500 capitalize">{user?.role.replace('_', ' ')}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowMorePanel(false)}
+                className="p-2 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-1">
+              {(canAccessUsers || canAccessAudit || canAccessPermissionsMatrix || canAccessFieldSchemas || canAccessDashboardManager) && (
+                <>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider px-3 pt-2 pb-1">Administración</p>
+                  {canAccessUsers && (
+                    <button onClick={() => { setShowMorePanel(false); setCurrentView('admin'); }} className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all w-full ${ currentView === 'admin' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100' }`}>
+                      <Users className="w-5 h-5" /><span className="font-medium">Usuarios</span>
+                    </button>
+                  )}
+                  {canAccessAudit && (
+                    <button onClick={() => { setShowMorePanel(false); setCurrentView('audit'); }} className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all w-full ${ currentView === 'audit' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100' }`}>
+                      <History className="w-5 h-5" /><span className="font-medium">Actividad</span>
+                    </button>
+                  )}
+                  {canAccessFieldSchemas && (
+                    <button onClick={() => { setShowMorePanel(false); setCurrentView('fieldSchemas'); }} className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all w-full ${ currentView === 'fieldSchemas' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100' }`}>
+                      <Monitor className="w-5 h-5" /><span className="font-medium">Campos</span>
+                    </button>
+                  )}
+                  {canAccessDashboardManager && (
+                    <button onClick={() => { setShowMorePanel(false); setCurrentView('dashboardAdmin'); }} className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all w-full ${ currentView === 'dashboardAdmin' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100' }`}>
+                      <LayoutDashboard className="w-5 h-5" /><span className="font-medium">Dashboards</span>
+                    </button>
+                  )}
+                  {canAccessPermissionsMatrix && (
+                    <button onClick={() => { setShowMorePanel(false); setCurrentView('permissions'); }} className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all w-full ${ currentView === 'permissions' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100' }`}>
+                      <ShieldCheck className="w-5 h-5" /><span className="font-medium">Permisos</span>
+                    </button>
+                  )}
+                </>
+              )}
+
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider px-3 pt-4 pb-1">Datos</p>
+              <button
+                onClick={() => { setShowMorePanel(false); exportAllData(); }}
+                className="flex items-center gap-3 px-4 py-3 rounded-lg transition-all w-full text-slate-600 hover:bg-slate-100"
+              >
+                <Database className="w-5 h-5" /><span className="font-medium">Exportar Backup</span>
+              </button>
+              <button
+                onClick={() => { setShowMorePanel(false); handleImportClick(); }}
+                className="flex items-center gap-3 px-4 py-3 rounded-lg transition-all w-full text-slate-600 hover:bg-slate-100"
+              >
+                <FileUp className="w-5 h-5" /><span className="font-medium">Importar Backup</span>
+              </button>
+            </div>
+
+            <div className="p-4 border-t border-slate-100">
+              <button
+                onClick={() => { setShowMorePanel(false); logout(); }}
+                className="w-full flex items-center justify-center gap-2 py-3 bg-red-50 hover:bg-red-100 text-red-600 font-bold rounded-lg transition-colors border border-red-100"
+              >
+                <LogOut className="w-4 h-4" />
+                Cerrar Sesión
+              </button>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* --- OFFLINE BLOCKING OVERLAY REMOVED --- */}
 

@@ -12,7 +12,7 @@ interface GlobalLockScreenGuardProps {
 }
 
 const DEFAULT_TIMEOUT_MS = 60000;
-const DEFAULT_APP_NAME = 'Registro producción pigmea';
+const DEFAULT_APP_NAME = 'Registro Producción Pigmea';
 const DEFAULT_FOOTER_TEXT = 'soporte por Jhony A.';
 const DEFAULT_LOGO_URL = '/logo-white.png';
 

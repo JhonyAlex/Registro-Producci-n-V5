@@ -6,7 +6,7 @@ const baseProps = {
   isLocked: true,
   onUnlock: vi.fn(),
   phrase: 'Hoy suma, aunque sea poco.',
-  appName: 'Registro producción pigmea',
+  appName: 'Registro Producción Pigmea',
   footerText: 'soporte por Jhony A.',
   logoUrl: '/logo-white.png',
 };
@@ -35,7 +35,7 @@ describe('PigmeaLockScreen', () => {
   it('shows required identity texts', () => {
     render(<PigmeaLockScreen {...baseProps} />);
 
-    expect(screen.getByText('Registro producción pigmea')).toBeInTheDocument();
+    expect(screen.getByText('Registro Producción Pigmea')).toBeInTheDocument();
     expect(screen.getByText('soporte por Jhony A.')).toBeInTheDocument();
     expect(screen.getByText('Desbloquear')).toBeInTheDocument();
   });

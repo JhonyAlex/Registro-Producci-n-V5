@@ -54,8 +54,9 @@ const Login: React.FC<{ onSwitchToRegister: () => void }> = ({ onSwitchToRegiste
           <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-4">
             <Lock className="w-8 h-8 text-white" />
           </div>
-          <h2 className="text-2xl font-bold text-white">Acceso al Sistema</h2>
-          <p className="text-blue-100 mt-1">Ingrese sus credenciales para continuar</p>
+          <h1 className="text-2xl font-bold text-white">Registro Producción Pigmea</h1>
+          <h2 className="text-blue-100 mt-1 font-medium">Acceso al Sistema</h2>
+          <p className="text-blue-100/90 mt-1">Ingrese sus credenciales para continuar</p>
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-6">

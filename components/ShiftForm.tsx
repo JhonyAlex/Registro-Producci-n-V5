@@ -697,159 +697,155 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
           </div>
         </div>
 
-        {machineFields.length > 0 && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {machineFields.map((field) => (
-              <div key={field.key}>
-                <label className="block text-sm font-semibold text-slate-700 mb-2">
-                  {field.label} {field.required ? <span className="text-red-500">*</span> : null}
-                </label>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+          <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wide">Campos</h3>
+          {canManageComments && (
+            <button
+              type="button"
+              onClick={() => openManageModal('comments')}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 w-fit"
+            >
+              <Settings className="w-3.5 h-3.5" /> Configurar incidencias
+            </button>
+          )}
+        </div>
 
-                {field.type === 'number' && (
-                  <input
-                    type="number"
-                    value={(dynamicFieldValues[field.key] as number | string | undefined) ?? ''}
-                    min={field.rules?.min}
-                    max={field.rules?.max}
-                    onWheel={preventNumberScrollChange}
-                    onChange={(e) => updateDynamicFieldValue(field.key, e.target.value === '' ? '' : Number(e.target.value))}
-                    className="w-full px-4 py-3 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-medium"
-                  />
-                )}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {machineFields.map((field) => (
+            <div key={field.key}>
+              <label className="block text-sm font-semibold text-slate-700 mb-2">
+                {field.label} {field.required ? <span className="text-red-500">*</span> : null}
+              </label>
 
-                {field.type === 'short_text' && (
-                  <input
-                    type="text"
-                    value={(dynamicFieldValues[field.key] as string | undefined) ?? ''}
-                    maxLength={field.rules?.maxLength}
-                    onChange={(e) => updateDynamicFieldValue(field.key, e.target.value)}
-                    className="w-full px-4 py-3 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-medium"
-                  />
-                )}
+              {field.type === 'number' && (
+                <input
+                  type="number"
+                  value={(dynamicFieldValues[field.key] as number | string | undefined) ?? ''}
+                  min={field.rules?.min}
+                  max={field.rules?.max}
+                  onWheel={preventNumberScrollChange}
+                  onChange={(e) => updateDynamicFieldValue(field.key, e.target.value === '' ? '' : Number(e.target.value))}
+                  className="w-full px-4 py-3 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-medium"
+                />
+              )}
 
-                {field.type === 'select' && (
-                  <select
-                    value={(dynamicFieldValues[field.key] as string | undefined) ?? ''}
-                    onChange={(e) => updateDynamicFieldValue(field.key, e.target.value)}
-                    className="w-full px-4 py-3 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none appearance-none font-medium"
-                  >
-                    <option value="">Selecciona una opción</option>
-                    {(field.options || []).map((option) => (
-                      <option key={option} value={option}>{option}</option>
-                    ))}
-                  </select>
-                )}
+              {field.type === 'short_text' && (
+                <input
+                  type="text"
+                  value={(dynamicFieldValues[field.key] as string | undefined) ?? ''}
+                  maxLength={field.rules?.maxLength}
+                  onChange={(e) => updateDynamicFieldValue(field.key, e.target.value)}
+                  className="w-full px-4 py-3 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-medium"
+                />
+              )}
 
-                {field.type === 'multi_select' && (
-                  <div className="space-y-2 px-3 py-3 bg-white border border-slate-300 rounded-lg">
-                    {(field.options || []).map((option) => {
-                      const selected = Array.isArray(dynamicFieldValues[field.key])
-                        ? (dynamicFieldValues[field.key] as string[])
-                        : [];
-                      const isChecked = selected.includes(option);
-                      return (
-                        <label key={option} className="flex items-center gap-2 text-sm text-slate-700">
-                          <input
-                            type="checkbox"
-                            checked={isChecked}
-                            onChange={(e) => {
-                              const next = new Set(selected);
-                              if (e.target.checked) {
-                                next.add(option);
-                              } else {
-                                next.delete(option);
-                              }
-                              updateDynamicFieldValue(field.key, Array.from(next));
-                            }}
-                          />
-                          {option}
-                        </label>
-                      );
-                    })}
+              {field.type === 'select' && (
+                <select
+                  value={(dynamicFieldValues[field.key] as string | undefined) ?? ''}
+                  onChange={(e) => updateDynamicFieldValue(field.key, e.target.value)}
+                  className="w-full px-4 py-3 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none appearance-none font-medium"
+                >
+                  <option value="">Selecciona una opción</option>
+                  {(field.options || []).map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+              )}
+
+              {field.type === 'multi_select' && (
+                <div className="space-y-2 px-3 py-3 bg-white border border-slate-300 rounded-lg">
+                  {(field.options || []).map((option) => {
+                    const selected = Array.isArray(dynamicFieldValues[field.key])
+                      ? (dynamicFieldValues[field.key] as string[])
+                      : [];
+                    const isChecked = selected.includes(option);
+                    return (
+                      <label key={option} className="flex items-center gap-2 text-sm text-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={(e) => {
+                            const next = new Set(selected);
+                            if (e.target.checked) {
+                              next.add(option);
+                            } else {
+                              next.delete(option);
+                            }
+                            updateDynamicFieldValue(field.key, Array.from(next));
+                          }}
+                        />
+                        {option}
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ))}
+
+          <div className="md:col-span-2 relative" ref={dropdownRef}>
+            <label className="block text-sm font-semibold text-slate-700 mb-2">Comentario / Incidencia</label>
+
+            <div className="relative w-full">
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Escribir..."
+                  value={commentInput}
+                  onChange={e => {
+                    setCommentInput(e.target.value);
+                    setShowSuggestions(true);
+                  }}
+                  onFocus={handleInputFocus}
+                  className="w-full pl-4 pr-10 py-3 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium text-lg"
+                  autoComplete="off"
+                />
+                <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center">
+                  {commentInput && (
+                    <button type="button" onClick={clearComment} className="p-1 text-slate-400 hover:text-red-500 transition-colors mr-1">
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                  <div className={`pointer-events-none text-slate-400 p-1 transition-transform duration-200 ${showSuggestions ? 'rotate-180' : ''}`}>
+                      <ChevronDown className="w-4 h-4" />
                   </div>
-                )}
+                </div>
               </div>
-            ))}
+
+              {showSuggestions && (
+                <div className="absolute z-50 w-full bottom-full mb-2 bg-white border border-slate-200 rounded-xl shadow-xl max-h-60 overflow-y-auto animate-fade-in origin-bottom">
+                  {filteredComments.length > 0 ? (
+                    <div className="divide-y divide-slate-50">
+                      {filteredComments.map((comment, index) => (
+                        <div
+                          key={index}
+                          onClick={() => selectComment(comment)}
+                          className="w-full text-left px-4 py-3.5 hover:bg-blue-50 active:bg-blue-100 text-slate-700 font-medium transition-colors flex items-center justify-between group touch-target cursor-pointer"
+                        >
+                          <div className="flex items-center gap-3 overflow-hidden">
+                            <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0"></span>
+                            <span className="truncate">{comment}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="px-4 py-4 text-center">
+                        <p className="text-slate-400 text-sm mb-1">Nueva incidencia</p>
+                        <p className="text-blue-600 font-bold text-sm break-words">"{commentInput}"</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
-        )}
+        </div>
 
         {dynamicFieldError && (
           <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
             {dynamicFieldError}
           </div>
         )}
-
-        {/* Production Data */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* Comment Input */}
-            <div className="md:col-span-2 relative" ref={dropdownRef}>
-              <div className="flex justify-between items-center mb-2">
-                  <label className="block text-sm font-semibold text-slate-700">Comentario / Incidencia</label>
-                  {canManageComments && (
-                    <button 
-                    type="button" 
-                    onClick={() => openManageModal('comments')}
-                    className="text-xs text-blue-600 font-bold flex items-center gap-1 hover:underline bg-blue-50 px-2 py-1 rounded"
-                    >
-                      <Settings className="w-3 h-3" /> Config
-                    </button>
-                  )}
-              </div>
-              
-              <div className="relative w-full">
-                <div className="relative">
-                  <input
-                    type="text"
-                    placeholder="Escribir..."
-                    value={commentInput}
-                    onChange={e => {
-                      setCommentInput(e.target.value);
-                      setShowSuggestions(true);
-                    }}
-                    onFocus={handleInputFocus}
-                    className="w-full pl-4 pr-10 py-3 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium text-lg"
-                    autoComplete="off"
-                  />
-                  <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center">
-                    {commentInput && (
-                      <button type="button" onClick={clearComment} className="p-1 text-slate-400 hover:text-red-500 transition-colors mr-1">
-                        <X className="w-4 h-4" />
-                      </button>
-                    )}
-                    <div className={`pointer-events-none text-slate-400 p-1 transition-transform duration-200 ${showSuggestions ? 'rotate-180' : ''}`}>
-                        <ChevronDown className="w-4 h-4" />
-                    </div>
-                  </div>
-                </div>
-
-                {showSuggestions && (
-                  <div className="absolute z-50 w-full bottom-full mb-2 bg-white border border-slate-200 rounded-xl shadow-xl max-h-60 overflow-y-auto animate-fade-in origin-bottom">
-                    {filteredComments.length > 0 ? (
-                      <div className="divide-y divide-slate-50">
-                        {filteredComments.map((comment, index) => (
-                          <div
-                            key={index}
-                            onClick={() => selectComment(comment)}
-                            className="w-full text-left px-4 py-3.5 hover:bg-blue-50 active:bg-blue-100 text-slate-700 font-medium transition-colors flex items-center justify-between group touch-target cursor-pointer"
-                          >
-                            <div className="flex items-center gap-3 overflow-hidden">
-                              <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0"></span>
-                              <span className="truncate">{comment}</span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="px-4 py-4 text-center">
-                          <p className="text-slate-400 text-sm mb-1">Nueva incidencia</p>
-                          <p className="text-blue-600 font-bold text-sm break-words">"{commentInput}"</p>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-        </div>
 
         <div className="pt-2 pb-6 flex gap-3">
           {editingRecord && (
