@@ -1,7 +1,7 @@
 import { io } from 'socket.io-client';
 
 export const socket = io({
-  autoConnect: true,
+  autoConnect: false,
   reconnection: true,
   reconnectionAttempts: Infinity,
   reconnectionDelay: 1000,

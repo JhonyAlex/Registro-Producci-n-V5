@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { socket } from '../services/socket';
+import { setSettingsSyncEnabled } from '../services/storageService';
 
 const AUTH_EXPIRED_EVENT = 'app:auth-expired';
 const SESSION_REPLACED_EVENT = 'app:session-replaced';
@@ -111,11 +112,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     if (user) {
+      setSettingsSyncEnabled(true);
       socket.disconnect();
       socket.connect();
       return;
     }
 
+    setSettingsSyncEnabled(false);
     socket.disconnect();
   }, [user?.id]);
 

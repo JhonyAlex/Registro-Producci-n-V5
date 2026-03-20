@@ -94,11 +94,17 @@ const AppContent: React.FC = () => {
   
   // Real-time synchronization
   useEffect(() => {
+    if (!user) {
+      setRecords([]);
+      setDbError('');
+      return;
+    }
+
     const unsubscribe = subscribeToRecords(
       (updatedRecords) => {
         setRecords(updatedRecords);
-        // If we get data, we are connected
-        if (dbError && dbError.includes('Offline')) setDbError(''); 
+        // If we get data again, clear stale offline warning.
+        setDbError((prev) => (prev.includes('Offline') ? '' : prev));
       },
       (errorMsg) => {
         setDbError(errorMsg);
@@ -115,7 +121,7 @@ const AppContent: React.FC = () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
-  }, []);
+  }, [user?.id]);
 
   // Track pending queue count for current user
   useEffect(() => {
@@ -142,13 +148,18 @@ const AppContent: React.FC = () => {
   }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    if (!user) {
+      setAvailableBosses([]);
+      return;
+    }
+
     const unsubscribe = subscribeToSettings((_comments, _operators, bosses) => {
       setAvailableBosses(bosses);
       setFilters((prev) => (prev.boss && !bosses.includes(prev.boss) ? { ...prev, boss: '' } : prev));
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [user?.id]);
 
   // Calculate unique operators from existing records for the filter dropdown
   const uniqueOperators = useMemo(() => {

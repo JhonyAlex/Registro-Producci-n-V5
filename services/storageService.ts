@@ -197,8 +197,35 @@ const startPollingSettings = () => {
   }
 };
 
-// Start polling immediately
-startPollingSettings();
+const stopPollingSettings = () => {
+  if (!isPolling) return;
+  isPolling = false;
+
+  socket.off('connect', triggerSettingsSync);
+  socket.off('settings_changed', triggerSettingsSync);
+  socket.off('user_status_changed', triggerSettingsSync);
+  socket.off('user_deleted', triggerSettingsSync);
+
+  if (settingsIntervalId !== null) {
+    window.clearInterval(settingsIntervalId);
+    settingsIntervalId = null;
+  }
+
+  if (settingsBrowserListenersAttached) {
+    window.removeEventListener('online', triggerSettingsSync);
+    window.removeEventListener('focus', triggerSettingsSync);
+    document.removeEventListener('visibilitychange', handleSettingsVisibilitySync);
+    settingsBrowserListenersAttached = false;
+  }
+};
+
+export const setSettingsSyncEnabled = (enabled: boolean) => {
+  if (enabled) {
+    startPollingSettings();
+    return;
+  }
+  stopPollingSettings();
+};
 
 // --- PUBLIC API ---
 
