@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Lock, User, AlertCircle } from 'lucide-react';
 
@@ -8,6 +8,16 @@ const Login: React.FC<{ onSwitchToRegister: () => void }> = ({ onSwitchToRegiste
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const pinInputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-advance to PIN field when operator code is complete
+  const handleOperatorCodeChange = (value: string) => {
+    const cleaned = value.replace(/\D/g, '').slice(0, 4);
+    setOperatorCode(cleaned);
+    if (cleaned.length > 0) {
+      pinInputRef.current?.focus();
+    }
+  };
 
   // Auto-submit cuando el PIN está completo (6 dígitos) y hay código de operario
   useEffect(() => {
@@ -74,7 +84,7 @@ const Login: React.FC<{ onSwitchToRegister: () => void }> = ({ onSwitchToRegiste
               <input
                 type="text"
                 value={operatorCode}
-                onChange={(e) => setOperatorCode(e.target.value.replace(/\D/g, ''))}
+                onChange={(e) => handleOperatorCodeChange(e.target.value)}
                 inputMode="numeric"
                 pattern="[0-9]*"
                 className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all font-medium"
@@ -88,11 +98,12 @@ const Login: React.FC<{ onSwitchToRegister: () => void }> = ({ onSwitchToRegiste
             <div className="relative">
               <Lock className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
+                ref={pinInputRef}
                 type="password"
                 value={pin}
-                  onFocus={() => setPin('')}
-                  onClick={() => setPin('')}
-                  inputMode="numeric"
+                onFocus={() => setPin('')}
+                onClick={() => setPin('')}
+                inputMode="numeric"
                 pattern="[0-9]*"
                 maxLength={6}
                 onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}

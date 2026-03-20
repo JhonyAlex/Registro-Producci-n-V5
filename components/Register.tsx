@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { UserPlus, User, Lock, Shield, AlertCircle } from 'lucide-react';
 
@@ -20,6 +20,25 @@ const Register: React.FC<{ onSwitchToLogin: () => void }> = ({ onSwitchToLogin }
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+  const pinInputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-advance to name field when operator code is entered
+  const handleOperatorCodeChange = (value: string) => {
+    const cleaned = value.replace(/\D/g, '').slice(0, 4);
+    setFormData({ ...formData, operator_code: cleaned });
+    if (cleaned.length > 0) {
+      nameInputRef.current?.focus();
+    }
+  };
+
+  // Auto-advance to PIN field when name is entered
+  const handleNameChange = (value: string) => {
+    setFormData({ ...formData, name: value });
+    if (value.trim().length > 0) {
+      pinInputRef.current?.focus();
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -97,7 +116,7 @@ const Register: React.FC<{ onSwitchToLogin: () => void }> = ({ onSwitchToLogin }
               <input
                 type="text"
                 value={formData.operator_code}
-                onChange={(e) => setFormData({ ...formData, operator_code: e.target.value.replace(/\D/g, '') })}
+                onChange={(e) => handleOperatorCodeChange(e.target.value)}
                 inputMode="numeric"
                 pattern="[0-9]*"
                 className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all font-medium"
@@ -111,9 +130,10 @@ const Register: React.FC<{ onSwitchToLogin: () => void }> = ({ onSwitchToLogin }
             <div className="relative">
               <User className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
+                ref={nameInputRef}
                 type="text"
                 value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                onChange={(e) => handleNameChange(e.target.value)}
                 className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all font-medium"
                 placeholder="Ej: Juan Pérez"
               />
@@ -142,11 +162,12 @@ const Register: React.FC<{ onSwitchToLogin: () => void }> = ({ onSwitchToLogin }
             <div className="relative">
               <Lock className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
+                ref={pinInputRef}
                 type="password"
                 value={formData.pin}
-                  onFocus={() => setFormData({ ...formData, pin: '' })}
-                  onClick={() => setFormData({ ...formData, pin: '' })}
-                  inputMode="numeric"
+                onFocus={() => setFormData({ ...formData, pin: '' })}
+                onClick={() => setFormData({ ...formData, pin: '' })}
+                inputMode="numeric"
                 pattern="[0-9]*"
                 onChange={(e) => setFormData({ ...formData, pin: e.target.value.replace(/\D/g, '') })}
                 className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all font-mono tracking-widest text-lg"
