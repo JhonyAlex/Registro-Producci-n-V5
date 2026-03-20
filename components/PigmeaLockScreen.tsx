@@ -143,18 +143,20 @@ const PigmeaLockScreen: React.FC<PigmeaLockScreenProps> = ({
         touchAction: isMobilePointer ? 'none' : 'auto',
       }}
     >
+      <div className="pigmea-lock-travel-bg" aria-hidden="true" />
+
       {/* Logo */}
       {!hasLogoError ? (
         <img
           src={logoUrl}
           alt="Logo oficial de Pigmea"
-          className="w-40 h-auto md:w-52 drop-shadow-[0_8px_30px_rgba(255,255,255,0.15)]"
+          className="relative z-10 w-40 h-auto md:w-52 drop-shadow-[0_8px_30px_rgba(255,255,255,0.15)]"
           loading="eager"
           onError={() => setHasLogoError(true)}
           draggable={false}
         />
       ) : (
-        <div className="w-40 h-16 flex items-center justify-center md:w-52">
+        <div className="relative z-10 w-40 h-16 flex items-center justify-center md:w-52">
           <span className="text-2xl font-bold tracking-widest opacity-80">PIGMEA</span>
         </div>
       )}
@@ -162,7 +164,7 @@ const PigmeaLockScreen: React.FC<PigmeaLockScreenProps> = ({
       {/* App name */}
       <h1
         id="pigmea-lock-title"
-        className="mt-6 text-2xl md:text-3xl font-bold tracking-tight select-none"
+        className="relative z-10 mt-6 text-2xl md:text-3xl font-bold tracking-tight select-none"
       >
         {appName}
       </h1>
@@ -170,7 +172,7 @@ const PigmeaLockScreen: React.FC<PigmeaLockScreenProps> = ({
       {/* Daily motivational phrase */}
       <p
         id="pigmea-lock-description"
-        className="mt-3 text-sm md:text-base text-slate-300 max-w-md select-none"
+        className="relative z-10 mt-3 text-sm md:text-base text-slate-300 max-w-md select-none"
       >
         {phrase}
       </p>
@@ -179,7 +181,7 @@ const PigmeaLockScreen: React.FC<PigmeaLockScreenProps> = ({
       <button
         type="button"
         onClick={(e) => { e.stopPropagation(); requestUnlock(); }}
-        className="mt-8 px-6 py-3 rounded-full border border-white/40 bg-white/10 hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 text-sm font-medium transition-colors select-none"
+        className="relative z-10 mt-8 px-6 py-3 rounded-full border border-white/40 bg-white/10 hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 text-sm font-medium transition-colors select-none"
         aria-label="Desbloquear pantalla"
       >
         Desbloquear
@@ -191,12 +193,12 @@ const PigmeaLockScreen: React.FC<PigmeaLockScreenProps> = ({
           <p className="mt-6 text-xs text-slate-400 select-none" aria-hidden="true">
             Desliza hacia arriba para desbloquear
           </p>
-          <div className="mt-3 w-16 h-1.5 rounded-full bg-white/40" aria-hidden="true" />
+          <div className="relative z-10 mt-3 w-16 h-1.5 rounded-full bg-white/40" aria-hidden="true" />
         </>
       )}
 
       {/* Footer */}
-      <p className="absolute bottom-5 text-xs text-slate-400 select-none">{footerText}</p>
+      <p className="absolute z-10 bottom-5 text-xs text-slate-400 select-none">{footerText}</p>
     </div>
   );
 };
