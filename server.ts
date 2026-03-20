@@ -337,6 +337,7 @@ const PERMISSION_KEYS = [
   'settings.field_schemas',
   'settings.dashboards',
   'admin.users.read',
+  'admin.users.create',
   'admin.users.approve',
   'admin.users.unlock',
   'admin.users.change_password',
@@ -358,6 +359,7 @@ const DEFAULT_ROLE_PERMISSIONS: Record<AppRole, string[]> = {
     'settings.field_schemas',
     'settings.dashboards',
     'admin.users.read',
+    'admin.users.create',
     'admin.users.approve',
     'admin.users.unlock',
     'admin.users.change_password',
@@ -374,6 +376,8 @@ const normalizeOptionalString = (value: any): string | null => {
   const normalized = String(value).trim();
   return normalized.length > 0 ? normalized : null;
 };
+
+const isNumericOnly = (value: string): boolean => /^\d+$/.test(value);
 
 const MACHINE_VALUES = ['WH1', 'Giave', 'WH3', 'NEXUS', 'SL2', '21', '22', 'S2DT', 'PROSLIT'] as const;
 const SHIFT_VALUES = ['Mañana', 'Tarde', 'Noche'] as const;
@@ -954,8 +958,16 @@ export const requirePermission = (permissionKey: string) => {
 
 // Register
 app.post('/api/auth/register', requireDB, async (req, res) => {
-  const { operator_code, pin, name, role } = req.body;
-  if (!operator_code || !pin || !name || !role) return res.status(400).json({ error: 'Faltan datos' });
+  const operatorCode = normalizeOptionalString(req.body?.operator_code);
+  const pin = normalizeOptionalString(req.body?.pin);
+  const name = normalizeOptionalString(req.body?.name);
+  const role = normalizeOptionalString(req.body?.role);
+
+  if (!operatorCode || !pin || !name || !role) return res.status(400).json({ error: 'Faltan datos' });
+  if (!isNumericOnly(operatorCode)) return res.status(400).json({ error: 'El código de operario debe contener solo números' });
+  if (!isNumericOnly(pin)) return res.status(400).json({ error: 'El PIN debe contener solo números' });
+  if (pin.length < 4) return res.status(400).json({ error: 'El PIN debe tener al menos 4 dígitos' });
+  if (!APP_ROLES.includes(role as AppRole)) return res.status(400).json({ error: 'Rol inválido' });
 
   try {
     // Check if it's the first user
@@ -970,7 +982,7 @@ app.post('/api/auth/register', requireDB, async (req, res) => {
     const result = await pool.query(
       `INSERT INTO users (operator_code, pin_hash, role, status, name) 
        VALUES ($1, $2, $3, $4, $5) RETURNING id, operator_code, role, status, name`,
-      [operator_code, pinHash, assignedRole, assignedStatus, name]
+      [operatorCode, pinHash, assignedRole, assignedStatus, name]
     );
 
     const newUser = result.rows[0];
@@ -990,15 +1002,18 @@ app.post('/api/auth/register', requireDB, async (req, res) => {
 
 // Login
 app.post('/api/auth/login', requireDB, async (req, res) => {
-  const { operator_code, pin } = req.body;
-  if (!operator_code || !pin) return res.status(400).json({ error: 'Faltan credenciales' });
+  const operatorCode = normalizeOptionalString(req.body?.operator_code);
+  const pin = normalizeOptionalString(req.body?.pin);
+  if (!operatorCode || !pin) return res.status(400).json({ error: 'Faltan credenciales' });
+  if (!isNumericOnly(operatorCode)) return res.status(400).json({ error: 'El código de operario debe contener solo números' });
+  if (!isNumericOnly(pin)) return res.status(400).json({ error: 'El PIN debe contener solo números' });
 
   try {
-    const result = await pool.query('SELECT * FROM users WHERE operator_code = $1', [operator_code]);
+    const result = await pool.query('SELECT * FROM users WHERE operator_code = $1', [operatorCode]);
     const user = result.rows[0];
 
     if (!user) {
-      await logAudit(null, 'login_failed', { operator_code, reason: 'user_not_found' }, req.ip || '');
+      await logAudit(null, 'login_failed', { operator_code: operatorCode, reason: 'user_not_found' }, req.ip || '');
       return res.status(401).json({ error: 'Credenciales inválidas' });
     }
 
@@ -1102,8 +1117,20 @@ app.put('/api/auth/profile', authenticate, requireDB, async (req, res) => {
     return res.status(400).json({ error: 'No hay cambios para guardar' });
   }
 
+  if (operatorCode && !isNumericOnly(operatorCode)) {
+    return res.status(400).json({ error: 'El código de operario debe contener solo números' });
+  }
+
   if (newPin && newPin.length < 4) {
     return res.status(400).json({ error: 'El PIN debe tener al menos 4 dígitos' });
+  }
+
+  if (newPin && !isNumericOnly(newPin)) {
+    return res.status(400).json({ error: 'El PIN debe contener solo números' });
+  }
+
+  if (currentPin && !isNumericOnly(currentPin)) {
+    return res.status(400).json({ error: 'El PIN actual debe contener solo números' });
   }
 
   if (newPin && !currentPin) {
@@ -1178,8 +1205,16 @@ app.put('/api/admin/users/:id/profile', authenticate, requireRole(['admin']), re
     return res.status(400).json({ error: 'No hay cambios para guardar' });
   }
 
+  if (operatorCode && !isNumericOnly(operatorCode)) {
+    return res.status(400).json({ error: 'El código de operario debe contener solo números' });
+  }
+
   if (newPin && newPin.length < 4) {
     return res.status(400).json({ error: 'El PIN debe tener al menos 4 dígitos' });
+  }
+
+  if (newPin && !isNumericOnly(newPin)) {
+    return res.status(400).json({ error: 'El PIN debe contener solo números' });
   }
 
   if (role && !APP_ROLES.includes(role as AppRole)) {
@@ -1256,6 +1291,63 @@ app.get('/api/admin/users', authenticate, requirePermission('admin.users.read'),
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: 'Error fetching users' });
+  }
+});
+
+app.post('/api/admin/users', authenticate, requirePermission('admin.users.create'), requireDB, async (req, res) => {
+  const admin = (req as any).user;
+  const operatorCode = normalizeOptionalString(req.body?.operator_code);
+  const pin = normalizeOptionalString(req.body?.pin);
+  const name = normalizeOptionalString(req.body?.name);
+  const role = normalizeOptionalString(req.body?.role);
+
+  if (!operatorCode || !pin || !name || !role) {
+    return res.status(400).json({ error: 'Faltan datos obligatorios' });
+  }
+
+  if (!isNumericOnly(operatorCode)) {
+    return res.status(400).json({ error: 'El código de operario debe contener solo números' });
+  }
+
+  if (!isNumericOnly(pin)) {
+    return res.status(400).json({ error: 'El PIN debe contener solo números' });
+  }
+
+  if (pin.length < 4) {
+    return res.status(400).json({ error: 'El PIN debe tener al menos 4 dígitos' });
+  }
+
+  if (!APP_ROLES.includes(role as AppRole)) {
+    return res.status(400).json({ error: 'Rol inválido' });
+  }
+
+  try {
+    const pinHash = await bcrypt.hash(pin, 10);
+    const result = await pool.query(
+      `INSERT INTO users (operator_code, pin_hash, role, status, name)
+       VALUES ($1, $2, $3, 'active', $4)
+       RETURNING id, operator_code, role, status, name`,
+      [operatorCode, pinHash, role, name]
+    );
+
+    const newUser = result.rows[0];
+
+    await logAudit(admin.id, 'admin_user_created', {
+      target_user_id: newUser.id,
+      target_operator_code: newUser.operator_code,
+      target_name: newUser.name,
+      target_role: newUser.role,
+      target_status: newUser.status
+    }, req.ip || '');
+
+    io.emit('settings_changed');
+    io.emit('user_status_changed', { userId: newUser.id, status: newUser.status });
+    res.json({ success: true, user: newUser });
+  } catch (err: any) {
+    if (err.code === '23505') {
+      return res.status(400).json({ error: 'El código de operario ya existe' });
+    }
+    res.status(500).json({ error: 'Error creando usuario desde administración' });
   }
 });
 
@@ -1342,6 +1434,10 @@ app.patch('/api/admin/users/:id/password', authenticate, requirePermission('admi
 
   if (newPin.length < 4) {
     return res.status(400).json({ error: 'El PIN debe tener al menos 4 dígitos' });
+  }
+
+  if (!isNumericOnly(newPin)) {
+    return res.status(400).json({ error: 'El PIN debe contener solo números' });
   }
 
   try {

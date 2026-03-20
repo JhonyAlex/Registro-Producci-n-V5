@@ -32,6 +32,10 @@ const Login: React.FC<{ onSwitchToRegister: () => void }> = ({ onSwitchToRegiste
       setError('Por favor ingrese código y PIN');
       return;
     }
+    if (!/^\d+$/.test(operatorCode)) {
+      setError('El código de operario debe contener solo números');
+      return;
+    }
     setError('');
     setLoading(true);
     try {
@@ -69,9 +73,11 @@ const Login: React.FC<{ onSwitchToRegister: () => void }> = ({ onSwitchToRegiste
               <input
                 type="text"
                 value={operatorCode}
-                onChange={(e) => setOperatorCode(e.target.value)}
+                onChange={(e) => setOperatorCode(e.target.value.replace(/\D/g, ''))}
+                inputMode="numeric"
+                pattern="[0-9]*"
                 className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all font-medium"
-                placeholder="Ej: OP-001"
+                placeholder="Ej: 1001"
               />
             </div>
           </div>

@@ -38,6 +38,11 @@ const UserProfile: React.FC = () => {
       return;
     }
 
+    if (!/^\d+$/.test(trimmedCode)) {
+      setError('El código de operario debe contener solo números.');
+      return;
+    }
+
     if (trimmedNewPin) {
       if (trimmedNewPin.length < 4) {
         setError('El nuevo PIN debe tener al menos 4 dígitos.');
@@ -127,7 +132,9 @@ const UserProfile: React.FC = () => {
                 <User className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   value={operatorCode}
-                  onChange={(e) => setOperatorCode(e.target.value)}
+                  onChange={(e) => setOperatorCode(e.target.value.replace(/\D/g, ''))}
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   className="w-full pl-9 pr-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                   maxLength={20}
                 />
@@ -157,7 +164,9 @@ const UserProfile: React.FC = () => {
               <input
                 type="password"
                 value={currentPin}
-                onChange={(e) => setCurrentPin(e.target.value)}
+                onChange={(e) => setCurrentPin(e.target.value.replace(/\D/g, ''))}
+                inputMode="numeric"
+                pattern="[0-9]*"
                 placeholder="PIN actual"
                 className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                 maxLength={12}
@@ -165,7 +174,9 @@ const UserProfile: React.FC = () => {
               <input
                 type="password"
                 value={newPin}
-                onChange={(e) => setNewPin(e.target.value)}
+                onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))}
+                inputMode="numeric"
+                pattern="[0-9]*"
                 placeholder="Nuevo PIN"
                 className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                 maxLength={12}
@@ -173,7 +184,9 @@ const UserProfile: React.FC = () => {
               <input
                 type="password"
                 value={confirmPin}
-                onChange={(e) => setConfirmPin(e.target.value)}
+                onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, ''))}
+                inputMode="numeric"
+                pattern="[0-9]*"
                 placeholder="Confirmar nuevo PIN"
                 className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                 maxLength={12}

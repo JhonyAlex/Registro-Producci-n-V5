@@ -19,6 +19,13 @@ export interface UserOption {
   role: string;
 }
 
+export interface AdminCreateUserPayload {
+  operator_code: string;
+  name: string;
+  pin: string;
+  role: string;
+}
+
 // Local cache to serve synchronous get requests if needed immediately
 let localRecordsCache: ProductionRecord[] = [];
 let localCommentsCache: string[] = [];
@@ -326,6 +333,13 @@ export const getDashboardConfigs = async (): Promise<DashboardConfig[]> => {
 
 export const getDashboardConfig = async (id: string): Promise<DashboardConfig> => {
   return fetchJson(`/settings/dashboard-configs/${encodeURIComponent(id)}`);
+};
+
+export const createAdminUser = async (data: AdminCreateUserPayload): Promise<any> => {
+  return fetchJson('/admin/users', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
 };
 
 export const createDashboardConfig = async (data: {

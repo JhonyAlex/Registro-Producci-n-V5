@@ -17,6 +17,7 @@ const PERMISSION_LABELS: Record<string, string> = {
   'settings.field_schemas': 'Gestionar campos dinámicos por máquina',
   'settings.dashboards': 'Gestionar dashboards dinámicos',
   'admin.users.read': 'Ver usuarios',
+  'admin.users.create': 'Crear usuarios desde administración',
   'admin.users.approve': 'Aprobar usuarios',
   'admin.users.unlock': 'Desbloquear usuarios',
   'admin.users.change_password': 'Cambiar contraseña de usuarios',

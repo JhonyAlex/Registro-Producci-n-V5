@@ -29,6 +29,10 @@ const Register: React.FC<{ onSwitchToLogin: () => void }> = ({ onSwitchToLogin }
       setError('Por favor complete todos los campos');
       return;
     }
+    if (!/^\d+$/.test(formData.operator_code)) {
+      setError('El código de operario debe contener solo números');
+      return;
+    }
     if (formData.pin.length < 4) {
       setError('El PIN debe tener al menos 4 dígitos');
       return;
@@ -93,9 +97,11 @@ const Register: React.FC<{ onSwitchToLogin: () => void }> = ({ onSwitchToLogin }
               <input
                 type="text"
                 value={formData.operator_code}
-                onChange={(e) => setFormData({ ...formData, operator_code: e.target.value })}
+                onChange={(e) => setFormData({ ...formData, operator_code: e.target.value.replace(/\D/g, '') })}
+                inputMode="numeric"
+                pattern="[0-9]*"
                 className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all font-medium"
-                placeholder="Ej: OP-001"
+                placeholder="Ej: 1001"
               />
             </div>
           </div>
