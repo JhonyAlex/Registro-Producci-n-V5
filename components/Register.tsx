@@ -72,7 +72,7 @@ const Register: React.FC<{ onSwitchToLogin: () => void }> = ({ onSwitchToLogin }
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50 p-0">
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4 py-0">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
         <div className="bg-slate-800 p-6 text-center">
           <div className="w-16 h-16 bg-white/10 rounded-full flex items-center justify-center mx-auto mb-4">

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useInactivityLock } from '../hooks/useInactivityLock';
+import useScreenWakeLock from '../hooks/useScreenWakeLock';
 import { getDailyPhrase } from '../utils/dailyPhrase';
 import PigmeaLockScreen from './PigmeaLockScreen';
 
@@ -25,6 +26,8 @@ const GlobalLockScreenGuard: React.FC<GlobalLockScreenGuardProps> = ({
 }) => {
   const [dayMarker, setDayMarker] = useState(() => new Date().toDateString());
   const { isLocked, unlock } = useInactivityLock({ timeoutMs });
+
+  useScreenWakeLock(true);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
