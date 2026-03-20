@@ -2,7 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import { Pool } from 'pg';
 import dotenv from 'dotenv';
-import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs/promises';
 import http from 'http';
@@ -1146,31 +1145,51 @@ app.post('/api/auth/logout', authenticate, async (req, res) => {
 });
 
 // Get Current User (Me)
-app.get('/api/auth/me', authenticate, async (req, res) => {
-  const user = (req as any).user;
-  
-  // Fetch permissions and visibility
-  const rolePermissions = await getRolePermissions(user.role);
-  const permissions = Array.from(rolePermissions).map((permissionKey) => {
-    const parsed = splitPermissionKey(permissionKey);
-    return {
-      key: permissionKey,
-      module: parsed.module,
-      action: parsed.action
-    };
-  });
-  const visResult = await pool.query('SELECT target_id FROM user_visibility WHERE observer_id = $1', [user.id]);
-  
-  res.json({
-    user: {
-      id: user.id,
-      operator_code: user.operator_code,
-      name: user.name,
-      role: user.role,
-      permissions,
-      visible_users: visResult.rows.map(r => r.target_id)
+app.get('/api/auth/me', async (req, res) => {
+  const token = req.cookies.token;
+  if (!token) {
+    return res.json({ authenticated: false, user: null });
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET) as AuthTokenPayload;
+    const userResult = await pool.query('SELECT * FROM users WHERE id = $1', [decoded.id]);
+    const user = userResult.rows[0];
+
+    if (!user || user.status !== 'active' || !isSessionTokenCurrent(decoded.sv, user.session_version)) {
+      res.clearCookie('token');
+      return res.json({ authenticated: false, user: null });
     }
-  });
+
+    await pool.query('UPDATE users SET last_activity = CURRENT_TIMESTAMP WHERE id = $1', [user.id]);
+
+    // Fetch permissions and visibility
+    const rolePermissions = await getRolePermissions(user.role);
+    const permissions = Array.from(rolePermissions).map((permissionKey) => {
+      const parsed = splitPermissionKey(permissionKey);
+      return {
+        key: permissionKey,
+        module: parsed.module,
+        action: parsed.action
+      };
+    });
+    const visResult = await pool.query('SELECT target_id FROM user_visibility WHERE observer_id = $1', [user.id]);
+
+    return res.json({
+      authenticated: true,
+      user: {
+        id: user.id,
+        operator_code: user.operator_code,
+        name: user.name,
+        role: user.role,
+        permissions,
+        visible_users: visResult.rows.map(r => r.target_id)
+      }
+    });
+  } catch {
+    res.clearCookie('token');
+    return res.json({ authenticated: false, user: null });
+  }
 });
 
 app.put('/api/auth/profile', authenticate, requireDB, async (req, res) => {
@@ -2830,6 +2849,7 @@ async function startServer() {
   });
 
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
