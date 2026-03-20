@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { Lock, User, AlertCircle } from 'lucide-react';
 
 const OPERATOR_CODE_LENGTH = 3;
-const PIN_LENGTH = 6;
+const PIN_LENGTH = 4;
 
 const Login: React.FC<{ onSwitchToRegister: () => void }> = ({ onSwitchToRegister }) => {
   const { login } = useAuth();
@@ -12,19 +12,28 @@ const Login: React.FC<{ onSwitchToRegister: () => void }> = ({ onSwitchToRegiste
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const pinInputRef = useRef<HTMLInputElement>(null);
+  const lastAutoLoginAttemptRef = useRef('');
 
   // Auto-advance to PIN field when operator code is complete
   const handleOperatorCodeChange = (value: string) => {
     const cleaned = value.replace(/\D/g, '').slice(0, OPERATOR_CODE_LENGTH);
     setOperatorCode(cleaned);
+    lastAutoLoginAttemptRef.current = '';
     if (cleaned.length === OPERATOR_CODE_LENGTH) {
       pinInputRef.current?.focus();
     }
   };
 
-  // Auto-submit cuando el PIN está completo (6 dígitos) y hay código de operario
+  // Auto-submit una sola vez por combinación código+PIN cuando el PIN está completo
   useEffect(() => {
-    if (pin.length === PIN_LENGTH && operatorCode.length === OPERATOR_CODE_LENGTH && !loading) {
+    const attemptKey = `${operatorCode}:${pin}`;
+    if (
+      pin.length === PIN_LENGTH
+      && operatorCode.length === OPERATOR_CODE_LENGTH
+      && !loading
+      && lastAutoLoginAttemptRef.current !== attemptKey
+    ) {
+      lastAutoLoginAttemptRef.current = attemptKey;
       const autoLogin = async () => {
         setError('');
         setLoading(true);
@@ -54,8 +63,13 @@ const Login: React.FC<{ onSwitchToRegister: () => void }> = ({ onSwitchToRegiste
       setError('El código de operario debe tener 3 dígitos');
       return;
     }
+    if (pin.length !== PIN_LENGTH) {
+      setError('El PIN debe tener 4 dígitos');
+      return;
+    }
     setError('');
     setLoading(true);
+    lastAutoLoginAttemptRef.current = `${operatorCode}:${pin}`;
     try {
       await login(operatorCode, pin);
     } catch (err: any) {
@@ -111,13 +125,25 @@ const Login: React.FC<{ onSwitchToRegister: () => void }> = ({ onSwitchToRegiste
                 ref={pinInputRef}
                 type="password"
                 value={pin}
-                onFocus={() => setPin('')}
-                onClick={() => setPin('')}
+                onFocus={() => {
+                  setPin('');
+                  lastAutoLoginAttemptRef.current = '';
+                }}
+                onClick={() => {
+                  setPin('');
+                  lastAutoLoginAttemptRef.current = '';
+                }}
                 inputMode="numeric"
                 pattern="[0-9]*"
                 enterKeyHint="done"
                 maxLength={PIN_LENGTH}
-                onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, PIN_LENGTH))}
+                onChange={(e) => {
+                  const cleanedPin = e.target.value.replace(/\D/g, '').slice(0, PIN_LENGTH);
+                  setPin(cleanedPin);
+                  if (cleanedPin.length !== PIN_LENGTH) {
+                    lastAutoLoginAttemptRef.current = '';
+                  }
+                }}
                 className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all font-mono text-center tracking-[0.5em] text-xl"
                 placeholder="••••"
               />

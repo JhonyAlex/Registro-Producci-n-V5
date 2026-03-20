@@ -19,6 +19,13 @@ type AuthTokenPayload = {
   exp?: number;
 };
 
+type RuntimeViteModule = {
+  createServer: (config: {
+    server: { middlewareMode: true };
+    appType: string;
+  }) => Promise<{ middlewares: unknown }>;
+};
+
 dotenv.config();
 
 const app = express();
@@ -36,7 +43,9 @@ app.use('/api', (_req, res, next) => {
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
   res.setHeader('Surrogate-Control', 'no-store');
-  next();
+  if (next) {
+    next();
+  }
 });
 
 // PostgreSQL Connection
@@ -331,6 +340,7 @@ const requireDB = (_req, res, next) => {
 const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-key-change-in-production';
 const SESSION_TIMEOUT_MINUTES = parseInt(process.env.SESSION_TIMEOUT_MINUTES || '30');
 const MAX_FAILED_ATTEMPTS = 3;
+const PIN_LENGTH = 4;
 
 const APP_ROLES = ['admin', 'jefe_planta', 'jefe_turno', 'operario'] as const;
 type AppRole = typeof APP_ROLES[number];
@@ -388,6 +398,7 @@ const normalizeOptionalString = (value: any): string | null => {
 };
 
 const isNumericOnly = (value: string): boolean => /^\d+$/.test(value);
+const hasValidPinLength = (value: string): boolean => value.length === PIN_LENGTH;
 
 const MACHINE_VALUES = ['WH1', 'Giave', 'WH3', 'NEXUS', 'SL2', '21', '22', 'S2DT', 'PROSLIT'] as const;
 const SHIFT_VALUES = ['Mañana', 'Tarde', 'Noche'] as const;
@@ -1016,7 +1027,7 @@ app.post('/api/auth/register', requireDB, async (req, res) => {
   if (!operatorCode || !pin || !name || !role) return res.status(400).json({ error: 'Faltan datos' });
   if (!isNumericOnly(operatorCode)) return res.status(400).json({ error: 'El código de operario debe contener solo números' });
   if (!isNumericOnly(pin)) return res.status(400).json({ error: 'El PIN debe contener solo números' });
-  if (pin.length < 4) return res.status(400).json({ error: 'El PIN debe tener al menos 4 dígitos' });
+  if (!hasValidPinLength(pin)) return res.status(400).json({ error: 'El PIN debe tener 4 dígitos' });
   if (!APP_ROLES.includes(role as AppRole)) return res.status(400).json({ error: 'Rol inválido' });
 
   try {
@@ -1057,6 +1068,7 @@ app.post('/api/auth/login', requireDB, async (req, res) => {
   if (!operatorCode || !pin) return res.status(400).json({ error: 'Faltan credenciales' });
   if (!isNumericOnly(operatorCode)) return res.status(400).json({ error: 'El código de operario debe contener solo números' });
   if (!isNumericOnly(pin)) return res.status(400).json({ error: 'El PIN debe contener solo números' });
+  if (!hasValidPinLength(pin)) return res.status(400).json({ error: 'El PIN debe tener 4 dígitos' });
 
   try {
     const result = await pool.query('SELECT * FROM users WHERE operator_code = $1', [operatorCode]);
@@ -1207,8 +1219,8 @@ app.put('/api/auth/profile', authenticate, requireDB, async (req, res) => {
     return res.status(400).json({ error: 'El código de operario debe contener solo números' });
   }
 
-  if (newPin && newPin.length < 4) {
-    return res.status(400).json({ error: 'El PIN debe tener al menos 4 dígitos' });
+  if (newPin && !hasValidPinLength(newPin)) {
+    return res.status(400).json({ error: 'El PIN debe tener 4 dígitos' });
   }
 
   if (newPin && !isNumericOnly(newPin)) {
@@ -1295,8 +1307,8 @@ app.put('/api/admin/users/:id/profile', authenticate, requireRole(['admin']), re
     return res.status(400).json({ error: 'El código de operario debe contener solo números' });
   }
 
-  if (newPin && newPin.length < 4) {
-    return res.status(400).json({ error: 'El PIN debe tener al menos 4 dígitos' });
+  if (newPin && !hasValidPinLength(newPin)) {
+    return res.status(400).json({ error: 'El PIN debe tener 4 dígitos' });
   }
 
   if (newPin && !isNumericOnly(newPin)) {
@@ -1399,8 +1411,8 @@ app.post('/api/admin/users', authenticate, requirePermission('admin.users.create
     return res.status(400).json({ error: 'El PIN debe contener solo números' });
   }
 
-  if (pin.length < 4) {
-    return res.status(400).json({ error: 'El PIN debe tener al menos 4 dígitos' });
+  if (!hasValidPinLength(pin)) {
+    return res.status(400).json({ error: 'El PIN debe tener 4 dígitos' });
   }
 
   if (!APP_ROLES.includes(role as AppRole)) {
@@ -1518,8 +1530,8 @@ app.patch('/api/admin/users/:id/password', authenticate, requirePermission('admi
     return res.status(400).json({ error: 'El nuevo PIN es obligatorio' });
   }
 
-  if (newPin.length < 4) {
-    return res.status(400).json({ error: 'El PIN debe tener al menos 4 dígitos' });
+  if (!hasValidPinLength(newPin)) {
+    return res.status(400).json({ error: 'El PIN debe tener 4 dígitos' });
   }
 
   if (!isNumericOnly(newPin)) {
@@ -2839,6 +2851,8 @@ app.post('/api/import', authenticate, requireRole(['admin', 'jefe_planta']), req
 async function startServer() {
   await initDB();
 
+  const loadViteModule = new Function("return import('vite')") as () => Promise<RuntimeViteModule>;
+
   io.on('connection', async (socket) => {
     const authenticatedUser = await getSocketAuthenticatedUser(socket.handshake.headers.cookie);
     if (!authenticatedUser) {
@@ -2849,7 +2863,7 @@ async function startServer() {
   });
 
   if (process.env.NODE_ENV !== "production") {
-    const { createServer: createViteServer } = await import('vite');
+    const { createServer: createViteServer } = await loadViteModule();
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",

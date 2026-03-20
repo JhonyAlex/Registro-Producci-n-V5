@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { UserPlus, User, Lock, Shield, AlertCircle } from 'lucide-react';
 
 const OPERATOR_CODE_LENGTH = 3;
-const PIN_LENGTH = 6;
+const PIN_LENGTH = 4;
 
 const ROLE_OPTIONS = [
   { value: 'operario', label: 'Operario' },
@@ -81,8 +81,8 @@ const Register: React.FC<{ onSwitchToLogin: () => void }> = ({ onSwitchToLogin }
       setError('El código de operario debe tener 3 dígitos');
       return;
     }
-    if (formData.pin.length < 4) {
-      setError('El PIN debe tener al menos 4 dígitos');
+    if (formData.pin.length !== PIN_LENGTH) {
+      setError('El PIN debe tener 4 dígitos');
       return;
     }
     setError('');
@@ -194,7 +194,7 @@ const Register: React.FC<{ onSwitchToLogin: () => void }> = ({ onSwitchToLogin }
           </div>
 
           <div>
-            <label className="block text-sm font-bold text-slate-700 mb-2">PIN (Mín. 4 dígitos)</label>
+            <label className="block text-sm font-bold text-slate-700 mb-2">PIN (4 dígitos)</label>
             <div className="relative">
               <Lock className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input

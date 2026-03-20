@@ -44,8 +44,8 @@ const UserProfile: React.FC = () => {
     }
 
     if (trimmedNewPin) {
-      if (trimmedNewPin.length < 4) {
-        setError('El nuevo PIN debe tener al menos 4 dígitos.');
+      if (trimmedNewPin.length !== 4) {
+        setError('El nuevo PIN debe tener 4 dígitos.');
         return;
       }
       if (!trimmedCurrentPin) {
@@ -164,32 +164,32 @@ const UserProfile: React.FC = () => {
               <input
                 type="password"
                 value={currentPin}
-                onChange={(e) => setCurrentPin(e.target.value.replace(/\D/g, ''))}
+                onChange={(e) => setCurrentPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
                 inputMode="numeric"
                 pattern="[0-9]*"
                 placeholder="PIN actual"
                 className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                maxLength={12}
+                maxLength={4}
               />
               <input
                 type="password"
                 value={newPin}
-                onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))}
+                onChange={(e) => setNewPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
                 inputMode="numeric"
                 pattern="[0-9]*"
                 placeholder="Nuevo PIN"
                 className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                maxLength={12}
+                maxLength={4}
               />
               <input
                 type="password"
                 value={confirmPin}
-                onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, ''))}
+                onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
                 inputMode="numeric"
                 pattern="[0-9]*"
                 placeholder="Confirmar nuevo PIN"
                 className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                maxLength={12}
+                maxLength={4}
               />
             </div>
           </div>

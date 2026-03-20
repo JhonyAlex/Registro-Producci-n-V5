@@ -137,15 +137,15 @@ const AdminUsers: React.FC = () => {
   };
 
   const handleChangePassword = async (target: AdminUser) => {
-    const newPin = window.prompt(`Nuevo PIN para ${target.name} (mínimo 4 dígitos):`, '');
+    const newPin = window.prompt(`Nuevo PIN para ${target.name} (4 dígitos):`, '');
     if (newPin === null) return;
     const cleanPin = newPin.trim();
     if (!cleanPin) {
       alert('El PIN no puede estar vacío.');
       return;
     }
-    if (cleanPin.length < 4) {
-      alert('El PIN debe tener al menos 4 dígitos.');
+    if (cleanPin.length !== 4) {
+      alert('El PIN debe tener 4 dígitos.');
       return;
     }
     if (!/^\d+$/.test(cleanPin)) {
@@ -211,6 +211,11 @@ const AdminUsers: React.FC = () => {
       return;
     }
 
+    if (cleanPin && cleanPin.length !== 4) {
+      alert('El PIN debe tener 4 dígitos.');
+      return;
+    }
+
     if (cleanOperatorCode !== target.operator_code) payload.operator_code = cleanOperatorCode;
     if (cleanName !== target.name) payload.name = cleanName;
     if (cleanRole !== target.role) payload.role = cleanRole;
@@ -261,8 +266,8 @@ const AdminUsers: React.FC = () => {
       setError('El PIN debe contener solo números.');
       return;
     }
-    if (pin.length < 4) {
-      setError('El PIN debe tener al menos 4 dígitos.');
+    if (pin.length !== 4) {
+      setError('El PIN debe tener 4 dígitos.');
       return;
     }
 
@@ -391,12 +396,12 @@ const AdminUsers: React.FC = () => {
                 <input
                   type="password"
                   value={createForm.pin}
-                  onChange={(e) => setCreateForm((prev) => ({ ...prev, pin: e.target.value.replace(/\D/g, '') }))}
+                  onChange={(e) => setCreateForm((prev) => ({ ...prev, pin: e.target.value.replace(/\D/g, '').slice(0, 4) }))}
                   inputMode="numeric"
                   pattern="[0-9]*"
-                  maxLength={6}
+                  maxLength={4}
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                  placeholder="Mínimo 4 dígitos"
+                  placeholder="4 dígitos"
                 />
               </div>
 
