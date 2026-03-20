@@ -2,6 +2,9 @@ import React, { useRef, useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Lock, User, AlertCircle } from 'lucide-react';
 
+const OPERATOR_CODE_LENGTH = 3;
+const PIN_LENGTH = 6;
+
 const Login: React.FC<{ onSwitchToRegister: () => void }> = ({ onSwitchToRegister }) => {
   const { login } = useAuth();
   const [operatorCode, setOperatorCode] = useState('');
@@ -12,19 +15,20 @@ const Login: React.FC<{ onSwitchToRegister: () => void }> = ({ onSwitchToRegiste
 
   // Auto-advance to PIN field when operator code is complete
   const handleOperatorCodeChange = (value: string) => {
-    const cleaned = value.replace(/\D/g, '').slice(0, 4);
+    const cleaned = value.replace(/\D/g, '').slice(0, OPERATOR_CODE_LENGTH);
     setOperatorCode(cleaned);
-    if (cleaned.length > 0) {
+    if (cleaned.length === OPERATOR_CODE_LENGTH) {
       pinInputRef.current?.focus();
     }
   };
 
   // Auto-submit cuando el PIN está completo (6 dígitos) y hay código de operario
   useEffect(() => {
-    if (pin.length === 6 && operatorCode.length > 0 && !loading) {
+    if (pin.length === PIN_LENGTH && operatorCode.length === OPERATOR_CODE_LENGTH && !loading) {
       const autoLogin = async () => {
         setError('');
         setLoading(true);
+        pinInputRef.current?.blur();
         try {
           await login(operatorCode, pin);
         } catch (err: any) {
@@ -44,6 +48,10 @@ const Login: React.FC<{ onSwitchToRegister: () => void }> = ({ onSwitchToRegiste
     }
     if (!/^\d+$/.test(operatorCode)) {
       setError('El código de operario debe contener solo números');
+      return;
+    }
+    if (operatorCode.length !== OPERATOR_CODE_LENGTH) {
+      setError('El código de operario debe tener 3 dígitos');
       return;
     }
     setError('');
@@ -78,7 +86,7 @@ const Login: React.FC<{ onSwitchToRegister: () => void }> = ({ onSwitchToRegiste
           )}
 
           <div>
-            <label className="block text-sm font-bold text-slate-700 mb-2">Código de Operario</label>
+            <label className="block text-sm font-bold text-slate-700 mb-2">Código de Operario (3 dígitos)</label>
             <div className="relative">
               <User className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
@@ -87,8 +95,10 @@ const Login: React.FC<{ onSwitchToRegister: () => void }> = ({ onSwitchToRegiste
                 onChange={(e) => handleOperatorCodeChange(e.target.value)}
                 inputMode="numeric"
                 pattern="[0-9]*"
+                enterKeyHint="next"
+                maxLength={OPERATOR_CODE_LENGTH}
                 className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all font-medium"
-                placeholder="Ej: 1001"
+                placeholder="Ej: 123"
               />
             </div>
           </div>
@@ -105,8 +115,9 @@ const Login: React.FC<{ onSwitchToRegister: () => void }> = ({ onSwitchToRegiste
                 onClick={() => setPin('')}
                 inputMode="numeric"
                 pattern="[0-9]*"
-                maxLength={6}
-                onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
+                enterKeyHint="done"
+                maxLength={PIN_LENGTH}
+                onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, PIN_LENGTH))}
                 className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all font-mono text-center tracking-[0.5em] text-xl"
                 placeholder="••••"
               />

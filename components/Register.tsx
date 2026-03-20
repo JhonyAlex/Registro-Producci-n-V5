@@ -2,6 +2,9 @@ import React, { useRef, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { UserPlus, User, Lock, Shield, AlertCircle } from 'lucide-react';
 
+const OPERATOR_CODE_LENGTH = 3;
+const PIN_LENGTH = 6;
+
 const ROLE_OPTIONS = [
   { value: 'operario', label: 'Operario' },
   { value: 'jefe_turno', label: 'Jefe de Turno' },
@@ -23,20 +26,42 @@ const Register: React.FC<{ onSwitchToLogin: () => void }> = ({ onSwitchToLogin }
   const nameInputRef = useRef<HTMLInputElement>(null);
   const pinInputRef = useRef<HTMLInputElement>(null);
 
+  const focusPinInput = () => {
+    pinInputRef.current?.focus();
+  };
+
   // Auto-advance to name field when operator code is entered
   const handleOperatorCodeChange = (value: string) => {
-    const cleaned = value.replace(/\D/g, '').slice(0, 4);
-    setFormData({ ...formData, operator_code: cleaned });
-    if (cleaned.length > 0) {
+    const cleaned = value.replace(/\D/g, '').slice(0, OPERATOR_CODE_LENGTH);
+    setFormData((prev) => ({ ...prev, operator_code: cleaned }));
+    if (cleaned.length === OPERATOR_CODE_LENGTH) {
       nameInputRef.current?.focus();
     }
   };
 
-  // Auto-advance to PIN field when name is entered
   const handleNameChange = (value: string) => {
-    setFormData({ ...formData, name: value });
-    if (value.trim().length > 0) {
-      pinInputRef.current?.focus();
+    setFormData((prev) => ({ ...prev, name: value }));
+  };
+
+  const handleNameKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter' && formData.name.trim()) {
+      event.preventDefault();
+      focusPinInput();
+    }
+  };
+
+  const handlePinChange = (value: string) => {
+    const cleaned = value.replace(/\D/g, '').slice(0, PIN_LENGTH);
+    setFormData((prev) => ({ ...prev, pin: cleaned }));
+    if (cleaned.length === PIN_LENGTH) {
+      pinInputRef.current?.blur();
+    }
+  };
+
+  const handlePinKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      pinInputRef.current?.blur();
     }
   };
 
@@ -50,6 +75,10 @@ const Register: React.FC<{ onSwitchToLogin: () => void }> = ({ onSwitchToLogin }
     }
     if (!/^\d+$/.test(formData.operator_code)) {
       setError('El código de operario debe contener solo números');
+      return;
+    }
+    if (formData.operator_code.length !== OPERATOR_CODE_LENGTH) {
+      setError('El código de operario debe tener 3 dígitos');
       return;
     }
     if (formData.pin.length < 4) {
@@ -110,7 +139,7 @@ const Register: React.FC<{ onSwitchToLogin: () => void }> = ({ onSwitchToLogin }
           )}
 
           <div>
-            <label className="block text-sm font-bold text-slate-700 mb-2">Código de Operario</label>
+            <label className="block text-sm font-bold text-slate-700 mb-2">Código de Operario (3 dígitos)</label>
             <div className="relative">
               <User className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
@@ -119,8 +148,10 @@ const Register: React.FC<{ onSwitchToLogin: () => void }> = ({ onSwitchToLogin }
                 onChange={(e) => handleOperatorCodeChange(e.target.value)}
                 inputMode="numeric"
                 pattern="[0-9]*"
+                enterKeyHint="next"
+                maxLength={OPERATOR_CODE_LENGTH}
                 className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all font-medium"
-                placeholder="Ej: 1001"
+                placeholder="Ej: 123"
               />
             </div>
           </div>
@@ -134,6 +165,8 @@ const Register: React.FC<{ onSwitchToLogin: () => void }> = ({ onSwitchToLogin }
                 type="text"
                 value={formData.name}
                 onChange={(e) => handleNameChange(e.target.value)}
+                onKeyDown={handleNameKeyDown}
+                enterKeyHint="next"
                 className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all font-medium"
                 placeholder="Ej: Juan Pérez"
               />
@@ -147,7 +180,10 @@ const Register: React.FC<{ onSwitchToLogin: () => void }> = ({ onSwitchToLogin }
                 <button
                   key={option.value}
                   type="button"
-                  onClick={() => setFormData({ ...formData, role: option.value })}
+                  onClick={() => {
+                    setFormData((prev) => ({ ...prev, role: option.value }));
+                    focusPinInput();
+                  }}
                   className={`py-3 px-3 rounded-lg border text-sm font-bold transition-colors flex items-center justify-center gap-2 ${formData.role === option.value ? 'bg-slate-800 text-white border-slate-800' : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'}`}
                 >
                   <Shield className="w-4 h-4" />
@@ -165,14 +201,16 @@ const Register: React.FC<{ onSwitchToLogin: () => void }> = ({ onSwitchToLogin }
                 ref={pinInputRef}
                 type="password"
                 value={formData.pin}
-                onFocus={() => setFormData({ ...formData, pin: '' })}
-                onClick={() => setFormData({ ...formData, pin: '' })}
+                onFocus={() => setFormData((prev) => ({ ...prev, pin: '' }))}
+                onClick={() => setFormData((prev) => ({ ...prev, pin: '' }))}
                 inputMode="numeric"
                 pattern="[0-9]*"
-                onChange={(e) => setFormData({ ...formData, pin: e.target.value.replace(/\D/g, '') })}
+                enterKeyHint="done"
+                onChange={(e) => handlePinChange(e.target.value)}
+                onKeyDown={handlePinKeyDown}
                 className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all font-mono tracking-widest text-lg"
                 placeholder="••••"
-                maxLength={6}
+                maxLength={PIN_LENGTH}
               />
             </div>
           </div>
