@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useState } from 'react';
-import { Plus, Save, Edit2, Trash2, RefreshCw, AlertCircle, X } from 'lucide-react';
+import { Plus, Save, Edit2, Trash2, RefreshCw, AlertCircle, X, ArrowUp, ArrowDown } from 'lucide-react';
 import { MACHINES } from '../constants';
 import {
   createCustomComment,
@@ -8,6 +8,7 @@ import {
   deleteCatalogField,
   getFieldCatalog,
   getCustomComments,
+  reorderFieldCatalog,
   renameCustomComment,
   updateCatalogField,
 } from '../services/storageService';
@@ -83,6 +84,15 @@ const fromCatalog = (entry: FieldCatalogEntry): EditableEntry => {
   };
 };
 
+const sortCatalogByDisplayOrder = (entries: FieldCatalogEntry[]): FieldCatalogEntry[] => {
+  return [...entries].sort((a, b) => {
+    if (a.displayOrder !== b.displayOrder) {
+      return a.displayOrder - b.displayOrder;
+    }
+    return a.label.localeCompare(b.label, 'es', { sensitivity: 'base' });
+  });
+};
+
 const MachineFieldManager: React.FC = () => {
   const { user } = useAuth();
   const canManageComments = user?.role === 'admin' || Boolean(user?.permissions?.some((perm) => perm.key === 'settings.manage'));
@@ -93,6 +103,7 @@ const MachineFieldManager: React.FC = () => {
   const [commentsLoading, setCommentsLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [reorderingId, setReorderingId] = useState<string | null>(null);
   const [deletingComment, setDeletingComment] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -107,7 +118,7 @@ const MachineFieldManager: React.FC = () => {
     setError('');
     try {
       const entries = await getFieldCatalog();
-      setCatalogFields(entries);
+      setCatalogFields(sortCatalogByDisplayOrder(entries));
     } catch (err: any) {
       setError(err?.message || 'No se pudo cargar el catalogo de campos.');
     } finally {
@@ -243,11 +254,11 @@ const MachineFieldManager: React.FC = () => {
 
       if (form.id) {
         result = await updateCatalogField(form.id, payload);
-        setCatalogFields((prev) => prev.map((field) => (field.id === result.id ? result : field)));
+        setCatalogFields((prev) => sortCatalogByDisplayOrder(prev.map((field) => (field.id === result.id ? result : field))));
         showSuccess('Campo actualizado correctamente.');
       } else {
         result = await createCatalogField(payload);
-        setCatalogFields((prev) => [...prev, result].sort((a, b) => a.label.localeCompare(b.label)));
+        setCatalogFields((prev) => sortCatalogByDisplayOrder([...prev, result]));
         showSuccess('Campo creado correctamente.');
       }
 
@@ -273,6 +284,40 @@ const MachineFieldManager: React.FC = () => {
       setError(err?.message || 'No se pudo eliminar el campo.');
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const handleMoveField = async (entryId: string, direction: 'up' | 'down') => {
+    if (reorderingId || loading || saving || deletingId) return;
+
+    const ordered = sortCatalogByDisplayOrder(catalogFields);
+    const currentIndex = ordered.findIndex((entry) => entry.id === entryId);
+    if (currentIndex < 0) return;
+
+    const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+    if (targetIndex < 0 || targetIndex >= ordered.length) return;
+
+    const previousState = ordered.map((entry) => ({ ...entry }));
+    const swapped = [...ordered];
+    [swapped[currentIndex], swapped[targetIndex]] = [swapped[targetIndex], swapped[currentIndex]];
+
+    const optimisticOrder = swapped.map((entry, index) => ({
+      ...entry,
+      displayOrder: index,
+    }));
+
+    setCatalogFields(optimisticOrder);
+    setReorderingId(entryId);
+    setError('');
+
+    try {
+      const serverCatalog = await reorderFieldCatalog(optimisticOrder.map((entry) => entry.id));
+      setCatalogFields(sortCatalogByDisplayOrder(serverCatalog));
+    } catch (err: any) {
+      setCatalogFields(sortCatalogByDisplayOrder(previousState));
+      setError(err?.message || 'No se pudo reordenar el catalogo de campos.');
+    } finally {
+      setReorderingId(null);
     }
   };
 
@@ -803,7 +848,7 @@ const MachineFieldManager: React.FC = () => {
           </div>
         ) : (
           <div className="space-y-2">
-            {catalogFields.map((entry) => (
+            {sortCatalogByDisplayOrder(catalogFields).map((entry, index, orderedEntries) => (
               <div
                 key={entry.id}
                 className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_auto] gap-3 px-4 py-3 rounded-lg border border-slate-200 bg-white hover:border-slate-300"
@@ -839,6 +884,26 @@ const MachineFieldManager: React.FC = () => {
                 </div>
 
                 <div className="flex items-center gap-2 w-full lg:w-auto">
+                  <button
+                    type="button"
+                    onClick={() => void handleMoveField(entry.id, 'up')}
+                    disabled={Boolean(reorderingId) || index === 0}
+                    className="inline-flex flex-1 lg:flex-none items-center justify-center gap-1 px-3 py-2 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:opacity-40"
+                    title="Subir campo"
+                  >
+                    <ArrowUp className="w-3 h-3" /> Subir
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => void handleMoveField(entry.id, 'down')}
+                    disabled={Boolean(reorderingId) || index === orderedEntries.length - 1}
+                    className="inline-flex flex-1 lg:flex-none items-center justify-center gap-1 px-3 py-2 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:opacity-40"
+                    title="Bajar campo"
+                  >
+                    <ArrowDown className="w-3 h-3" /> Bajar
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => {

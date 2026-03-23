@@ -348,6 +348,13 @@ export const updateCatalogField = async (
   });
 };
 
+export const reorderFieldCatalog = async (orderedIds: string[]): Promise<FieldCatalogEntry[]> => {
+  return fetchJson('/settings/field-catalog/reorder', {
+    method: 'PUT',
+    body: JSON.stringify({ orderedIds }),
+  });
+};
+
 export const deleteCatalogField = async (id: string): Promise<void> => {
   await fetchJson(`/settings/field-catalog/${encodeURIComponent(id)}`, {
     method: 'DELETE',

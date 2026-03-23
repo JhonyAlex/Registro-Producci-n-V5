@@ -91,6 +91,7 @@ export interface FieldCatalogEntry {
   label: string;
   type: DynamicFieldType;
   required: boolean;
+  displayOrder: number;
   options: string[];
   defaultValue?: string | number | string[] | null;
   rules?: DynamicFieldRuleSet;

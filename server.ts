@@ -244,6 +244,7 @@ async function initDB() {
         label VARCHAR(255) NOT NULL,
         type VARCHAR(50) NOT NULL,
         required BOOLEAN NOT NULL DEFAULT FALSE,
+        display_order INTEGER,
         options JSONB NOT NULL DEFAULT '[]',
         default_value JSONB,
         rules JSONB NOT NULL DEFAULT '{}',
@@ -252,6 +253,24 @@ async function initDB() {
         created_by_user_id UUID
       )
     `);
+
+    await pool.query('ALTER TABLE field_catalog ADD COLUMN IF NOT EXISTS display_order INTEGER');
+    await pool.query(`
+      WITH ordered AS (
+        SELECT id,
+               ROW_NUMBER() OVER (ORDER BY created_at ASC, label ASC, id ASC) - 1 AS normalized_order
+        FROM field_catalog
+      )
+      UPDATE field_catalog fc
+      SET display_order = ordered.normalized_order
+      FROM ordered
+      WHERE fc.id = ordered.id
+        AND fc.display_order IS NULL
+    `);
+    await pool.query('ALTER TABLE field_catalog ALTER COLUMN display_order SET DEFAULT 0');
+    await pool.query('UPDATE field_catalog SET display_order = 0 WHERE display_order IS NULL');
+    await pool.query('ALTER TABLE field_catalog ALTER COLUMN display_order SET NOT NULL');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_field_catalog_display_order ON field_catalog(display_order)');
 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS field_catalog_assignments (
@@ -639,11 +658,11 @@ const getEffectiveMachineSchema = async (machine: string): Promise<{
   const catalogResult = await pool.query(
     `SELECT fc.key, fc.label, fc.type, fc.required, fca.enabled,
             fc.options, fc.default_value as "defaultValue", fc.rules,
-            fca.sort_order as "order", fc.updated_at as "updatedAt"
+            fc.display_order as "order", fc.updated_at as "updatedAt"
      FROM field_catalog_assignments fca
      JOIN field_catalog fc ON fc.id = fca.field_id
      WHERE fca.machine = $1
-     ORDER BY fca.sort_order ASC`,
+     ORDER BY fc.display_order ASC`,
     [machine]
   );
 
@@ -706,6 +725,58 @@ const getEffectiveMachineSchema = async (machine: string): Promise<{
     updatedByUserId: row.updatedByUserId || null,
     updatedAt: row.updatedAt ? new Date(row.updatedAt).toISOString() : null,
   };
+};
+
+type QueryExecutor = {
+  query: (text: string, params?: any[]) => Promise<any>;
+};
+
+const normalizeFieldCatalogDisplayOrder = async (executor: QueryExecutor): Promise<void> => {
+  await executor.query(`
+    WITH ordered AS (
+      SELECT id,
+             ROW_NUMBER() OVER (
+               ORDER BY display_order ASC NULLS LAST, created_at ASC, id ASC
+             ) - 1 AS normalized_order
+      FROM field_catalog
+    )
+    UPDATE field_catalog fc
+    SET display_order = ordered.normalized_order,
+        updated_at = CASE
+          WHEN fc.display_order IS DISTINCT FROM ordered.normalized_order THEN NOW()
+          ELSE fc.updated_at
+        END
+    FROM ordered
+    WHERE fc.id = ordered.id
+  `);
+};
+
+const getOrderedFieldCatalogIds = async (executor: QueryExecutor): Promise<string[]> => {
+  const result = await executor.query(
+    `SELECT id
+     FROM field_catalog
+     ORDER BY display_order ASC, created_at ASC, id ASC`
+  );
+  return result.rows.map((row: any) => String(row.id));
+};
+
+const applyFieldCatalogDisplayOrder = async (executor: QueryExecutor, orderedIds: string[]): Promise<void> => {
+  if (orderedIds.length === 0) {
+    return;
+  }
+
+  const valuesSql = orderedIds
+    .map((_, index) => `($${index + 1}::uuid, ${index})`)
+    .join(', ');
+
+  await executor.query(
+    `UPDATE field_catalog fc
+     SET display_order = incoming.display_order,
+         updated_at = NOW()
+     FROM (VALUES ${valuesSql}) AS incoming(id, display_order)
+     WHERE fc.id = incoming.id`,
+    orderedIds
+  );
 };
 
 const sanitizeDashboardConfigPayload = (incoming: any): DashboardConfigPayload => {
@@ -2188,8 +2259,10 @@ app.get('/api/settings/machine-fields/:machine/history', authenticate, requirePe
 // --- FIELD CATALOG ---
 app.get('/api/settings/field-catalog', authenticate, requirePermission('settings.read'), requireDB, async (req, res) => {
   try {
+    await normalizeFieldCatalogDisplayOrder(pool);
     const result = await pool.query(`
       SELECT fc.id, fc.key, fc.label, fc.type, fc.required,
+             fc.display_order as "displayOrder",
              fc.options, fc.default_value as "defaultValue", fc.rules,
              fc.created_at as "createdAt", fc.updated_at as "updatedAt",
              COALESCE(
@@ -2202,7 +2275,7 @@ app.get('/api/settings/field-catalog', authenticate, requirePermission('settings
       FROM field_catalog fc
       LEFT JOIN field_catalog_assignments fca ON fc.id = fca.field_id
       GROUP BY fc.id
-      ORDER BY fc.label ASC
+      ORDER BY fc.display_order ASC, fc.label ASC
     `);
     res.json(result.rows);
   } catch (err) {
@@ -2223,14 +2296,19 @@ app.post('/api/settings/field-catalog', authenticate, requirePermission('setting
     await ensureCatalogFieldKeyIsUniqueCaseInsensitive(normalizedKey);
 
     await pool.query('BEGIN');
+    const maxOrderResult = await pool.query(
+      `SELECT COALESCE(MAX(display_order), -1) + 1 AS next_order
+       FROM field_catalog`
+    );
+    const nextDisplayOrder = Number(maxOrderResult.rows[0]?.next_order ?? 0);
     const fieldResult = await pool.query(
-      `INSERT INTO field_catalog (key, label, type, required, options, default_value, rules, created_by_user_id)
-       VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, $8)
+      `INSERT INTO field_catalog (key, label, type, required, display_order, options, default_value, rules, created_by_user_id)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb, $9)
        RETURNING id, key, label, type, required, options,
-                 default_value as "defaultValue", rules,
+                 display_order as "displayOrder", default_value as "defaultValue", rules,
                  created_at as "createdAt", updated_at as "updatedAt"`,
       [
-        normalizedKey, normalizedLabel, type, required ?? false,
+        normalizedKey, normalizedLabel, type, required ?? false, nextDisplayOrder,
         JSON.stringify(options ?? []),
         defaultValue !== undefined && defaultValue !== null ? JSON.stringify(defaultValue) : null,
         JSON.stringify(rules ?? {}),
@@ -2260,6 +2338,64 @@ app.post('/api/settings/field-catalog', authenticate, requirePermission('setting
   }
 });
 
+app.put('/api/settings/field-catalog/reorder', authenticate, requirePermission('settings.field_schemas'), requireDB, async (req, res) => {
+  const user = (req as any).user;
+  const orderedIds = Array.isArray(req.body?.orderedIds)
+    ? req.body.orderedIds.map((id: any) => String(id || '').trim()).filter(Boolean)
+    : [];
+
+  try {
+    await pool.query('BEGIN');
+
+    await normalizeFieldCatalogDisplayOrder(pool);
+    const existingIds = await getOrderedFieldCatalogIds(pool);
+
+    if (orderedIds.length !== existingIds.length) {
+      await pool.query('ROLLBACK');
+      return res.status(409).json({ error: 'El orden enviado no coincide con el catálogo actual. Recarga e intenta nuevamente.' });
+    }
+
+    const expected = new Set(existingIds);
+    const incoming = new Set(orderedIds);
+    if (incoming.size !== orderedIds.length || expected.size !== incoming.size || existingIds.some((id) => !incoming.has(id))) {
+      await pool.query('ROLLBACK');
+      return res.status(400).json({ error: 'Lista de IDs inválida para reordenar campos.' });
+    }
+
+    await applyFieldCatalogDisplayOrder(pool, orderedIds);
+    await normalizeFieldCatalogDisplayOrder(pool);
+
+    await logAudit(user.id, 'field_catalog_reordered', { orderedIds }, req.ip || '');
+    await pool.query('COMMIT');
+
+    io.emit('machine_schema_changed', {});
+    io.emit('settings_changed');
+
+    const updated = await pool.query(`
+      SELECT fc.id, fc.key, fc.label, fc.type, fc.required,
+             fc.display_order as "displayOrder",
+             fc.options, fc.default_value as "defaultValue", fc.rules,
+             fc.created_at as "createdAt", fc.updated_at as "updatedAt",
+             COALESCE(
+               json_agg(
+                 json_build_object('machine', fca.machine, 'enabled', fca.enabled, 'sortOrder', fca.sort_order)
+                 ORDER BY fca.sort_order
+               ) FILTER (WHERE fca.machine IS NOT NULL),
+               '[]'::json
+             ) AS assignments
+      FROM field_catalog fc
+      LEFT JOIN field_catalog_assignments fca ON fc.id = fca.field_id
+      GROUP BY fc.id
+      ORDER BY fc.display_order ASC, fc.label ASC
+    `);
+
+    res.json(updated.rows);
+  } catch (err) {
+    await pool.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ error: 'No se pudo reordenar el catálogo de campos.' });
+  }
+});
+
 app.put('/api/settings/field-catalog/:id', authenticate, requirePermission('settings.field_schemas'), requireDB, async (req, res) => {
   const user = (req as any).user;
   const id = String(req.params.id || '').trim();
@@ -2283,7 +2419,7 @@ app.put('/api/settings/field-catalog/:id', authenticate, requirePermission('sett
            default_value=$6::jsonb, rules=$7::jsonb, updated_at=NOW()
        WHERE id=$8
        RETURNING id, key, label, type, required, options,
-                 default_value as "defaultValue", rules,
+                 display_order as "displayOrder", default_value as "defaultValue", rules,
                  created_at as "createdAt", updated_at as "updatedAt"`,
       [
         normalizedKey, normalizedLabel, type, required ?? false,
@@ -2332,12 +2468,16 @@ app.delete('/api/settings/field-catalog/:id', authenticate, requirePermission('s
     if (info.rowCount === 0) return res.status(404).json({ error: 'Campo no encontrado.' });
     const asgn = await pool.query('SELECT machine FROM field_catalog_assignments WHERE field_id = $1', [id]);
     const machines = asgn.rows.map((r: any) => r.machine);
+    await pool.query('BEGIN');
     await pool.query('DELETE FROM field_catalog WHERE id = $1', [id]);
+    await normalizeFieldCatalogDisplayOrder(pool);
+    await pool.query('COMMIT');
     await logAudit(user.id, 'field_catalog_deleted', { ...info.rows[0], machines }, req.ip || '');
     machines.forEach((m: string) => io.emit('machine_schema_changed', { machine: m }));
     io.emit('settings_changed');
     res.json({ deleted: true });
   } catch (err) {
+    await pool.query('ROLLBACK').catch(() => {});
     res.status(500).json({ error: 'No se pudo eliminar el campo.' });
   }
 });
