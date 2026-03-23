@@ -692,13 +692,10 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
           {machineFields.map((field) => (
             <div key={field.key} className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="mb-3 flex flex-wrap items-start gap-2">
+              <div className="mb-3">
                 <label className="block min-w-0 break-words text-sm font-semibold text-slate-700">
                   {field.label} {field.required ? <span className="text-red-500">*</span> : null}
                 </label>
-                <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                  {field.type.replace('_', ' ')}
-                </span>
               </div>
 
               {field.type === 'number' && (
