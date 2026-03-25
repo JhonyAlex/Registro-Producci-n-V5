@@ -629,68 +629,52 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
           </div>
 
           <div className="relative" ref={operatorDropdownRef}>
-              <div className="flex justify-between items-center mb-2">
-                <label className="block text-sm font-semibold text-slate-700 flex items-center gap-2">
-                  <Users className="w-4 h-4 text-slate-400" /> Operario
-                </label>
+            <label className="block text-sm font-semibold text-slate-700 mb-2">Operario</label>
+            <div className="relative w-full">
+              <input
+                ref={setFocusableFieldRef('operator')}
+                type="text"
+                required
+                placeholder="Selecciona un operario..."
+                value={operatorInput}
+                onChange={e => {
+                  setOperatorInput(e.target.value);
+                  setOperatorUserId(null);
+                  setShowOperatorSuggestions(true);
+                }}
+                onFocus={handleOperatorFocus}
+                onKeyDown={handleFieldAdvance('operator')}
+                enterKeyHint={getEnterKeyHint('operator')}
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all font-medium appearance-none pr-10"
+                autoComplete="off"
+              />
+              <div className="absolute inset-y-0 right-0 flex items-center px-3 pointer-events-none">
+                <ChevronDown className={`w-4 h-4 text-slate-500 transition-transform duration-200 ${showOperatorSuggestions ? 'rotate-180' : ''}`} />
               </div>
-              <div className="relative w-full">
-                <div className="relative">
-                  <input
-                    ref={setFocusableFieldRef('operator')}
-                    type="text"
-                    required
-                    placeholder="Selecciona un operario..."
-                    value={operatorInput}
-                    onChange={e => {
-                      setOperatorInput(e.target.value);
-                      setOperatorUserId(null);
-                      setShowOperatorSuggestions(true);
-                    }}
-                    onFocus={handleOperatorFocus}
-                    onKeyDown={handleFieldAdvance('operator')}
-                    enterKeyHint={getEnterKeyHint('operator')}
-                    className="w-full pl-4 pr-10 py-3 bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
-                    autoComplete="off"
-                  />
-                  <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center">
-                    {operatorInput && (
-                      <button type="button" onClick={clearOperator} className="p-1 text-slate-400 hover:text-red-500 transition-colors mr-1">
-                        <X className="w-4 h-4" />
-                      </button>
-                    )}
-                    <div className={`pointer-events-none text-slate-400 p-1 transition-transform duration-200 ${showOperatorSuggestions ? 'rotate-180' : ''}`}>
-                        <ChevronDown className="w-4 h-4" />
-                    </div>
-                  </div>
-                </div>
 
-                {showOperatorSuggestions && (
-                  <div className="absolute z-50 w-full bottom-full mb-2 bg-white border border-slate-200 rounded-lg shadow-xl max-h-60 overflow-y-auto animate-fade-in origin-bottom">
-                    {filteredOperators.length > 0 ? (
-                      <div className="divide-y divide-slate-50">
-                        {filteredOperators.map((op, index) => (
-                          <div
-                            key={`${op.id}-${index}`}
-                            onClick={() => selectOperator(op)}
-                            className="w-full text-left px-4 py-3.5 hover:bg-blue-50 active:bg-blue-100 text-slate-700 font-medium transition-colors flex items-center justify-between group touch-target cursor-pointer"
-                          >
-                            <div className="flex items-center gap-3 overflow-hidden">
-                              <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 shrink-0"></span>
-                              <span className="truncate">{op.name}</span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="px-4 py-4 text-center">
-                        <p className="text-slate-500 text-sm font-medium">No hay coincidencias en usuarios activos.</p>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
+              {showOperatorSuggestions && (
+                <div className="absolute z-50 w-full top-full mt-1 bg-white border border-slate-300 rounded-lg shadow-md max-h-60 overflow-y-auto">
+                  {filteredOperators.length > 0 ? (
+                    <div className="divide-y divide-slate-100">
+                      {filteredOperators.map((op, index) => (
+                        <div
+                          key={`${op.id}-${index}`}
+                          onClick={() => selectOperator(op)}
+                          className="w-full text-left px-4 py-3 hover:bg-blue-50 active:bg-blue-100 text-slate-700 font-medium transition-colors cursor-pointer"
+                        >
+                          {op.name}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="px-4 py-3 text-center text-sm text-slate-500">
+                      No hay coincidencias
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
+          </div>
         </div>
 
         {/* Machine Selection */}
