@@ -461,6 +461,32 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    if (!formData.date) {
+      alert('La fecha de turno es obligatoria.');
+      return;
+    }
+
+    if (!formData.shift) {
+      alert('El turno es obligatorio.');
+      return;
+    }
+
+    if (!formData.machine) {
+      alert('La maquina es obligatoria.');
+      return;
+    }
+
+    if (!formData.bossUserId) {
+      alert('El jefe de turno es obligatorio.');
+      return;
+    }
+
+    const normalizedOperatorInput = operatorInput.trim();
+    if (!normalizedOperatorInput) {
+      alert('El operario es obligatorio.');
+      return;
+    }
+
     if (!isMachineSchemaReady) {
       setDynamicFieldError('Espera un momento: se estan sincronizando los campos de la maquina.');
       return;
@@ -472,7 +498,6 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
       return;
     }
 
-    const normalizedOperatorInput = operatorInput.trim();
     const selectedOperator = operatorUserId
       ? availableOperatorOptions.find((op) => op.id === operatorUserId)
       : availableOperatorOptions.find((op) => op.name.trim().toLowerCase() === normalizedOperatorInput.toLowerCase());
@@ -579,6 +604,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
             <label className="block text-sm font-semibold text-slate-700 mb-2">Turno</label>
             <div className="relative">
               <select
+                required
                 value={formData.shift}
                 onChange={e => setFormData({ ...formData, shift: e.target.value as ShiftType })}
                 className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none appearance-none font-medium"
@@ -600,6 +626,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
             <label className="block text-sm font-semibold text-slate-700 mb-2">Jefe de Turno</label>
             <div className="relative">
               <select
+                required
                 value={formData.bossUserId}
                 onChange={e => setFormData({ ...formData, bossUserId: e.target.value })}
                 className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none appearance-none font-medium"
@@ -625,6 +652,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
                 <div className="relative">
                   <input
                     type="text"
+                    required
                     placeholder="Nombre del operario..."
                     value={operatorInput}
                     onChange={e => {
