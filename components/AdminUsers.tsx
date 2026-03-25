@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { CheckCircle, Unlock, ShieldAlert, UserCheck, Clock, Ban, Users, RefreshCw, Trash2, Edit3, Key } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { socket } from '../services/socket';
+import { createAdminUser } from '../services/storageService';
 
 interface AdminUser {
   id: string;
@@ -14,6 +15,13 @@ interface AdminUser {
   created_at: string;
 }
 
+const ROLE_OPTIONS = [
+  { value: 'operario', label: 'Operario' },
+  { value: 'jefe_turno', label: 'Jefe de Turno' },
+  { value: 'jefe_planta', label: 'Jefe de Planta' },
+  { value: 'admin', label: 'Administrador' }
+] as const;
+
 const AdminUsers: React.FC = () => {
   const { user: currentUser } = useAuth();
   const hasPermission = (permissionKey: string) => {
@@ -25,6 +33,13 @@ const AdminUsers: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [createLoading, setCreateLoading] = useState(false);
+  const [createForm, setCreateForm] = useState({
+    operator_code: '',
+    name: '',
+    pin: '',
+    role: 'operario'
+  });
 
   const fetchUsers = async () => {
     try {
@@ -122,15 +137,19 @@ const AdminUsers: React.FC = () => {
   };
 
   const handleChangePassword = async (target: AdminUser) => {
-    const newPin = window.prompt(`Nuevo PIN para ${target.name} (mínimo 4 dígitos):`, '');
+    const newPin = window.prompt(`Nuevo PIN para ${target.name} (4 dígitos):`, '');
     if (newPin === null) return;
     const cleanPin = newPin.trim();
     if (!cleanPin) {
       alert('El PIN no puede estar vacío.');
       return;
     }
-    if (cleanPin.length < 4) {
-      alert('El PIN debe tener al menos 4 dígitos.');
+    if (cleanPin.length !== 4) {
+      alert('El PIN debe tener 4 dígitos.');
+      return;
+    }
+    if (!/^\d+$/.test(cleanPin)) {
+      alert('El PIN debe contener solo números.');
       return;
     }
 
@@ -182,6 +201,21 @@ const AdminUsers: React.FC = () => {
       return;
     }
 
+    if (!/^\d+$/.test(cleanOperatorCode)) {
+      alert('El código de operario debe contener solo números.');
+      return;
+    }
+
+    if (cleanPin && !/^\d+$/.test(cleanPin)) {
+      alert('El PIN debe contener solo números.');
+      return;
+    }
+
+    if (cleanPin && cleanPin.length !== 4) {
+      alert('El PIN debe tener 4 dígitos.');
+      return;
+    }
+
     if (cleanOperatorCode !== target.operator_code) payload.operator_code = cleanOperatorCode;
     if (cleanName !== target.name) payload.name = cleanName;
     if (cleanRole !== target.role) payload.role = cleanRole;
@@ -210,6 +244,48 @@ const AdminUsers: React.FC = () => {
       alert(err.message || 'Error al editar usuario');
     } finally {
       setActionLoading(null);
+    }
+  };
+
+  const handleCreateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    const operatorCode = createForm.operator_code.trim();
+    const name = createForm.name.trim();
+    const pin = createForm.pin.trim();
+
+    if (!operatorCode || !name || !pin || !createForm.role) {
+      setError('Completa código, nombre, PIN y rol para crear el usuario.');
+      return;
+    }
+    if (!/^\d+$/.test(operatorCode)) {
+      setError('El código de operario debe contener solo números.');
+      return;
+    }
+    if (!/^\d+$/.test(pin)) {
+      setError('El PIN debe contener solo números.');
+      return;
+    }
+    if (pin.length !== 4) {
+      setError('El PIN debe tener 4 dígitos.');
+      return;
+    }
+
+    setCreateLoading(true);
+    setError('');
+    try {
+      await createAdminUser({
+        operator_code: operatorCode,
+        name,
+        pin,
+        role: createForm.role,
+      });
+      setCreateForm({ operator_code: '', name: '', pin: '', role: 'operario' });
+      await fetchUsers();
+    } catch (err: any) {
+      setError(err.message || 'No se pudo crear el usuario');
+    } finally {
+      setCreateLoading(false);
     }
   };
 
@@ -282,6 +358,78 @@ const AdminUsers: React.FC = () => {
             Actualizar
           </button>
         </div>
+
+        {hasPermission('admin.users.create') && (
+          <form onSubmit={handleCreateUser} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4">
+            <div>
+              <h3 className="text-lg font-bold text-slate-900">Crear usuario desde administración</h3>
+              <p className="text-sm text-slate-500 mt-1">El usuario se crea activo de inmediato, sin pasar por sala de espera.</p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 mb-1">Código de Operario</label>
+                <input
+                  type="text"
+                  value={createForm.operator_code}
+                  onChange={(e) => setCreateForm((prev) => ({ ...prev, operator_code: e.target.value.replace(/\D/g, '') }))}
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                  placeholder="Ej: 1001"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-500 mb-1">Nombre</label>
+                <input
+                  type="text"
+                  value={createForm.name}
+                  onChange={(e) => setCreateForm((prev) => ({ ...prev, name: e.target.value }))}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                  placeholder="Nombre completo"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-500 mb-1">PIN</label>
+                <input
+                  type="password"
+                  value={createForm.pin}
+                  onChange={(e) => setCreateForm((prev) => ({ ...prev, pin: e.target.value.replace(/\D/g, '').slice(0, 4) }))}
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={4}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                  placeholder="4 dígitos"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-500 mb-1">Rol</label>
+                <select
+                  value={createForm.role}
+                  onChange={(e) => setCreateForm((prev) => ({ ...prev, role: e.target.value }))}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                >
+                  {ROLE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="flex justify-end">
+              <button
+                type="submit"
+                disabled={createLoading}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-colors disabled:opacity-60"
+              >
+                {createLoading ? 'Creando usuario...' : 'Crear usuario'}
+              </button>
+            </div>
+          </form>
+        )}
 
         {error && (
           <div className="bg-red-50 border border-red-200 text-red-600 p-4 rounded-xl flex items-center gap-3">

@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { DashboardConfig, DashboardFieldOption, DashboardWidgetConfig, ProductionRecord, MachineType, ShiftType } from '../types';
 import { exportToExcel, getDashboardConfigs, getFieldCatalog } from '../services/storageService';
+import { buildDynamicFieldOptionsFromCatalog, DASHBOARD_ALLOWED_CORE_FIELDS } from '../utils/dashboardFieldPolicy';
 
 interface DashboardProps {
   records: ProductionRecord[];
@@ -38,38 +39,6 @@ type GroupAccumulator = {
   label: string;
   sum: number;
   count: number;
-};
-
-const CORE_FIELDS: DashboardFieldOption[] = [
-  { key: 'date', label: 'Fecha', type: 'date', source: 'core' },
-  { key: 'machine', label: 'Maquina', type: 'text', source: 'core' },
-  { key: 'shift', label: 'Turno', type: 'text', source: 'core' },
-  { key: 'boss', label: 'Jefe de Turno', type: 'text', source: 'core' },
-  { key: 'operator', label: 'Operario', type: 'text', source: 'core' },
-  { key: 'meters', label: 'Metros', type: 'number', source: 'core' },
-  { key: 'changesCount', label: 'Cantidad de Cambios', type: 'number', source: 'core' },
-  { key: 'changesComment', label: 'Comentario de Cambio', type: 'text', source: 'core' },
-];
-
-const buildDynamicFieldOptionsFromCatalog = (fieldCatalog: Array<{ key: string; label: string; type: string }>): DashboardFieldOption[] => {
-  const uniqueByNormalizedKey = new Map<string, DashboardFieldOption>();
-
-  fieldCatalog.forEach((field) => {
-    const rawKey = String(field.key || '').trim();
-    if (!rawKey) return;
-
-    const normalizedKey = rawKey.toLowerCase();
-    if (uniqueByNormalizedKey.has(normalizedKey)) return;
-
-    uniqueByNormalizedKey.set(normalizedKey, {
-      key: `dynamic.${rawKey}`,
-      label: String(field.label || rawKey).trim() || rawKey,
-      type: field.type === 'number' ? 'number' : 'text',
-      source: 'dynamic',
-    });
-  });
-
-  return Array.from(uniqueByNormalizedKey.values()).sort((a, b) => a.label.localeCompare(b.label));
 };
 
 const CHART_LABELS: Record<string, string> = {
@@ -220,7 +189,7 @@ const buildKpiData = (
 
 const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = false, onOpenAdmin }) => {
   const [configs, setConfigs] = useState<DashboardConfig[]>([]);
-  const [fieldOptions, setFieldOptions] = useState<DashboardFieldOption[]>(CORE_FIELDS);
+  const [fieldOptions, setFieldOptions] = useState<DashboardFieldOption[]>(DASHBOARD_ALLOWED_CORE_FIELDS);
   const [selectedConfigId, setSelectedConfigId] = useState('');
   
   // Global Filters
@@ -240,21 +209,32 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
       const [dashboardConfigs, fieldCatalog] = await Promise.all([getDashboardConfigs(), getFieldCatalog()]);
 
       const dynamicOptions = buildDynamicFieldOptionsFromCatalog(fieldCatalog);
-      const options = [...CORE_FIELDS, ...dynamicOptions];
+      const options = [...DASHBOARD_ALLOWED_CORE_FIELDS, ...dynamicOptions];
       const optionMap = new Map(options.map((f) => [f.key, f]));
+      const numericOptions = options.filter((field) => field.type === 'number');
+      const defaultNumericField = numericOptions[0]?.key;
 
       const normalizedConfigs = dashboardConfigs.map((config) => {
         const safeWidgets = (config.widgets || []).map((widget, index) => {
-          const safeValueField = optionMap.has(widget.valueField) ? widget.valueField : 'meters';
+          const safeValueField = optionMap.has(widget.valueField)
+            ? widget.valueField
+            : (defaultNumericField || 'operator');
           const secondary = widget.secondaryValueField && optionMap.has(widget.secondaryValueField)
             ? widget.secondaryValueField
             : undefined;
+          const safeAggregation = widget.aggregation === 'count' || (safeValueField && optionMap.get(safeValueField)?.type === 'number')
+            ? widget.aggregation
+            : 'count';
           return {
             ...widget,
             id: widget.id || `widget_${index + 1}`,
-            groupBy: widget.groupBy || config.baseField || 'machine', // fallback for old configs
+            groupBy:
+              widget.groupBy && optionMap.has(widget.groupBy)
+                ? widget.groupBy
+                : (config.baseField && optionMap.has(config.baseField) ? config.baseField : 'machine'),
             valueField: safeValueField,
             secondaryValueField: secondary,
+            aggregation: safeAggregation,
           };
         });
 

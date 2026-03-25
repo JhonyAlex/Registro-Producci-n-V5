@@ -1,6 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Lock, User, AlertCircle } from 'lucide-react';
+
+const OPERATOR_CODE_LENGTH = 3;
+const PIN_LENGTH = 4;
 
 const Login: React.FC<{ onSwitchToRegister: () => void }> = ({ onSwitchToRegister }) => {
   const { login } = useAuth();
@@ -8,13 +11,33 @@ const Login: React.FC<{ onSwitchToRegister: () => void }> = ({ onSwitchToRegiste
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const pinInputRef = useRef<HTMLInputElement>(null);
+  const lastAutoLoginAttemptRef = useRef('');
 
-  // Auto-submit cuando el PIN está completo (6 dígitos) y hay código de operario
+  // Auto-advance to PIN field when operator code is complete
+  const handleOperatorCodeChange = (value: string) => {
+    const cleaned = value.replace(/\D/g, '').slice(0, OPERATOR_CODE_LENGTH);
+    setOperatorCode(cleaned);
+    lastAutoLoginAttemptRef.current = '';
+    if (cleaned.length === OPERATOR_CODE_LENGTH) {
+      pinInputRef.current?.focus();
+    }
+  };
+
+  // Auto-submit una sola vez por combinación código+PIN cuando el PIN está completo
   useEffect(() => {
-    if (pin.length === 6 && operatorCode.length > 0 && !loading) {
+    const attemptKey = `${operatorCode}:${pin}`;
+    if (
+      pin.length === PIN_LENGTH
+      && operatorCode.length === OPERATOR_CODE_LENGTH
+      && !loading
+      && lastAutoLoginAttemptRef.current !== attemptKey
+    ) {
+      lastAutoLoginAttemptRef.current = attemptKey;
       const autoLogin = async () => {
         setError('');
         setLoading(true);
+        pinInputRef.current?.blur();
         try {
           await login(operatorCode, pin);
         } catch (err: any) {
@@ -32,8 +55,21 @@ const Login: React.FC<{ onSwitchToRegister: () => void }> = ({ onSwitchToRegiste
       setError('Por favor ingrese código y PIN');
       return;
     }
+    if (!/^\d+$/.test(operatorCode)) {
+      setError('El código de operario debe contener solo números');
+      return;
+    }
+    if (operatorCode.length !== OPERATOR_CODE_LENGTH) {
+      setError('El código de operario debe tener 3 dígitos');
+      return;
+    }
+    if (pin.length !== PIN_LENGTH) {
+      setError('El PIN debe tener 4 dígitos');
+      return;
+    }
     setError('');
     setLoading(true);
+    lastAutoLoginAttemptRef.current = `${operatorCode}:${pin}`;
     try {
       await login(operatorCode, pin);
     } catch (err: any) {
@@ -50,8 +86,9 @@ const Login: React.FC<{ onSwitchToRegister: () => void }> = ({ onSwitchToRegiste
           <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-4">
             <Lock className="w-8 h-8 text-white" />
           </div>
-          <h2 className="text-2xl font-bold text-white">Acceso al Sistema</h2>
-          <p className="text-blue-100 mt-1">Ingrese sus credenciales para continuar</p>
+          <h1 className="text-2xl font-bold text-white">Registro Producción Pigmea</h1>
+          <h2 className="text-blue-100 mt-1 font-medium">Acceso al Sistema</h2>
+          <p className="text-blue-100/90 mt-1">Ingrese sus credenciales para continuar</p>
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-6">
@@ -63,15 +100,19 @@ const Login: React.FC<{ onSwitchToRegister: () => void }> = ({ onSwitchToRegiste
           )}
 
           <div>
-            <label className="block text-sm font-bold text-slate-700 mb-2">Código de Operario</label>
+            <label className="block text-sm font-bold text-slate-700 mb-2">Código de Operario (3 dígitos)</label>
             <div className="relative">
               <User className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
                 value={operatorCode}
-                onChange={(e) => setOperatorCode(e.target.value)}
+                onChange={(e) => handleOperatorCodeChange(e.target.value)}
+                inputMode="numeric"
+                pattern="[0-9]*"
+                enterKeyHint="next"
+                maxLength={OPERATOR_CODE_LENGTH}
                 className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all font-medium"
-                placeholder="Ej: OP-001"
+                placeholder="Ej: 123"
               />
             </div>
           </div>
@@ -81,14 +122,28 @@ const Login: React.FC<{ onSwitchToRegister: () => void }> = ({ onSwitchToRegiste
             <div className="relative">
               <Lock className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
+                ref={pinInputRef}
                 type="password"
                 value={pin}
-                  onFocus={() => setPin('')}
-                  onClick={() => setPin('')}
-                  inputMode="numeric"
+                onFocus={() => {
+                  setPin('');
+                  lastAutoLoginAttemptRef.current = '';
+                }}
+                onClick={() => {
+                  setPin('');
+                  lastAutoLoginAttemptRef.current = '';
+                }}
+                inputMode="numeric"
                 pattern="[0-9]*"
-                maxLength={6}
-                onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
+                enterKeyHint="done"
+                maxLength={PIN_LENGTH}
+                onChange={(e) => {
+                  const cleanedPin = e.target.value.replace(/\D/g, '').slice(0, PIN_LENGTH);
+                  setPin(cleanedPin);
+                  if (cleanedPin.length !== PIN_LENGTH) {
+                    lastAutoLoginAttemptRef.current = '';
+                  }
+                }}
                 className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all font-mono text-center tracking-[0.5em] text-xl"
                 placeholder="••••"
               />

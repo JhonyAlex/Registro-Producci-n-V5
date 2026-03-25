@@ -1,13 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Save, Calendar, CheckCircle, X, ChevronDown, Trash2, RotateCcw, Settings, Edit2, Users, Cloud, WifiOff } from 'lucide-react';
+import { Plus, Save, Calendar, CheckCircle, X, ChevronDown, Trash2, RotateCcw, Users, Cloud, WifiOff } from 'lucide-react';
 import { MachineFieldDefinition, MachineType, ShiftType, ProductionRecord } from '../types';
 import { MACHINES, SHIFTS } from '../constants';
 import { 
   saveRecord, 
-  createCustomComment,
-  deleteCustomComment, 
-  getCustomComments,
-  renameCustomComment,
   refreshSettings,
   subscribeToSettings,
   subscribeToMachineFieldSchema,
@@ -20,6 +16,8 @@ interface ShiftFormProps {
   editingRecord?: ProductionRecord | null;
   onCancelEdit?: () => void;
 }
+
+type FocusableFieldElement = HTMLInputElement | HTMLSelectElement;
 
 const MAX_PG_INT = 2147483647;
 const getStorageKey = (userId?: string | null) => `pigmea_form_defaults_v1_${userId || 'guest'}`;
@@ -34,7 +32,6 @@ const sanitizeSchemaVersion = (value: unknown): number => {
 
 const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onCancelEdit }) => {
   const { user } = useAuth();
-  const canManageComments = user?.role === 'admin' || Boolean(user?.permissions?.some((perm) => perm.key === 'settings.manage'));
 
   const [formData, setFormData] = useState({
     date: new Date().toISOString().split('T')[0],
@@ -63,16 +60,6 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
   const [showSuggestions, setShowSuggestions] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Management Modal State (Generic for Comments and Operators)
-  type ModalMode = 'comments';
-  const [showManageModal, setShowManageModal] = useState(false);
-  const [manageMode, setManageMode] = useState<ModalMode>('comments');
-  const [editingItemOldName, setEditingItemOldName] = useState<string | null>(null);
-  const [tempItemName, setTempItemName] = useState('');
-  const [manageableComments, setManageableComments] = useState<string[]>([]);
-  const [newManageComment, setNewManageComment] = useState('');
-  const [manageError, setManageError] = useState('');
-
   // Success Modal State
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [wasOfflineSave, setWasOfflineSave] = useState(false);
@@ -81,6 +68,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
   const [dynamicFieldValues, setDynamicFieldValues] = useState<Record<string, unknown>>({});
   const [dynamicFieldError, setDynamicFieldError] = useState('');
   const [isMachineSchemaReady, setIsMachineSchemaReady] = useState(false);
+  const focusableFieldRefs = useRef<Record<string, FocusableFieldElement | null>>({});
 
   // 1. Load Defaults from LocalStorage when the user is identified (per-user key)
   useEffect(() => {
@@ -337,6 +325,79 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
     setDynamicFieldValues((prev) => ({ ...prev, [fieldKey]: value }));
   };
 
+  const setFocusableFieldRef = (fieldKey: string) => (element: FocusableFieldElement | null) => {
+    if (element) {
+      focusableFieldRefs.current[fieldKey] = element;
+      return;
+    }
+
+    delete focusableFieldRefs.current[fieldKey];
+  };
+
+  const getFocusableFieldOrder = () => {
+    const dynamicKeys = machineFields
+      .filter((field) => field.type === 'number' || field.type === 'short_text' || field.type === 'select')
+      .map((field) => `dynamic:${field.key}`);
+
+    return ['operator', ...dynamicKeys, 'comment'];
+  };
+
+  const moveFocusToNextField = (currentFieldKey: string) => {
+    const focusableFieldOrder = getFocusableFieldOrder();
+    const currentFieldIndex = focusableFieldOrder.indexOf(currentFieldKey);
+    const currentField = focusableFieldRefs.current[currentFieldKey];
+
+    if (currentFieldIndex === -1) {
+      currentField?.blur();
+      return;
+    }
+
+    const nextFieldKey = focusableFieldOrder[currentFieldIndex + 1];
+    if (!nextFieldKey) {
+      currentField?.blur();
+      return;
+    }
+
+    const nextField = focusableFieldRefs.current[nextFieldKey];
+    if (!nextField) {
+      currentField?.blur();
+      return;
+    }
+
+    nextField.focus();
+    if (nextField instanceof HTMLInputElement) {
+      nextField.select();
+    }
+  };
+
+  const getEnterKeyHint = (fieldKey: string): 'next' | 'done' => {
+    const focusableFieldOrder = getFocusableFieldOrder();
+    return focusableFieldOrder[focusableFieldOrder.length - 1] === fieldKey ? 'done' : 'next';
+  };
+
+  const handleFieldAdvance = (fieldKey: string) => (event: React.KeyboardEvent<FocusableFieldElement>) => {
+    if (event.key !== 'Enter') {
+      return;
+    }
+
+    event.preventDefault();
+    moveFocusToNextField(fieldKey);
+  };
+
+  const moveFocusAfterSelection = (fieldKey: string) => {
+    window.setTimeout(() => {
+      moveFocusToNextField(fieldKey);
+    }, 0);
+  };
+
+  const maybeAdvanceTextField = (fieldKey: string, value: string, maxLength?: number) => {
+    if (!maxLength || value.length < maxLength) {
+      return;
+    }
+
+    moveFocusToNextField(fieldKey);
+  };
+
   const preventNumberScrollChange = (e: React.WheelEvent<HTMLInputElement>) => {
     e.currentTarget.blur();
   };
@@ -379,83 +440,6 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
     setOperatorInput(op.name);
     setOperatorUserId(op.id);
     setShowOperatorSuggestions(false);
-  };
-
-  // --- Management Handlers (Generic) ---
-
-  const openManageModal = (mode: ModalMode) => {
-    if (!canManageComments) return;
-    setManageMode(mode);
-    setEditingItemOldName(null);
-    setTempItemName('');
-    setManageError('');
-    setNewManageComment('');
-    setShowManageModal(true);
-    void loadManageableComments();
-  };
-
-  const loadManageableComments = async () => {
-    try {
-      const items = await getCustomComments();
-      setManageableComments(items);
-    } catch (error: any) {
-      setManageError(String(error?.message || 'No se pudo cargar la lista editable de incidencias.'));
-    }
-  };
-
-  const handleCreateManageComment = async () => {
-    const normalized = newManageComment.trim();
-    if (!normalized) return;
-    try {
-      await createCustomComment(normalized);
-      setNewManageComment('');
-      setManageError('');
-      await loadManageableComments();
-    } catch (error: any) {
-      setManageError(String(error?.message || 'No se pudo crear la incidencia.'));
-    }
-  };
-
-  const handleDeleteItem = async (item: string) => {
-    if (confirm(`¿Borrar "${item}" de la lista de incidencias?\n\nNota: Los registros históricos NO se borrarán.`)) {
-      try {
-        await deleteCustomComment(item);
-        setManageError('');
-        await loadManageableComments();
-      } catch (error: any) {
-        setManageError(String(error?.message || 'No se pudo borrar la incidencia.'));
-      }
-    }
-  };
-
-  const startEditingItem = (item: string) => {
-    setEditingItemOldName(item);
-    setTempItemName(item);
-  };
-
-  const saveEditedItem = async () => {
-    if (!editingItemOldName || !tempItemName) return;
-    const normalizedTemp = tempItemName.trim();
-    if (!normalizedTemp) {
-      setManageError('El nombre no puede quedar vacío.');
-      return;
-    }
-    
-    if (normalizedTemp !== editingItemOldName) {
-      if (confirm(`¿Renombrar "${editingItemOldName}" a "${normalizedTemp}"?\n\nEsto actualizará TODOS los registros históricos.`)) {
-        try {
-          await renameCustomComment(editingItemOldName, normalizedTemp);
-          if (commentInput === editingItemOldName) setCommentInput(normalizedTemp);
-          setManageError('');
-          await loadManageableComments();
-        } catch (error: any) {
-          setManageError(String(error?.message || 'No se pudo renombrar la incidencia.'));
-          return;
-        }
-      }
-    }
-    setEditingItemOldName(null);
-    setTempItemName('');
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -651,6 +635,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
               <div className="relative w-full">
                 <div className="relative">
                   <input
+                    ref={setFocusableFieldRef('operator')}
                     type="text"
                     required
                     placeholder="Nombre del operario..."
@@ -661,6 +646,8 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
                       setShowOperatorSuggestions(true);
                     }}
                     onFocus={handleOperatorFocus}
+                    onKeyDown={handleFieldAdvance('operator')}
+                    enterKeyHint={getEnterKeyHint('operator')}
                     className="w-full pl-4 pr-10 py-3 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
                     autoComplete="off"
                   />
@@ -725,60 +712,93 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
           </div>
         </div>
 
-        {machineFields.length > 0 && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {machineFields.map((field) => (
-              <div key={field.key}>
-                <label className="block text-sm font-semibold text-slate-700 mb-2">
+        <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-4">
+          <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wide">Campos</h3>
+          <p className="mt-1 text-xs text-slate-500">La seccion se reorganiza automaticamente para que en movil y tablet los controles no se compriman ni se desborden.</p>
+        </div>
+
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          {machineFields.map((field) => (
+            <div key={field.key} className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="mb-3">
+                <label className="block min-w-0 break-words text-sm font-semibold text-slate-700">
                   {field.label} {field.required ? <span className="text-red-500">*</span> : null}
                 </label>
+              </div>
 
-                {field.type === 'number' && (
-                  <input
-                    type="number"
-                    value={(dynamicFieldValues[field.key] as number | string | undefined) ?? ''}
-                    min={field.rules?.min}
-                    max={field.rules?.max}
-                    onWheel={preventNumberScrollChange}
-                    onChange={(e) => updateDynamicFieldValue(field.key, e.target.value === '' ? '' : Number(e.target.value))}
-                    className="w-full px-4 py-3 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-medium"
-                  />
-                )}
+              {field.type === 'number' && (
+                <input
+                  ref={setFocusableFieldRef(`dynamic:${field.key}`)}
+                  type="number"
+                  value={(dynamicFieldValues[field.key] as number | string | undefined) ?? ''}
+                  min={field.rules?.min}
+                  max={field.rules?.max}
+                  onWheel={preventNumberScrollChange}
+                  onChange={(e) => updateDynamicFieldValue(field.key, e.target.value === '' ? '' : Number(e.target.value))}
+                  onKeyDown={handleFieldAdvance(`dynamic:${field.key}`)}
+                  enterKeyHint={getEnterKeyHint(`dynamic:${field.key}`)}
+                  className="w-full rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 font-medium outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              )}
 
-                {field.type === 'short_text' && (
-                  <input
-                    type="text"
-                    value={(dynamicFieldValues[field.key] as string | undefined) ?? ''}
-                    maxLength={field.rules?.maxLength}
-                    onChange={(e) => updateDynamicFieldValue(field.key, e.target.value)}
-                    className="w-full px-4 py-3 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-medium"
-                  />
-                )}
+              {field.type === 'short_text' && (
+                <input
+                  ref={setFocusableFieldRef(`dynamic:${field.key}`)}
+                  type="text"
+                  value={(dynamicFieldValues[field.key] as string | undefined) ?? ''}
+                  maxLength={field.rules?.maxLength}
+                  onChange={(e) => {
+                    updateDynamicFieldValue(field.key, e.target.value);
+                    maybeAdvanceTextField(`dynamic:${field.key}`, e.target.value, field.rules?.maxLength);
+                  }}
+                  onKeyDown={handleFieldAdvance(`dynamic:${field.key}`)}
+                  enterKeyHint={getEnterKeyHint(`dynamic:${field.key}`)}
+                  className="w-full rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 font-medium outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              )}
 
-                {field.type === 'select' && (
+              {field.type === 'select' && (
+                <div className="relative">
                   <select
+                    ref={setFocusableFieldRef(`dynamic:${field.key}`)}
                     value={(dynamicFieldValues[field.key] as string | undefined) ?? ''}
-                    onChange={(e) => updateDynamicFieldValue(field.key, e.target.value)}
-                    className="w-full px-4 py-3 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none appearance-none font-medium"
+                    onChange={(e) => {
+                      updateDynamicFieldValue(field.key, e.target.value);
+                      moveFocusAfterSelection(`dynamic:${field.key}`);
+                    }}
+                    onKeyDown={handleFieldAdvance(`dynamic:${field.key}`)}
+                    className="w-full appearance-none rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 pr-10 font-medium outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="">Selecciona una opción</option>
                     {(field.options || []).map((option) => (
                       <option key={option} value={option}>{option}</option>
                     ))}
                   </select>
-                )}
+                  <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                </div>
+              )}
 
-                {field.type === 'multi_select' && (
-                  <div className="space-y-2 px-3 py-3 bg-white border border-slate-300 rounded-lg">
+              {field.type === 'multi_select' && (
+                <div className="space-y-3 rounded-xl border border-slate-300 bg-slate-50 px-3 py-3">
+                  <p className="text-xs font-medium text-slate-500">Puedes marcar varias opciones.</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {(field.options || []).map((option) => {
                       const selected = Array.isArray(dynamicFieldValues[field.key])
                         ? (dynamicFieldValues[field.key] as string[])
                         : [];
                       const isChecked = selected.includes(option);
                       return (
-                        <label key={option} className="flex items-center gap-2 text-sm text-slate-700">
+                        <label
+                          key={option}
+                          className={`flex min-w-0 cursor-pointer items-center gap-3 rounded-xl border px-3 py-3 text-sm font-medium transition-colors ${
+                            isChecked
+                              ? 'border-blue-300 bg-blue-50 text-blue-700'
+                              : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+                          }`}
+                        >
                           <input
                             type="checkbox"
+                            className="h-4 w-4 shrink-0 accent-blue-600"
                             checked={isChecked}
                             onChange={(e) => {
                               const next = new Set(selected);
@@ -790,16 +810,77 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
                               updateDynamicFieldValue(field.key, Array.from(next));
                             }}
                           />
-                          {option}
+                          <span className="min-w-0 break-words">{option}</span>
                         </label>
                       );
                     })}
                   </div>
-                )}
+                </div>
+              )}
+            </div>
+          ))}
+
+          <div className="relative xl:col-span-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm" ref={dropdownRef}>
+            <label className="block text-sm font-semibold text-slate-700 mb-2">Comentario / Incidencia</label>
+            <p className="mb-3 text-xs text-slate-500">Selecciona una incidencia existente o escribe una nueva si no aparece en la lista.</p>
+
+            <div className="relative w-full">
+              <div className="relative">
+                <input
+                  ref={setFocusableFieldRef('comment')}
+                  type="text"
+                  placeholder="Escribir..."
+                  value={commentInput}
+                  onChange={e => {
+                    setCommentInput(e.target.value);
+                    setShowSuggestions(true);
+                  }}
+                  onFocus={handleInputFocus}
+                  onKeyDown={handleFieldAdvance('comment')}
+                  enterKeyHint={getEnterKeyHint('comment')}
+                  className="w-full rounded-xl border border-slate-300 bg-slate-50 pl-4 pr-10 py-3 text-base font-medium outline-none transition-all focus:ring-2 focus:ring-blue-500 sm:text-lg"
+                  autoComplete="off"
+                />
+                <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center">
+                  {commentInput && (
+                    <button type="button" onClick={clearComment} className="mr-1 p-1 text-slate-400 transition-colors hover:text-red-500">
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                  <div className={`pointer-events-none p-1 text-slate-400 transition-transform duration-200 ${showSuggestions ? 'rotate-180' : ''}`}>
+                    <ChevronDown className="w-4 h-4" />
+                  </div>
+                </div>
               </div>
-            ))}
+
+              {showSuggestions && (
+                <div className="absolute bottom-full z-50 mb-2 max-h-60 w-full origin-bottom overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-xl animate-fade-in">
+                  {filteredComments.length > 0 ? (
+                    <div className="divide-y divide-slate-50">
+                      {filteredComments.map((comment, index) => (
+                        <div
+                          key={index}
+                          onClick={() => selectComment(comment)}
+                          className="group flex w-full cursor-pointer items-center justify-between px-4 py-3.5 text-left font-medium text-slate-700 transition-colors hover:bg-blue-50 active:bg-blue-100 touch-target"
+                        >
+                          <div className="flex items-center gap-3 overflow-hidden">
+                            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400"></span>
+                            <span className="truncate">{comment}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="px-4 py-4 text-center">
+                      <p className="mb-1 text-sm text-slate-400">Nueva incidencia</p>
+                      <p className="break-words text-sm font-bold text-blue-600">"{commentInput}"</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
-        )}
+        </div>
 
         {dynamicFieldError && (
           <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
@@ -807,79 +888,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
           </div>
         )}
 
-        {/* Production Data */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* Comment Input */}
-            <div className="md:col-span-2 relative" ref={dropdownRef}>
-              <div className="flex justify-between items-center mb-2">
-                  <label className="block text-sm font-semibold text-slate-700">Comentario / Incidencia</label>
-                  {canManageComments && (
-                    <button 
-                    type="button" 
-                    onClick={() => openManageModal('comments')}
-                    className="text-xs text-blue-600 font-bold flex items-center gap-1 hover:underline bg-blue-50 px-2 py-1 rounded"
-                    >
-                      <Settings className="w-3 h-3" /> Config
-                    </button>
-                  )}
-              </div>
-              
-              <div className="relative w-full">
-                <div className="relative">
-                  <input
-                    type="text"
-                    placeholder="Escribir..."
-                    value={commentInput}
-                    onChange={e => {
-                      setCommentInput(e.target.value);
-                      setShowSuggestions(true);
-                    }}
-                    onFocus={handleInputFocus}
-                    className="w-full pl-4 pr-10 py-3 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium text-lg"
-                    autoComplete="off"
-                  />
-                  <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center">
-                    {commentInput && (
-                      <button type="button" onClick={clearComment} className="p-1 text-slate-400 hover:text-red-500 transition-colors mr-1">
-                        <X className="w-4 h-4" />
-                      </button>
-                    )}
-                    <div className={`pointer-events-none text-slate-400 p-1 transition-transform duration-200 ${showSuggestions ? 'rotate-180' : ''}`}>
-                        <ChevronDown className="w-4 h-4" />
-                    </div>
-                  </div>
-                </div>
-
-                {showSuggestions && (
-                  <div className="absolute z-50 w-full bottom-full mb-2 bg-white border border-slate-200 rounded-xl shadow-xl max-h-60 overflow-y-auto animate-fade-in origin-bottom">
-                    {filteredComments.length > 0 ? (
-                      <div className="divide-y divide-slate-50">
-                        {filteredComments.map((comment, index) => (
-                          <div
-                            key={index}
-                            onClick={() => selectComment(comment)}
-                            className="w-full text-left px-4 py-3.5 hover:bg-blue-50 active:bg-blue-100 text-slate-700 font-medium transition-colors flex items-center justify-between group touch-target cursor-pointer"
-                          >
-                            <div className="flex items-center gap-3 overflow-hidden">
-                              <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0"></span>
-                              <span className="truncate">{comment}</span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="px-4 py-4 text-center">
-                          <p className="text-slate-400 text-sm mb-1">Nueva incidencia</p>
-                          <p className="text-blue-600 font-bold text-sm break-words">"{commentInput}"</p>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-        </div>
-
-        <div className="pt-2 pb-6 flex gap-3">
+        <div className="pt-2 pb-6 flex flex-col sm:flex-row gap-3">
           {editingRecord && (
             <button
               type="button"
@@ -929,108 +938,6 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
                 ? <><WifiOff className="w-3 h-3" /> Pendiente de sincronización</>
                 : <><Cloud className="w-3 h-3" /> Sincronizado con la nube</>
               }
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* --- MANAGE MODAL (Generic) --- */}
-      {showManageModal && canManageComments && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[80vh]">
-            <div className="bg-slate-50 p-4 border-b border-slate-200 flex justify-between items-center">
-               <h3 className="font-bold text-slate-800 flex items-center gap-2">
-                 <Settings className="w-5 h-5 text-slate-500" />
-                 Gestionar Incidencias
-               </h3>
-               <button onClick={() => setShowManageModal(false)} className="p-2 hover:bg-slate-200 rounded-full text-slate-500">
-                 <X className="w-5 h-5" />
-               </button>
-            </div>
-            
-            <div className="p-4 bg-blue-50 border-b border-blue-100 text-xs text-blue-800">
-              <span className="font-bold block mb-1">Modo Edición Global:</span>
-              Esta sección gestiona incidencias personalizadas globales. Al renombrar, se actualizarán los registros históricos que usen ese texto.
-            </div>
-
-            <div className="p-3 border-b border-slate-100 bg-white">
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={newManageComment}
-                  onChange={(e) => setNewManageComment(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      void handleCreateManageComment();
-                    }
-                  }}
-                  placeholder="Nueva incidencia global"
-                  className="flex-1 px-3 py-2 text-sm border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                <button
-                  type="button"
-                  onClick={() => void handleCreateManageComment()}
-                  className="px-3 py-2 text-sm font-semibold bg-blue-600 text-white rounded-md hover:bg-blue-700"
-                >
-                  Agregar
-                </button>
-              </div>
-              {manageError && <p className="mt-2 text-xs text-red-600">{manageError}</p>}
-            </div>
-
-            <div className="overflow-y-auto flex-1 p-2 space-y-1">
-              {manageableComments.length === 0 && (
-                <div className="p-4 text-sm text-slate-500 text-center">
-                  No hay incidencias personalizadas para gestionar.
-                </div>
-              )}
-              {manageableComments.map((item, index) => {
-                 const isEditing = editingItemOldName === item;
-                 
-                 return (
-                   <div key={index} className={`p-3 rounded-lg border flex items-center justify-between gap-3 ${isEditing ? 'bg-blue-50 border-blue-300 ring-2 ring-blue-100' : 'bg-white border-slate-100 hover:border-slate-300'}`}>
-                     
-                     {isEditing ? (
-                       <div className="flex-1 flex gap-2">
-                         <input 
-                           type="text" 
-                           value={tempItemName}
-                           autoFocus
-                           onChange={(e) => setTempItemName(e.target.value)}
-                           className="flex-1 px-2 py-1 border rounded text-sm outline-none border-blue-300"
-                         />
-                         <button onClick={saveEditedItem} className="p-1.5 bg-green-500 text-white rounded hover:bg-green-600">
-                           <Save className="w-4 h-4" />
-                         </button>
-                         <button onClick={() => setEditingItemOldName(null)} className="p-1.5 bg-slate-300 text-slate-600 rounded hover:bg-slate-400">
-                           <X className="w-4 h-4" />
-                         </button>
-                       </div>
-                     ) : (
-                       <>
-                         <span className="text-sm font-medium text-slate-700 break-words flex-1">{item}</span>
-                         <div className="flex items-center gap-1 shrink-0">
-                           <button 
-                             onClick={() => startEditingItem(item)}
-                             className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
-                             title="Renombrar y unificar"
-                           >
-                             <Edit2 className="w-4 h-4" />
-                           </button>
-                           <button 
-                             onClick={() => handleDeleteItem(item)}
-                             className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
-                             title="Borrar de la lista"
-                           >
-                             <Trash2 className="w-4 h-4" />
-                           </button>
-                         </div>
-                       </>
-                     )}
-                   </div>
-                 );
-              })}
             </div>
           </div>
         </div>

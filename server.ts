@@ -2,7 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import { Pool } from 'pg';
 import dotenv from 'dotenv';
-import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs/promises';
 import http from 'http';
@@ -10,6 +9,22 @@ import { Server } from 'socket.io';
 import cookieParser from 'cookie-parser';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import { isSessionTokenCurrent } from './utils/sessionAuth';
+
+type AuthTokenPayload = {
+  id: string;
+  role: string;
+  sv: number;
+  iat?: number;
+  exp?: number;
+};
+
+type RuntimeViteModule = {
+  createServer: (config: {
+    server: { middlewareMode: true };
+    appType: string;
+  }) => Promise<{ middlewares: unknown }>;
+};
 
 dotenv.config();
 
@@ -20,15 +35,17 @@ const io = new Server(httpServer, {
   cors: { origin: '*' }
 });
 
-app.use(cors());
-app.use(express.json({ limit: '50mb' }));
-app.use(cookieParser());
+(app as any).use(cors());
+(app as any).use(express.json({ limit: '50mb' }));
+(app as any).use(cookieParser());
 app.use('/api', (_req, res, next) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
   res.setHeader('Surrogate-Control', 'no-store');
-  next();
+  if (next) {
+    next();
+  }
 });
 
 // PostgreSQL Connection
@@ -86,6 +103,7 @@ async function initDB() {
         pin_hash VARCHAR(255) NOT NULL,
         role VARCHAR(50) NOT NULL,
         status VARCHAR(50) NOT NULL DEFAULT 'pending',
+        session_version INTEGER NOT NULL DEFAULT 0,
         failed_attempts INTEGER DEFAULT 0,
         name VARCHAR(255) NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -127,6 +145,7 @@ async function initDB() {
     `);
 
     await pool.query('ALTER TABLE production_records ADD COLUMN IF NOT EXISTS recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
+  await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS session_version INTEGER NOT NULL DEFAULT 0');
     await pool.query('ALTER TABLE production_records ADD COLUMN IF NOT EXISTS created_by_user_id UUID');
     await pool.query('ALTER TABLE production_records ADD COLUMN IF NOT EXISTS last_modified_by_user_id UUID');
     await pool.query('ALTER TABLE production_records ADD COLUMN IF NOT EXISTS boss_user_id UUID');
@@ -225,6 +244,7 @@ async function initDB() {
         label VARCHAR(255) NOT NULL,
         type VARCHAR(50) NOT NULL,
         required BOOLEAN NOT NULL DEFAULT FALSE,
+        display_order INTEGER,
         options JSONB NOT NULL DEFAULT '[]',
         default_value JSONB,
         rules JSONB NOT NULL DEFAULT '{}',
@@ -233,6 +253,24 @@ async function initDB() {
         created_by_user_id UUID
       )
     `);
+
+    await pool.query('ALTER TABLE field_catalog ADD COLUMN IF NOT EXISTS display_order INTEGER');
+    await pool.query(`
+      WITH ordered AS (
+        SELECT id,
+               ROW_NUMBER() OVER (ORDER BY created_at ASC, label ASC, id ASC) - 1 AS normalized_order
+        FROM field_catalog
+      )
+      UPDATE field_catalog fc
+      SET display_order = ordered.normalized_order
+      FROM ordered
+      WHERE fc.id = ordered.id
+        AND fc.display_order IS NULL
+    `);
+    await pool.query('ALTER TABLE field_catalog ALTER COLUMN display_order SET DEFAULT 0');
+    await pool.query('UPDATE field_catalog SET display_order = 0 WHERE display_order IS NULL');
+    await pool.query('ALTER TABLE field_catalog ALTER COLUMN display_order SET NOT NULL');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_field_catalog_display_order ON field_catalog(display_order)');
 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS field_catalog_assignments (
@@ -308,7 +346,7 @@ async function initDB() {
 }
 
 // Middleware to check DB connection
-const requireDB = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+const requireDB = (_req, res, next) => {
   if (!isDbConnected) {
     return res.status(503).json({ error: 'Database unavailable' });
   }
@@ -321,6 +359,7 @@ const requireDB = (req: express.Request, res: express.Response, next: express.Ne
 const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-key-change-in-production';
 const SESSION_TIMEOUT_MINUTES = parseInt(process.env.SESSION_TIMEOUT_MINUTES || '30');
 const MAX_FAILED_ATTEMPTS = 3;
+const PIN_LENGTH = 4;
 
 const APP_ROLES = ['admin', 'jefe_planta', 'jefe_turno', 'operario'] as const;
 type AppRole = typeof APP_ROLES[number];
@@ -337,6 +376,7 @@ const PERMISSION_KEYS = [
   'settings.field_schemas',
   'settings.dashboards',
   'admin.users.read',
+  'admin.users.create',
   'admin.users.approve',
   'admin.users.unlock',
   'admin.users.change_password',
@@ -358,6 +398,7 @@ const DEFAULT_ROLE_PERMISSIONS: Record<AppRole, string[]> = {
     'settings.field_schemas',
     'settings.dashboards',
     'admin.users.read',
+    'admin.users.create',
     'admin.users.approve',
     'admin.users.unlock',
     'admin.users.change_password',
@@ -374,6 +415,9 @@ const normalizeOptionalString = (value: any): string | null => {
   const normalized = String(value).trim();
   return normalized.length > 0 ? normalized : null;
 };
+
+const isNumericOnly = (value: string): boolean => /^\d+$/.test(value);
+const hasValidPinLength = (value: string): boolean => value.length === PIN_LENGTH;
 
 const MACHINE_VALUES = ['WH1', 'Giave', 'WH3', 'NEXUS', 'SL2', '21', '22', 'S2DT', 'PROSLIT'] as const;
 const SHIFT_VALUES = ['Mañana', 'Tarde', 'Noche'] as const;
@@ -614,11 +658,11 @@ const getEffectiveMachineSchema = async (machine: string): Promise<{
   const catalogResult = await pool.query(
     `SELECT fc.key, fc.label, fc.type, fc.required, fca.enabled,
             fc.options, fc.default_value as "defaultValue", fc.rules,
-            fca.sort_order as "order", fc.updated_at as "updatedAt"
+            fc.display_order as "order", fc.updated_at as "updatedAt"
      FROM field_catalog_assignments fca
      JOIN field_catalog fc ON fc.id = fca.field_id
      WHERE fca.machine = $1
-     ORDER BY fca.sort_order ASC`,
+     ORDER BY fc.display_order ASC`,
     [machine]
   );
 
@@ -681,6 +725,58 @@ const getEffectiveMachineSchema = async (machine: string): Promise<{
     updatedByUserId: row.updatedByUserId || null,
     updatedAt: row.updatedAt ? new Date(row.updatedAt).toISOString() : null,
   };
+};
+
+type QueryExecutor = {
+  query: (text: string, params?: any[]) => Promise<any>;
+};
+
+const normalizeFieldCatalogDisplayOrder = async (executor: QueryExecutor): Promise<void> => {
+  await executor.query(`
+    WITH ordered AS (
+      SELECT id,
+             ROW_NUMBER() OVER (
+               ORDER BY display_order ASC NULLS LAST, created_at ASC, id ASC
+             ) - 1 AS normalized_order
+      FROM field_catalog
+    )
+    UPDATE field_catalog fc
+    SET display_order = ordered.normalized_order,
+        updated_at = CASE
+          WHEN fc.display_order IS DISTINCT FROM ordered.normalized_order THEN NOW()
+          ELSE fc.updated_at
+        END
+    FROM ordered
+    WHERE fc.id = ordered.id
+  `);
+};
+
+const getOrderedFieldCatalogIds = async (executor: QueryExecutor): Promise<string[]> => {
+  const result = await executor.query(
+    `SELECT id
+     FROM field_catalog
+     ORDER BY display_order ASC, created_at ASC, id ASC`
+  );
+  return result.rows.map((row: any) => String(row.id));
+};
+
+const applyFieldCatalogDisplayOrder = async (executor: QueryExecutor, orderedIds: string[]): Promise<void> => {
+  if (orderedIds.length === 0) {
+    return;
+  }
+
+  const valuesSql = orderedIds
+    .map((_, index) => `($${index + 1}::uuid, ${index})`)
+    .join(', ');
+
+  await executor.query(
+    `UPDATE field_catalog fc
+     SET display_order = incoming.display_order,
+         updated_at = NOW()
+     FROM (VALUES ${valuesSql}) AS incoming(id, display_order)
+     WHERE fc.id = incoming.id`,
+    orderedIds
+  );
 };
 
 const sanitizeDashboardConfigPayload = (incoming: any): DashboardConfigPayload => {
@@ -860,19 +956,59 @@ async function logAudit(userId: string | null, action: string, details: any, ipA
   }
 }
 
+const getUserSocketRoom = (userId: string) => `user:${userId}`;
+
+const parseCookieHeader = (cookieHeader?: string) => {
+  if (!cookieHeader) return new Map<string, string>();
+
+  return cookieHeader.split(';').reduce((cookies, part) => {
+    const [rawName, ...rawValue] = part.trim().split('=');
+    if (!rawName) return cookies;
+    cookies.set(rawName, decodeURIComponent(rawValue.join('=')));
+    return cookies;
+  }, new Map<string, string>());
+};
+
+const getSocketAuthenticatedUser = async (cookieHeader?: string) => {
+  const token = parseCookieHeader(cookieHeader).get('token');
+  if (!token) return null;
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET) as AuthTokenPayload;
+    const userResult = await pool.query('SELECT id, status, session_version FROM users WHERE id = $1', [decoded.id]);
+    const user = userResult.rows[0];
+
+    if (!user || user.status !== 'active' || !isSessionTokenCurrent(decoded.sv, user.session_version)) {
+      return null;
+    }
+
+    return { id: user.id };
+  } catch {
+    return null;
+  }
+};
+
+const notifySessionReplaced = (userId: string, sessionVersion: number) => {
+  io.to(getUserSocketRoom(userId)).emit('session_replaced', { userId, sessionVersion });
+};
+
 // Middleware: Authenticate
-export const authenticate = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+export const authenticate = async (req, res, next) => {
   const token = req.cookies.token;
   if (!token) return res.status(401).json({ error: 'No autorizado' });
 
   try {
-    const decoded: any = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, JWT_SECRET) as AuthTokenPayload;
     const userResult = await pool.query('SELECT * FROM users WHERE id = $1', [decoded.id]);
     const user = userResult.rows[0];
 
     if (!user) return res.status(401).json({ error: 'Usuario no encontrado' });
     if (user.status === 'locked') return res.status(403).json({ error: 'Cuenta bloqueada. Contacte a un administrador.' });
     if (user.status === 'pending') return res.status(403).json({ error: 'Cuenta pendiente de aprobación.' });
+    if (!isSessionTokenCurrent(decoded.sv, user.session_version)) {
+      res.clearCookie('token');
+      return res.status(401).json({ error: 'Sesión cerrada por un nuevo inicio de sesión', reason: 'session_replaced' });
+    }
 
     // Check timeout
     const lastActivity = new Date(user.last_activity).getTime();
@@ -895,7 +1031,7 @@ export const authenticate = async (req: express.Request, res: express.Response, 
 
 // Middleware: Require Role
 export const requireRole = (roles: string[]) => {
-  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  return (req, res, next) => {
     const user = (req as any).user;
     if (!user || !roles.includes(user.role)) {
       return res.status(403).json({ error: 'Permisos insuficientes' });
@@ -924,7 +1060,7 @@ const getRolePermissions = async (role: string) => {
 };
 
 export const requirePermission = (permissionKey: string) => {
-  return async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  return async (req, res, next) => {
     const user = (req as any).user;
     if (!user) return res.status(401).json({ error: 'No autorizado' });
 
@@ -954,8 +1090,16 @@ export const requirePermission = (permissionKey: string) => {
 
 // Register
 app.post('/api/auth/register', requireDB, async (req, res) => {
-  const { operator_code, pin, name, role } = req.body;
-  if (!operator_code || !pin || !name || !role) return res.status(400).json({ error: 'Faltan datos' });
+  const operatorCode = normalizeOptionalString(req.body?.operator_code);
+  const pin = normalizeOptionalString(req.body?.pin);
+  const name = normalizeOptionalString(req.body?.name);
+  const role = normalizeOptionalString(req.body?.role);
+
+  if (!operatorCode || !pin || !name || !role) return res.status(400).json({ error: 'Faltan datos' });
+  if (!isNumericOnly(operatorCode)) return res.status(400).json({ error: 'El código de operario debe contener solo números' });
+  if (!isNumericOnly(pin)) return res.status(400).json({ error: 'El PIN debe contener solo números' });
+  if (!hasValidPinLength(pin)) return res.status(400).json({ error: 'El PIN debe tener 4 dígitos' });
+  if (!APP_ROLES.includes(role as AppRole)) return res.status(400).json({ error: 'Rol inválido' });
 
   try {
     // Check if it's the first user
@@ -970,7 +1114,7 @@ app.post('/api/auth/register', requireDB, async (req, res) => {
     const result = await pool.query(
       `INSERT INTO users (operator_code, pin_hash, role, status, name) 
        VALUES ($1, $2, $3, $4, $5) RETURNING id, operator_code, role, status, name`,
-      [operator_code, pinHash, assignedRole, assignedStatus, name]
+      [operatorCode, pinHash, assignedRole, assignedStatus, name]
     );
 
     const newUser = result.rows[0];
@@ -990,15 +1134,19 @@ app.post('/api/auth/register', requireDB, async (req, res) => {
 
 // Login
 app.post('/api/auth/login', requireDB, async (req, res) => {
-  const { operator_code, pin } = req.body;
-  if (!operator_code || !pin) return res.status(400).json({ error: 'Faltan credenciales' });
+  const operatorCode = normalizeOptionalString(req.body?.operator_code);
+  const pin = normalizeOptionalString(req.body?.pin);
+  if (!operatorCode || !pin) return res.status(400).json({ error: 'Faltan credenciales' });
+  if (!isNumericOnly(operatorCode)) return res.status(400).json({ error: 'El código de operario debe contener solo números' });
+  if (!isNumericOnly(pin)) return res.status(400).json({ error: 'El PIN debe contener solo números' });
+  if (!hasValidPinLength(pin)) return res.status(400).json({ error: 'El PIN debe tener 4 dígitos' });
 
   try {
-    const result = await pool.query('SELECT * FROM users WHERE operator_code = $1', [operator_code]);
+    const result = await pool.query('SELECT * FROM users WHERE operator_code = $1', [operatorCode]);
     const user = result.rows[0];
 
     if (!user) {
-      await logAudit(null, 'login_failed', { operator_code, reason: 'user_not_found' }, req.ip || '');
+      await logAudit(null, 'login_failed', { operator_code: operatorCode, reason: 'user_not_found' }, req.ip || '');
       return res.status(401).json({ error: 'Credenciales inválidas' });
     }
 
@@ -1029,25 +1177,41 @@ app.post('/api/auth/login', requireDB, async (req, res) => {
     }
 
     // Success
-    await pool.query('UPDATE users SET failed_attempts = 0, last_login = CURRENT_TIMESTAMP, last_activity = CURRENT_TIMESTAMP WHERE id = $1', [user.id]);
+    const updatedUserResult = await pool.query(
+      `UPDATE users
+       SET failed_attempts = 0,
+           last_login = CURRENT_TIMESTAMP,
+           last_activity = CURRENT_TIMESTAMP,
+           session_version = session_version + 1
+       WHERE id = $1
+       RETURNING id, operator_code, name, role, session_version`,
+      [user.id]
+    );
+    const updatedUser = updatedUserResult.rows[0];
     await logAudit(user.id, 'login_success', {}, req.ip || '');
 
-    const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: '12h' });
+    notifySessionReplaced(updatedUser.id, updatedUser.session_version);
+
+    const token = jwt.sign(
+      { id: updatedUser.id, role: updatedUser.role, sv: updatedUser.session_version },
+      JWT_SECRET,
+      { expiresIn: '12h' }
+    );
     
-    res.cookie('token', token, {
+    (res as any).cookie('token', token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict',
       maxAge: 12 * 60 * 60 * 1000 // 12 hours
-    });
+    } as any);
 
     res.json({
       success: true,
       user: {
-        id: user.id,
-        operator_code: user.operator_code,
-        name: user.name,
-        role: user.role
+        id: updatedUser.id,
+        operator_code: updatedUser.operator_code,
+        name: updatedUser.name,
+        role: updatedUser.role
       }
     });
   } catch (err) {
@@ -1064,31 +1228,51 @@ app.post('/api/auth/logout', authenticate, async (req, res) => {
 });
 
 // Get Current User (Me)
-app.get('/api/auth/me', authenticate, async (req, res) => {
-  const user = (req as any).user;
-  
-  // Fetch permissions and visibility
-  const rolePermissions = await getRolePermissions(user.role);
-  const permissions = Array.from(rolePermissions).map((permissionKey) => {
-    const parsed = splitPermissionKey(permissionKey);
-    return {
-      key: permissionKey,
-      module: parsed.module,
-      action: parsed.action
-    };
-  });
-  const visResult = await pool.query('SELECT target_id FROM user_visibility WHERE observer_id = $1', [user.id]);
-  
-  res.json({
-    user: {
-      id: user.id,
-      operator_code: user.operator_code,
-      name: user.name,
-      role: user.role,
-      permissions,
-      visible_users: visResult.rows.map(r => r.target_id)
+app.get('/api/auth/me', async (req, res) => {
+  const token = req.cookies.token;
+  if (!token) {
+    return res.json({ authenticated: false, user: null });
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET) as AuthTokenPayload;
+    const userResult = await pool.query('SELECT * FROM users WHERE id = $1', [decoded.id]);
+    const user = userResult.rows[0];
+
+    if (!user || user.status !== 'active' || !isSessionTokenCurrent(decoded.sv, user.session_version)) {
+      res.clearCookie('token');
+      return res.json({ authenticated: false, user: null });
     }
-  });
+
+    await pool.query('UPDATE users SET last_activity = CURRENT_TIMESTAMP WHERE id = $1', [user.id]);
+
+    // Fetch permissions and visibility
+    const rolePermissions = await getRolePermissions(user.role);
+    const permissions = Array.from(rolePermissions).map((permissionKey) => {
+      const parsed = splitPermissionKey(permissionKey);
+      return {
+        key: permissionKey,
+        module: parsed.module,
+        action: parsed.action
+      };
+    });
+    const visResult = await pool.query('SELECT target_id FROM user_visibility WHERE observer_id = $1', [user.id]);
+
+    return res.json({
+      authenticated: true,
+      user: {
+        id: user.id,
+        operator_code: user.operator_code,
+        name: user.name,
+        role: user.role,
+        permissions,
+        visible_users: visResult.rows.map(r => r.target_id)
+      }
+    });
+  } catch {
+    res.clearCookie('token');
+    return res.json({ authenticated: false, user: null });
+  }
 });
 
 app.put('/api/auth/profile', authenticate, requireDB, async (req, res) => {
@@ -1102,8 +1286,20 @@ app.put('/api/auth/profile', authenticate, requireDB, async (req, res) => {
     return res.status(400).json({ error: 'No hay cambios para guardar' });
   }
 
-  if (newPin && newPin.length < 4) {
-    return res.status(400).json({ error: 'El PIN debe tener al menos 4 dígitos' });
+  if (operatorCode && !isNumericOnly(operatorCode)) {
+    return res.status(400).json({ error: 'El código de operario debe contener solo números' });
+  }
+
+  if (newPin && !hasValidPinLength(newPin)) {
+    return res.status(400).json({ error: 'El PIN debe tener 4 dígitos' });
+  }
+
+  if (newPin && !isNumericOnly(newPin)) {
+    return res.status(400).json({ error: 'El PIN debe contener solo números' });
+  }
+
+  if (currentPin && !isNumericOnly(currentPin)) {
+    return res.status(400).json({ error: 'El PIN actual debe contener solo números' });
   }
 
   if (newPin && !currentPin) {
@@ -1178,8 +1374,16 @@ app.put('/api/admin/users/:id/profile', authenticate, requireRole(['admin']), re
     return res.status(400).json({ error: 'No hay cambios para guardar' });
   }
 
-  if (newPin && newPin.length < 4) {
-    return res.status(400).json({ error: 'El PIN debe tener al menos 4 dígitos' });
+  if (operatorCode && !isNumericOnly(operatorCode)) {
+    return res.status(400).json({ error: 'El código de operario debe contener solo números' });
+  }
+
+  if (newPin && !hasValidPinLength(newPin)) {
+    return res.status(400).json({ error: 'El PIN debe tener 4 dígitos' });
+  }
+
+  if (newPin && !isNumericOnly(newPin)) {
+    return res.status(400).json({ error: 'El PIN debe contener solo números' });
   }
 
   if (role && !APP_ROLES.includes(role as AppRole)) {
@@ -1256,6 +1460,63 @@ app.get('/api/admin/users', authenticate, requirePermission('admin.users.read'),
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: 'Error fetching users' });
+  }
+});
+
+app.post('/api/admin/users', authenticate, requirePermission('admin.users.create'), requireDB, async (req, res) => {
+  const admin = (req as any).user;
+  const operatorCode = normalizeOptionalString(req.body?.operator_code);
+  const pin = normalizeOptionalString(req.body?.pin);
+  const name = normalizeOptionalString(req.body?.name);
+  const role = normalizeOptionalString(req.body?.role);
+
+  if (!operatorCode || !pin || !name || !role) {
+    return res.status(400).json({ error: 'Faltan datos obligatorios' });
+  }
+
+  if (!isNumericOnly(operatorCode)) {
+    return res.status(400).json({ error: 'El código de operario debe contener solo números' });
+  }
+
+  if (!isNumericOnly(pin)) {
+    return res.status(400).json({ error: 'El PIN debe contener solo números' });
+  }
+
+  if (!hasValidPinLength(pin)) {
+    return res.status(400).json({ error: 'El PIN debe tener 4 dígitos' });
+  }
+
+  if (!APP_ROLES.includes(role as AppRole)) {
+    return res.status(400).json({ error: 'Rol inválido' });
+  }
+
+  try {
+    const pinHash = await bcrypt.hash(pin, 10);
+    const result = await pool.query(
+      `INSERT INTO users (operator_code, pin_hash, role, status, name)
+       VALUES ($1, $2, $3, 'active', $4)
+       RETURNING id, operator_code, role, status, name`,
+      [operatorCode, pinHash, role, name]
+    );
+
+    const newUser = result.rows[0];
+
+    await logAudit(admin.id, 'admin_user_created', {
+      target_user_id: newUser.id,
+      target_operator_code: newUser.operator_code,
+      target_name: newUser.name,
+      target_role: newUser.role,
+      target_status: newUser.status
+    }, req.ip || '');
+
+    io.emit('settings_changed');
+    io.emit('user_status_changed', { userId: newUser.id, status: newUser.status });
+    res.json({ success: true, user: newUser });
+  } catch (err: any) {
+    if (err.code === '23505') {
+      return res.status(400).json({ error: 'El código de operario ya existe' });
+    }
+    res.status(500).json({ error: 'Error creando usuario desde administración' });
   }
 });
 
@@ -1340,8 +1601,12 @@ app.patch('/api/admin/users/:id/password', authenticate, requirePermission('admi
     return res.status(400).json({ error: 'El nuevo PIN es obligatorio' });
   }
 
-  if (newPin.length < 4) {
-    return res.status(400).json({ error: 'El PIN debe tener al menos 4 dígitos' });
+  if (!hasValidPinLength(newPin)) {
+    return res.status(400).json({ error: 'El PIN debe tener 4 dígitos' });
+  }
+
+  if (!isNumericOnly(newPin)) {
+    return res.status(400).json({ error: 'El PIN debe contener solo números' });
   }
 
   try {
@@ -1994,8 +2259,10 @@ app.get('/api/settings/machine-fields/:machine/history', authenticate, requirePe
 // --- FIELD CATALOG ---
 app.get('/api/settings/field-catalog', authenticate, requirePermission('settings.read'), requireDB, async (req, res) => {
   try {
+    await normalizeFieldCatalogDisplayOrder(pool);
     const result = await pool.query(`
       SELECT fc.id, fc.key, fc.label, fc.type, fc.required,
+             fc.display_order as "displayOrder",
              fc.options, fc.default_value as "defaultValue", fc.rules,
              fc.created_at as "createdAt", fc.updated_at as "updatedAt",
              COALESCE(
@@ -2008,7 +2275,7 @@ app.get('/api/settings/field-catalog', authenticate, requirePermission('settings
       FROM field_catalog fc
       LEFT JOIN field_catalog_assignments fca ON fc.id = fca.field_id
       GROUP BY fc.id
-      ORDER BY fc.label ASC
+      ORDER BY fc.display_order ASC, fc.label ASC
     `);
     res.json(result.rows);
   } catch (err) {
@@ -2029,14 +2296,19 @@ app.post('/api/settings/field-catalog', authenticate, requirePermission('setting
     await ensureCatalogFieldKeyIsUniqueCaseInsensitive(normalizedKey);
 
     await pool.query('BEGIN');
+    const maxOrderResult = await pool.query(
+      `SELECT COALESCE(MAX(display_order), -1) + 1 AS next_order
+       FROM field_catalog`
+    );
+    const nextDisplayOrder = Number(maxOrderResult.rows[0]?.next_order ?? 0);
     const fieldResult = await pool.query(
-      `INSERT INTO field_catalog (key, label, type, required, options, default_value, rules, created_by_user_id)
-       VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, $8)
+      `INSERT INTO field_catalog (key, label, type, required, display_order, options, default_value, rules, created_by_user_id)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb, $9)
        RETURNING id, key, label, type, required, options,
-                 default_value as "defaultValue", rules,
+                 display_order as "displayOrder", default_value as "defaultValue", rules,
                  created_at as "createdAt", updated_at as "updatedAt"`,
       [
-        normalizedKey, normalizedLabel, type, required ?? false,
+        normalizedKey, normalizedLabel, type, required ?? false, nextDisplayOrder,
         JSON.stringify(options ?? []),
         defaultValue !== undefined && defaultValue !== null ? JSON.stringify(defaultValue) : null,
         JSON.stringify(rules ?? {}),
@@ -2066,6 +2338,64 @@ app.post('/api/settings/field-catalog', authenticate, requirePermission('setting
   }
 });
 
+app.put('/api/settings/field-catalog/reorder', authenticate, requirePermission('settings.field_schemas'), requireDB, async (req, res) => {
+  const user = (req as any).user;
+  const orderedIds = Array.isArray(req.body?.orderedIds)
+    ? req.body.orderedIds.map((id: any) => String(id || '').trim()).filter(Boolean)
+    : [];
+
+  try {
+    await pool.query('BEGIN');
+
+    await normalizeFieldCatalogDisplayOrder(pool);
+    const existingIds = await getOrderedFieldCatalogIds(pool);
+
+    if (orderedIds.length !== existingIds.length) {
+      await pool.query('ROLLBACK');
+      return res.status(409).json({ error: 'El orden enviado no coincide con el catálogo actual. Recarga e intenta nuevamente.' });
+    }
+
+    const expected = new Set(existingIds);
+    const incoming = new Set(orderedIds);
+    if (incoming.size !== orderedIds.length || expected.size !== incoming.size || existingIds.some((id) => !incoming.has(id))) {
+      await pool.query('ROLLBACK');
+      return res.status(400).json({ error: 'Lista de IDs inválida para reordenar campos.' });
+    }
+
+    await applyFieldCatalogDisplayOrder(pool, orderedIds);
+    await normalizeFieldCatalogDisplayOrder(pool);
+
+    await logAudit(user.id, 'field_catalog_reordered', { orderedIds }, req.ip || '');
+    await pool.query('COMMIT');
+
+    io.emit('machine_schema_changed', {});
+    io.emit('settings_changed');
+
+    const updated = await pool.query(`
+      SELECT fc.id, fc.key, fc.label, fc.type, fc.required,
+             fc.display_order as "displayOrder",
+             fc.options, fc.default_value as "defaultValue", fc.rules,
+             fc.created_at as "createdAt", fc.updated_at as "updatedAt",
+             COALESCE(
+               json_agg(
+                 json_build_object('machine', fca.machine, 'enabled', fca.enabled, 'sortOrder', fca.sort_order)
+                 ORDER BY fca.sort_order
+               ) FILTER (WHERE fca.machine IS NOT NULL),
+               '[]'::json
+             ) AS assignments
+      FROM field_catalog fc
+      LEFT JOIN field_catalog_assignments fca ON fc.id = fca.field_id
+      GROUP BY fc.id
+      ORDER BY fc.display_order ASC, fc.label ASC
+    `);
+
+    res.json(updated.rows);
+  } catch (err) {
+    await pool.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ error: 'No se pudo reordenar el catálogo de campos.' });
+  }
+});
+
 app.put('/api/settings/field-catalog/:id', authenticate, requirePermission('settings.field_schemas'), requireDB, async (req, res) => {
   const user = (req as any).user;
   const id = String(req.params.id || '').trim();
@@ -2089,7 +2419,7 @@ app.put('/api/settings/field-catalog/:id', authenticate, requirePermission('sett
            default_value=$6::jsonb, rules=$7::jsonb, updated_at=NOW()
        WHERE id=$8
        RETURNING id, key, label, type, required, options,
-                 default_value as "defaultValue", rules,
+                 display_order as "displayOrder", default_value as "defaultValue", rules,
                  created_at as "createdAt", updated_at as "updatedAt"`,
       [
         normalizedKey, normalizedLabel, type, required ?? false,
@@ -2138,12 +2468,16 @@ app.delete('/api/settings/field-catalog/:id', authenticate, requirePermission('s
     if (info.rowCount === 0) return res.status(404).json({ error: 'Campo no encontrado.' });
     const asgn = await pool.query('SELECT machine FROM field_catalog_assignments WHERE field_id = $1', [id]);
     const machines = asgn.rows.map((r: any) => r.machine);
+    await pool.query('BEGIN');
     await pool.query('DELETE FROM field_catalog WHERE id = $1', [id]);
+    await normalizeFieldCatalogDisplayOrder(pool);
+    await pool.query('COMMIT');
     await logAudit(user.id, 'field_catalog_deleted', { ...info.rows[0], machines }, req.ip || '');
     machines.forEach((m: string) => io.emit('machine_schema_changed', { machine: m }));
     io.emit('settings_changed');
     res.json({ deleted: true });
   } catch (err) {
+    await pool.query('ROLLBACK').catch(() => {});
     res.status(500).json({ error: 'No se pudo eliminar el campo.' });
   }
 });
@@ -2657,21 +2991,33 @@ app.post('/api/import', authenticate, requireRole(['admin', 'jefe_planta']), req
 async function startServer() {
   await initDB();
 
+  const loadViteModule = new Function("return import('vite')") as () => Promise<RuntimeViteModule>;
+
+  io.on('connection', async (socket) => {
+    const authenticatedUser = await getSocketAuthenticatedUser(socket.handshake.headers.cookie);
+    if (!authenticatedUser) {
+      return;
+    }
+
+    socket.join(getUserSocketRoom(authenticatedUser.id));
+  });
+
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await loadViteModule();
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
-    app.use(vite.middlewares);
+    (app as any).use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     const assetsPath = path.join(distPath, 'assets');
 
     // Hashed assets can be cached aggressively.
-    app.use('/assets', express.static(assetsPath, { immutable: true, maxAge: '1y' }));
+    (app as any).use('/assets', express.static(assetsPath, { immutable: true, maxAge: '1y' }));
 
     // Other static files may change between deploys.
-    app.use(express.static(distPath, { maxAge: '1h' }));
+    (app as any).use(express.static(distPath, { maxAge: '1h' }));
 
     // Always serve the SPA shell without cache to avoid stale bundle references.
     app.get('*all', (req, res) => {

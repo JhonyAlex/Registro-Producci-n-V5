@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Plus, Save, Trash2, RefreshCw, Settings2, BarChart3, Info } from 'lucide-react';
 import { DashboardConfig, DashboardFieldOption, DashboardWidgetConfig, ProductionRecord } from '../types';
+import { buildDynamicFieldOptionsFromCatalog, DASHBOARD_ALLOWED_CORE_FIELDS } from '../utils/dashboardFieldPolicy';
 import {
   createDashboardConfig,
   deleteDashboardConfig,
@@ -19,38 +20,6 @@ type EditableDashboard = {
   description: string;
   widgets: DashboardWidgetConfig[];
   isDefault: boolean;
-};
-
-const CORE_FIELDS: DashboardFieldOption[] = [
-  { key: 'date', label: 'Fecha', type: 'date', source: 'core' },
-  { key: 'machine', label: 'Maquina', type: 'text', source: 'core' },
-  { key: 'shift', label: 'Turno', type: 'text', source: 'core' },
-  { key: 'boss', label: 'Jefe de Turno', type: 'text', source: 'core' },
-  { key: 'operator', label: 'Operario', type: 'text', source: 'core' },
-  { key: 'meters', label: 'Metros', type: 'number', source: 'core' },
-  { key: 'changesCount', label: 'Cantidad de Cambios', type: 'number', source: 'core' },
-  { key: 'changesComment', label: 'Comentario de Cambio', type: 'text', source: 'core' },
-];
-
-const buildDynamicFieldOptionsFromCatalog = (fieldCatalog: Array<{ key: string; label: string; type: string }>): DashboardFieldOption[] => {
-  const uniqueByNormalizedKey = new Map<string, DashboardFieldOption>();
-
-  fieldCatalog.forEach((field) => {
-    const rawKey = String(field.key || '').trim();
-    if (!rawKey) return;
-
-    const normalizedKey = rawKey.toLowerCase();
-    if (uniqueByNormalizedKey.has(normalizedKey)) return;
-
-    uniqueByNormalizedKey.set(normalizedKey, {
-      key: `dynamic.${rawKey}`,
-      label: String(field.label || rawKey).trim() || rawKey,
-      type: field.type === 'number' ? 'number' : 'text',
-      source: 'dynamic',
-    });
-  });
-
-  return Array.from(uniqueByNormalizedKey.values()).sort((a, b) => a.label.localeCompare(b.label));
 };
 
 const CHART_TYPES = [
@@ -78,8 +47,8 @@ const makeEmptyDashboard = (): EditableDashboard => ({
       title: 'Produccion por Maquina',
       chartType: 'bar',
       groupBy: 'machine',
-      valueField: 'meters',
-      aggregation: 'sum',
+      valueField: 'operator',
+      aggregation: 'count',
       limit: 12,
     },
   ],
@@ -88,7 +57,7 @@ const makeEmptyDashboard = (): EditableDashboard => ({
 
 const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
   const [configs, setConfigs] = useState<DashboardConfig[]>([]);
-  const [fieldOptions, setFieldOptions] = useState<DashboardFieldOption[]>(CORE_FIELDS);
+  const [fieldOptions, setFieldOptions] = useState<DashboardFieldOption[]>(DASHBOARD_ALLOWED_CORE_FIELDS);
   const [form, setForm] = useState<EditableDashboard>(makeEmptyDashboard());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -108,7 +77,14 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
       const [dashboardConfigs, fieldCatalog] = await Promise.all([getDashboardConfigs(), getFieldCatalog()]);
 
       const dynamicOptions = buildDynamicFieldOptionsFromCatalog(fieldCatalog);
-      setFieldOptions([...CORE_FIELDS, ...dynamicOptions]);
+      setFieldOptions([...DASHBOARD_ALLOWED_CORE_FIELDS, ...dynamicOptions]);
+
+      const optionMap = new Map([...DASHBOARD_ALLOWED_CORE_FIELDS, ...dynamicOptions].map((field) => [field.key, field]));
+      const numericKeys = new Set(
+        [...DASHBOARD_ALLOWED_CORE_FIELDS, ...dynamicOptions]
+          .filter((field) => field.type === 'number')
+          .map((field) => field.key)
+      );
 
       // Migrar al vuelo configs antiguos
       const normalizedConfigs = dashboardConfigs.map(config => {
@@ -116,7 +92,16 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
           ...config,
           widgets: (config.widgets || []).map(w => ({
             ...w,
-            groupBy: w.groupBy || config.baseField || 'machine'
+            groupBy: w.groupBy && optionMap.has(w.groupBy) ? w.groupBy : (config.baseField && optionMap.has(config.baseField) ? config.baseField : 'machine'),
+            valueField: optionMap.has(w.valueField)
+              ? w.valueField
+              : (numericKeys.size > 0 ? Array.from(numericKeys)[0] : 'operator'),
+            secondaryValueField:
+              w.secondaryValueField && optionMap.has(w.secondaryValueField) ? w.secondaryValueField : undefined,
+            aggregation:
+              w.aggregation === 'count' || numericKeys.has(w.valueField)
+                ? w.aggregation
+                : 'count',
           }))
         };
       });
@@ -180,8 +165,8 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
           title: `Nuevo Widget`,
           chartType: 'bar',
           groupBy: 'machine',
-          valueField: 'meters',
-          aggregation: 'sum',
+          valueField: 'operator',
+          aggregation: 'count',
           limit: 12,
         },
       ],
@@ -438,9 +423,13 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
                       onChange={(e) => updateWidget(index, { valueField: e.target.value })}
                       className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
                     >
-                      {(widget.aggregation === 'count' ? fieldOptions : numericFieldOptions).map((field) => (
-                        <option key={field.key} value={field.key}>{field.label}</option>
-                      ))}
+                      {(widget.aggregation === 'count' ? fieldOptions : numericFieldOptions).length === 0 ? (
+                        <option value="operator">Sin campos numéricos disponibles</option>
+                      ) : (
+                        (widget.aggregation === 'count' ? fieldOptions : numericFieldOptions).map((field) => (
+                          <option key={field.key} value={field.key}>{field.label}</option>
+                        ))
+                      )}
                     </select>
                   </div>
 
@@ -448,10 +437,16 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
                     <label className="block text-xs font-bold text-slate-500 mb-1">Operacion</label>
                     <select
                       value={widget.aggregation}
-                      onChange={(e) => updateWidget(index, { aggregation: e.target.value as DashboardWidgetConfig['aggregation'] })}
+                      onChange={(e) => updateWidget(index, {
+                        aggregation: e.target.value as DashboardWidgetConfig['aggregation'],
+                        valueField:
+                          e.target.value === 'count'
+                            ? widget.valueField
+                            : (numericFieldOptions[0]?.key || widget.valueField),
+                      })}
                       className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
                     >
-                      {AGGREGATIONS.map((agg) => (
+                      {AGGREGATIONS.filter((agg) => agg.value === 'count' || numericFieldOptions.length > 0).map((agg) => (
                         <option key={agg.value} value={agg.value}>{agg.label}</option>
                       ))}
                     </select>
@@ -461,13 +456,17 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
                     <div className="md:col-span-2">
                       <label className="block text-xs font-bold text-slate-500 mb-1">Metrica Secundaria (Linea superpuesta)</label>
                       <select
-                        value={widget.secondaryValueField || 'meters'}
+                        value={widget.secondaryValueField || (numericFieldOptions[0]?.key || '')}
                         onChange={(e) => updateWidget(index, { secondaryValueField: e.target.value })}
                         className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
                       >
-                        {numericFieldOptions.map((field) => (
-                          <option key={field.key} value={field.key}>{field.label} (Serie 2)</option>
-                        ))}
+                        {numericFieldOptions.length === 0 ? (
+                          <option value="">Sin campos numéricos disponibles</option>
+                        ) : (
+                          numericFieldOptions.map((field) => (
+                            <option key={field.key} value={field.key}>{field.label} (Serie 2)</option>
+                          ))
+                        )}
                       </select>
                     </div>
                   )}

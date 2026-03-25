@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { LayoutDashboard, PlusCircle, List, User, Trash2, Lock, AlertCircle, Filter, X, Cloud, WifiOff, CloudOff, Edit, ChevronDown, ChevronUp, Calendar, Monitor, XCircle, FileDown, FileUp, AlertTriangle, Clock, ChevronLeft, ChevronRight, Database, LogOut, Users, History, ShieldCheck, CheckCircle, RefreshCw } from 'lucide-react';
+import { LayoutDashboard, PlusCircle, List, User, Trash2, Lock, AlertCircle, Filter, X, Cloud, WifiOff, CloudOff, Edit, ChevronDown, ChevronUp, Calendar, Monitor, XCircle, FileDown, AlertTriangle, Clock, ChevronLeft, ChevronRight, LogOut, Users, History, ShieldCheck, CheckCircle, RefreshCw, Menu } from 'lucide-react';
 import ShiftForm from './components/ShiftForm';
-import Dashboard from './components/Dashboard.tsx';
+import Dashboard from './components/Dashboard';
 import Login from './components/Login';
 import Register from './components/Register';
 import WaitingRoom from './components/WaitingRoom';
@@ -35,13 +35,14 @@ const AppContent: React.FC = () => {
   const canAccessPermissionsMatrix = user?.role === 'admin';
   const canAccessFieldSchemas = (user?.role === 'admin' || user?.role === 'jefe_planta') && hasPermission('settings.field_schemas');
   const canAccessDashboardManager = (user?.role === 'admin' || user?.role === 'jefe_planta') && hasPermission('settings.dashboards');
+  const canExportBackup = (user?.role === 'admin' || user?.role === 'jefe_planta') && hasPermission('backup.export');
+  const canImportBackup = (user?.role === 'admin' || user?.role === 'jefe_planta') && hasPermission('backup.import');
 
   const [currentView, setCurrentView] = useState<View>('entry');
   const [records, setRecords] = useState<ProductionRecord[]>([]);
   const [availableBosses, setAvailableBosses] = useState<string[]>([]);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [dbError, setDbError] = useState('');
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // --- Offline sync state ---
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
@@ -83,6 +84,9 @@ const AppContent: React.FC = () => {
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
 
+  // More Panel State (mobile/tablet)
+  const [showMorePanel, setShowMorePanel] = useState(false);
+
   // Delete Modal State
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteMode, setDeleteMode] = useState<DeleteMode>('all');
@@ -91,11 +95,17 @@ const AppContent: React.FC = () => {
   
   // Real-time synchronization
   useEffect(() => {
+    if (!user) {
+      setRecords([]);
+      setDbError('');
+      return;
+    }
+
     const unsubscribe = subscribeToRecords(
       (updatedRecords) => {
         setRecords(updatedRecords);
-        // If we get data, we are connected
-        if (dbError && dbError.includes('Offline')) setDbError(''); 
+        // If we get data again, clear stale offline warning.
+        setDbError((prev) => (prev.includes('Offline') ? '' : prev));
       },
       (errorMsg) => {
         setDbError(errorMsg);
@@ -112,7 +122,7 @@ const AppContent: React.FC = () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
-  }, []);
+  }, [user?.id]);
 
   // Track pending queue count for current user
   useEffect(() => {
@@ -139,13 +149,18 @@ const AppContent: React.FC = () => {
   }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    if (!user) {
+      setAvailableBosses([]);
+      return;
+    }
+
     const unsubscribe = subscribeToSettings((_comments, _operators, bosses) => {
       setAvailableBosses(bosses);
       setFilters((prev) => (prev.boss && !bosses.includes(prev.boss) ? { ...prev, boss: '' } : prev));
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [user?.id]);
 
   // Calculate unique operators from existing records for the filter dropdown
   const uniqueOperators = useMemo(() => {
@@ -326,31 +341,18 @@ const AppContent: React.FC = () => {
     }
   };
 
-  const handleImportClick = () => {
-    fileInputRef.current?.click();
+  const handleExportBackup = async () => {
+    await exportAllData();
   };
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    
-    try {
-      await importAllData(file);
-      alert('Datos importados correctamente. La página se recargará.');
-      window.location.reload();
-    } catch (err) {
-      alert('Error al importar los datos. Verifique el formato del archivo.');
-    }
-    
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
+  const handleImportBackup = async (file: File) => {
+    await importAllData(file);
   };
 
   const NavItem = ({ view, icon: Icon, label, mobileOnly = false }: { view: View; icon: any; label: string, mobileOnly?: boolean }) => (
     <button
       onClick={() => changeView(view)}
-      className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all w-full lg:w-auto 
+      className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all w-full xl:w-auto 
         ${mobileOnly ? 'flex-col gap-1 py-1 px-1 justify-center' : ''}
         ${currentView === view 
           ? 'bg-blue-600 text-white shadow-md' 
@@ -363,7 +365,7 @@ const AppContent: React.FC = () => {
   );
 
   return (
-    <div className="min-h-screen flex flex-col lg:flex-row bg-slate-50 relative">
+    <div className="min-h-screen flex flex-col xl:flex-row bg-slate-50 relative">
       {/* ---- Offline / Sync Banner ---- */}
       {(!isOnline || isSyncing || syncMessage) && (
         <div
@@ -392,20 +394,12 @@ const AppContent: React.FC = () => {
         </div>
       )}
 
-      <input 
-        type="file" 
-        ref={fileInputRef} 
-        onChange={handleFileChange} 
-        accept=".json" 
-        className="hidden" 
-      />
-      
-      <aside className="hidden lg:flex bg-white border-r border-slate-200 w-64 flex-shrink-0 z-20 h-screen sticky top-0 flex-col">
+      <aside className="hidden xl:flex bg-white border-r border-slate-200 w-64 flex-shrink-0 z-20 h-screen sticky top-0 flex-col">
         <div className="p-6 border-b border-slate-100 flex items-center gap-3">
           <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold text-xl shadow-lg shadow-blue-900/50">
             R
           </div>
-          <h1 className="text-lg font-bold text-slate-900 tracking-tight leading-tight">Registro Jefe<br/>de Turnos</h1>
+          <h1 className="text-lg font-bold text-slate-900 tracking-tight leading-tight">Registro Producción<br/>Pigmea</h1>
         </div>
         
         <div className="p-4 border-b border-slate-100 bg-slate-50">
@@ -438,36 +432,21 @@ const AppContent: React.FC = () => {
               {canAccessPermissionsMatrix && <NavItem view="permissions" icon={ShieldCheck} label="Permisos" />}
             </>
           )}
-          
-          <div className="mt-8 mb-2 px-4">
-            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Datos</h3>
-          </div>
-          <button
-            onClick={exportAllData}
-            className="flex items-center gap-3 px-4 py-3 rounded-lg transition-all w-full text-slate-500 hover:bg-slate-100 hover:text-slate-800"
-          >
-            <Database className="w-5 h-5" />
-            <span className="font-medium">Exportar Backup</span>
-          </button>
-          <button
-            onClick={handleImportClick}
-            className="flex items-center gap-3 px-4 py-3 rounded-lg transition-all w-full text-slate-500 hover:bg-slate-100 hover:text-slate-800"
-          >
-            <FileUp className="w-5 h-5" />
-            <span className="font-medium">Importar Backup</span>
-          </button>
         </nav>
         
-        <div className="mt-auto p-6">
+        <div className="mt-auto p-6 space-y-4 border-t border-slate-100">
+          <div>
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Sesion</p>
           <button
             onClick={logout}
-            className="w-full mb-4 flex items-center justify-center gap-2 py-2.5 bg-red-50 hover:bg-red-100 text-red-600 font-bold rounded-lg transition-colors border border-red-100"
+            className="w-full flex items-center justify-center gap-2 py-2.5 bg-red-50 hover:bg-red-100 text-red-600 font-bold rounded-lg transition-colors border border-red-100"
           >
             <LogOut className="w-4 h-4" />
             Cerrar Sesión
           </button>
+          </div>
           <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
-            <p className="text-xs text-slate-500 font-medium">Estado del Sistema</p>
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Estado del Sistema</p>
             <div className={`mt-2 flex items-center gap-2 text-xs font-bold ${
               dbError ? 'text-red-500'
               : !isOnline ? 'text-amber-500'
@@ -506,29 +485,8 @@ const AppContent: React.FC = () => {
         </div>
       </aside>
 
-      <main className="flex-1 p-4 lg:p-8 overflow-y-auto h-screen pb-28 lg:pb-8">
+      <main className="flex-1 p-4 xl:p-8 overflow-y-auto h-screen pb-28 xl:pb-8">
         <div className="max-w-6xl mx-auto space-y-6">
-
-            
-            {/* Top Bar for Mobile/Tablet */}
-            <div className="lg:hidden flex items-center justify-between bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-2">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center text-slate-600 font-bold">
-                  {user?.name?.charAt(0).toUpperCase()}
-                </div>
-                <div>
-                  <p className="text-sm font-bold text-slate-800 leading-tight">{user?.name}</p>
-                  <p className="text-xs text-slate-500 capitalize">{user?.role.replace('_', ' ')}</p>
-                </div>
-              </div>
-              <button
-                onClick={logout}
-                className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors flex items-center gap-2"
-                title="Cerrar SesiÃ³n"
-              >
-                <LogOut className="w-5 h-5" />
-              </button>
-            </div>
             {dbError && !dbError.includes('Offline') && (
               <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-r shadow-sm animate-fade-in mb-4">
               <div className="flex items-start justify-between">
@@ -570,7 +528,12 @@ const AppContent: React.FC = () => {
           )}
 
           {currentView === 'profile' && (
-            <UserProfile />
+            <UserProfile
+              canExportBackup={canExportBackup}
+              canImportBackup={canImportBackup}
+              onExportBackup={handleExportBackup}
+              onImportBackup={handleImportBackup}
+            />
           )}
 
           {(currentView === 'dashboard' || currentView === 'list') && (
@@ -728,7 +691,7 @@ const AppContent: React.FC = () => {
                     {editingRecord ? 'Modificando datos existentes.' : 'Ingresa los datos de producción.'}
                   </p>
                 </div>
-                <div className="lg:hidden">
+                <div className="xl:hidden">
                    <Cloud className="w-5 h-5 text-green-500" />
                 </div>
               </div>
@@ -739,7 +702,7 @@ const AppContent: React.FC = () => {
               />
               
               {!editingRecord && (
-                <div className="mt-8 mb-20 lg:mb-0">
+                <div className="mt-8 mb-20 xl:mb-0">
                   <div className="flex justify-between items-end mb-4">
                      <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider">Últimos Registros</h3>
                      <span className="text-xs text-green-600 font-medium flex items-center gap-1">
@@ -789,7 +752,7 @@ const AppContent: React.FC = () => {
           )}
 
           {currentView === 'list' && (
-            <div className="animate-fade-in mb-20 lg:mb-0">
+            <div className="animate-fade-in mb-20 xl:mb-0">
               <div className="flex justify-between items-center mb-6 flex-wrap gap-4">
                 <div>
                   <h2 className="text-2xl font-bold text-slate-900">Historial</h2>
@@ -935,26 +898,112 @@ const AppContent: React.FC = () => {
         </div>
       </main>
 
-      <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 pb-safe z-40 flex justify-around items-center px-1 shadow-[0_-4px_10px_rgba(0,0,0,0.05)] h-[70px]">
+      {/* Bottom Nav — Mobile/Tablet */}
+      <nav className="xl:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 pb-safe z-40 flex justify-around items-center px-1 shadow-[0_-4px_10px_rgba(0,0,0,0.05)] h-[70px]">
         <NavItem view="entry" icon={PlusCircle} label="Registro" mobileOnly />
-        <NavItem view="dashboard" icon={LayoutDashboard} label="Data" mobileOnly />
+        <NavItem view="dashboard" icon={LayoutDashboard} label="Dashboard" mobileOnly />
         <NavItem view="list" icon={List} label="Historial" mobileOnly />
-        <NavItem view="profile" icon={User} label="Perfil" mobileOnly />
-        {(canAccessUsers || canAccessAudit || canAccessPermissionsMatrix) && (
-          <>
-            {canAccessUsers && <NavItem view="admin" icon={Users} label="Usuarios" mobileOnly />}
-            {canAccessAudit && <NavItem view="audit" icon={History} label="Actividad" mobileOnly />}
-            {canAccessPermissionsMatrix && <NavItem view="permissions" icon={ShieldCheck} label="Permisos" mobileOnly />}
-          </>
-        )}
+        <NavItem view="profile" icon={User} label="Mi Perfil" mobileOnly />
         <button
-          onClick={exportAllData}
-          className="flex flex-col items-center gap-1 py-1 px-1 justify-center rounded-lg transition-all w-auto text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+          onClick={() => setShowMorePanel(true)}
+          className="flex flex-col items-center gap-1 py-1 px-3 justify-center rounded-lg transition-all text-slate-500 hover:bg-slate-100 hover:text-slate-800"
         >
-          <Database className="w-6 h-6" />
-          <span className="text-[10px]">Exportar</span>
+          <Menu className="w-6 h-6" />
+          <span className="text-[10px]">Más</span>
         </button>
       </nav>
+
+      {/* Right Side Panel — opciones adicionales móvil/tablet */}
+      {showMorePanel && (
+        <>
+          {/* Overlay */}
+          <div
+            className="xl:hidden fixed inset-0 bg-slate-900/50 z-50 backdrop-blur-sm"
+            onClick={() => setShowMorePanel(false)}
+          />
+          {/* Panel */}
+          <div className="xl:hidden fixed top-0 right-0 bottom-0 w-72 bg-white z-50 flex flex-col shadow-2xl animate-slide-in-right">
+            <div className="flex items-center justify-between p-5 border-b border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold text-lg shadow-lg shadow-blue-900/50">R</div>
+                <div>
+                  <p className="text-sm font-bold text-slate-800 leading-tight">{user?.name}</p>
+                  <p className="text-xs text-slate-500 capitalize">{user?.role.replace('_', ' ')}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowMorePanel(false)}
+                className="p-2 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-1">
+              {(canAccessUsers || canAccessAudit || canAccessPermissionsMatrix || canAccessFieldSchemas || canAccessDashboardManager) && (
+                <>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider px-3 pt-2 pb-1">Administración</p>
+                  {canAccessUsers && (
+                    <button onClick={() => { setShowMorePanel(false); setCurrentView('admin'); }} className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all w-full ${ currentView === 'admin' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100' }`}>
+                      <Users className="w-5 h-5" /><span className="font-medium">Usuarios</span>
+                    </button>
+                  )}
+                  {canAccessAudit && (
+                    <button onClick={() => { setShowMorePanel(false); setCurrentView('audit'); }} className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all w-full ${ currentView === 'audit' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100' }`}>
+                      <History className="w-5 h-5" /><span className="font-medium">Actividad</span>
+                    </button>
+                  )}
+                  {canAccessFieldSchemas && (
+                    <button onClick={() => { setShowMorePanel(false); setCurrentView('fieldSchemas'); }} className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all w-full ${ currentView === 'fieldSchemas' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100' }`}>
+                      <Monitor className="w-5 h-5" /><span className="font-medium">Campos</span>
+                    </button>
+                  )}
+                  {canAccessDashboardManager && (
+                    <button onClick={() => { setShowMorePanel(false); setCurrentView('dashboardAdmin'); }} className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all w-full ${ currentView === 'dashboardAdmin' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100' }`}>
+                      <LayoutDashboard className="w-5 h-5" /><span className="font-medium">Dashboards</span>
+                    </button>
+                  )}
+                  {canAccessPermissionsMatrix && (
+                    <button onClick={() => { setShowMorePanel(false); setCurrentView('permissions'); }} className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all w-full ${ currentView === 'permissions' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100' }`}>
+                      <ShieldCheck className="w-5 h-5" /><span className="font-medium">Permisos</span>
+                    </button>
+                  )}
+                </>
+              )}
+
+            </div>
+
+            <div className="p-4 border-t border-slate-100 space-y-3">
+              <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Estado del Sistema</p>
+                <div className={`mt-1.5 flex items-center gap-2 text-xs font-bold ${
+                  dbError ? 'text-red-500'
+                  : !isOnline ? 'text-amber-500'
+                  : pendingSyncCount > 0 ? 'text-blue-500'
+                  : 'text-green-600'
+                }`}>
+                  {dbError ? (
+                    <><AlertCircle className="w-4 h-4" /><span>Error Config</span></>
+                  ) : !isOnline ? (
+                    <><WifiOff className="w-4 h-4" /><span>Sin Conexión</span></>
+                  ) : pendingSyncCount > 0 ? (
+                    <><RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} /><span>{pendingSyncCount} pendiente{pendingSyncCount > 1 ? 's' : ''}</span></>
+                  ) : (
+                    <><Cloud className="w-4 h-4" /><span>Nube Activa</span></>
+                  )}
+                </div>
+              </div>
+              <button
+                onClick={() => { setShowMorePanel(false); logout(); }}
+                className="w-full flex items-center justify-center gap-2 py-3 bg-red-50 hover:bg-red-100 text-red-600 font-bold rounded-lg transition-colors border border-red-100"
+              >
+                <LogOut className="w-4 h-4" />
+                Cerrar Sesión
+              </button>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* --- OFFLINE BLOCKING OVERLAY REMOVED --- */}
 

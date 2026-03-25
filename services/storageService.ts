@@ -19,6 +19,13 @@ export interface UserOption {
   role: string;
 }
 
+export interface AdminCreateUserPayload {
+  operator_code: string;
+  name: string;
+  pin: string;
+  role: string;
+}
+
 // Local cache to serve synchronous get requests if needed immediately
 let localRecordsCache: ProductionRecord[] = [];
 let localCommentsCache: string[] = [];
@@ -190,8 +197,35 @@ const startPollingSettings = () => {
   }
 };
 
-// Start polling immediately
-startPollingSettings();
+const stopPollingSettings = () => {
+  if (!isPolling) return;
+  isPolling = false;
+
+  socket.off('connect', triggerSettingsSync);
+  socket.off('settings_changed', triggerSettingsSync);
+  socket.off('user_status_changed', triggerSettingsSync);
+  socket.off('user_deleted', triggerSettingsSync);
+
+  if (settingsIntervalId !== null) {
+    window.clearInterval(settingsIntervalId);
+    settingsIntervalId = null;
+  }
+
+  if (settingsBrowserListenersAttached) {
+    window.removeEventListener('online', triggerSettingsSync);
+    window.removeEventListener('focus', triggerSettingsSync);
+    document.removeEventListener('visibilitychange', handleSettingsVisibilitySync);
+    settingsBrowserListenersAttached = false;
+  }
+};
+
+export const setSettingsSyncEnabled = (enabled: boolean) => {
+  if (enabled) {
+    startPollingSettings();
+    return;
+  }
+  stopPollingSettings();
+};
 
 // --- PUBLIC API ---
 
@@ -314,6 +348,13 @@ export const updateCatalogField = async (
   });
 };
 
+export const reorderFieldCatalog = async (orderedIds: string[]): Promise<FieldCatalogEntry[]> => {
+  return fetchJson('/settings/field-catalog/reorder', {
+    method: 'PUT',
+    body: JSON.stringify({ orderedIds }),
+  });
+};
+
 export const deleteCatalogField = async (id: string): Promise<void> => {
   await fetchJson(`/settings/field-catalog/${encodeURIComponent(id)}`, {
     method: 'DELETE',
@@ -326,6 +367,13 @@ export const getDashboardConfigs = async (): Promise<DashboardConfig[]> => {
 
 export const getDashboardConfig = async (id: string): Promise<DashboardConfig> => {
   return fetchJson(`/settings/dashboard-configs/${encodeURIComponent(id)}`);
+};
+
+export const createAdminUser = async (data: AdminCreateUserPayload): Promise<any> => {
+  return fetchJson('/admin/users', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
 };
 
 export const createDashboardConfig = async (data: {

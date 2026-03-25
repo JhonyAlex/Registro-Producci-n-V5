@@ -1,12 +1,18 @@
 ﻿import React, { useEffect, useState } from 'react';
-import { Plus, Save, Edit2, Trash2, RefreshCw, AlertCircle, X } from 'lucide-react';
+import { Plus, Save, Edit2, Trash2, RefreshCw, AlertCircle, X, ArrowUp, ArrowDown } from 'lucide-react';
 import { MACHINES } from '../constants';
 import {
+  createCustomComment,
   createCatalogField,
+  deleteCustomComment,
   deleteCatalogField,
   getFieldCatalog,
+  getCustomComments,
+  reorderFieldCatalog,
+  renameCustomComment,
   updateCatalogField,
 } from '../services/storageService';
+import { useAuth } from '../context/AuthContext';
 import { DynamicFieldType, FieldCatalogEntry, MachineType } from '../types';
 
 const FIELD_TYPES: DynamicFieldType[] = ['number', 'short_text', 'select', 'multi_select'];
@@ -78,21 +84,41 @@ const fromCatalog = (entry: FieldCatalogEntry): EditableEntry => {
   };
 };
 
+const sortCatalogByDisplayOrder = (entries: FieldCatalogEntry[]): FieldCatalogEntry[] => {
+  return [...entries].sort((a, b) => {
+    if (a.displayOrder !== b.displayOrder) {
+      return a.displayOrder - b.displayOrder;
+    }
+    return a.label.localeCompare(b.label, 'es', { sensitivity: 'base' });
+  });
+};
+
 const MachineFieldManager: React.FC = () => {
+  const { user } = useAuth();
+  const canManageComments = user?.role === 'admin' || Boolean(user?.permissions?.some((perm) => perm.key === 'settings.manage'));
   const [catalogFields, setCatalogFields] = useState<FieldCatalogEntry[]>([]);
+  const [customComments, setCustomComments] = useState<string[]>([]);
   const [form, setForm] = useState<EditableEntry | null>(null);
   const [loading, setLoading] = useState(true);
+  const [commentsLoading, setCommentsLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [reorderingId, setReorderingId] = useState<string | null>(null);
+  const [deletingComment, setDeletingComment] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [commentError, setCommentError] = useState('');
+  const [newCommentName, setNewCommentName] = useState('');
+  const [editingCommentName, setEditingCommentName] = useState<string | null>(null);
+  const [editingCommentValue, setEditingCommentValue] = useState('');
+  const [commentSaving, setCommentSaving] = useState(false);
 
   const loadCatalog = async () => {
     setLoading(true);
     setError('');
     try {
       const entries = await getFieldCatalog();
-      setCatalogFields(entries);
+      setCatalogFields(sortCatalogByDisplayOrder(entries));
     } catch (err: any) {
       setError(err?.message || 'No se pudo cargar el catalogo de campos.');
     } finally {
@@ -100,8 +126,22 @@ const MachineFieldManager: React.FC = () => {
     }
   };
 
+  const loadComments = async () => {
+    setCommentsLoading(true);
+    setCommentError('');
+    try {
+      const items = await getCustomComments();
+      setCustomComments(items);
+    } catch (err: any) {
+      setCommentError(err?.message || 'No se pudo cargar el catalogo de incidencias.');
+    } finally {
+      setCommentsLoading(false);
+    }
+  };
+
   useEffect(() => {
     void loadCatalog();
+    void loadComments();
   }, []);
 
   const showSuccess = (message: string) => {
@@ -214,11 +254,11 @@ const MachineFieldManager: React.FC = () => {
 
       if (form.id) {
         result = await updateCatalogField(form.id, payload);
-        setCatalogFields((prev) => prev.map((field) => (field.id === result.id ? result : field)));
+        setCatalogFields((prev) => sortCatalogByDisplayOrder(prev.map((field) => (field.id === result.id ? result : field))));
         showSuccess('Campo actualizado correctamente.');
       } else {
         result = await createCatalogField(payload);
-        setCatalogFields((prev) => [...prev, result].sort((a, b) => a.label.localeCompare(b.label)));
+        setCatalogFields((prev) => sortCatalogByDisplayOrder([...prev, result]));
         showSuccess('Campo creado correctamente.');
       }
 
@@ -244,6 +284,121 @@ const MachineFieldManager: React.FC = () => {
       setError(err?.message || 'No se pudo eliminar el campo.');
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const handleMoveField = async (entryId: string, direction: 'up' | 'down') => {
+    if (reorderingId || loading || saving || deletingId) return;
+
+    const ordered = sortCatalogByDisplayOrder(catalogFields);
+    const currentIndex = ordered.findIndex((entry) => entry.id === entryId);
+    if (currentIndex < 0) return;
+
+    const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+    if (targetIndex < 0 || targetIndex >= ordered.length) return;
+
+    const previousState = ordered.map((entry) => ({ ...entry }));
+    const swapped = [...ordered];
+    [swapped[currentIndex], swapped[targetIndex]] = [swapped[targetIndex], swapped[currentIndex]];
+
+    const optimisticOrder = swapped.map((entry, index) => ({
+      ...entry,
+      displayOrder: index,
+    }));
+
+    setCatalogFields(optimisticOrder);
+    setReorderingId(entryId);
+    setError('');
+
+    try {
+      const serverCatalog = await reorderFieldCatalog(optimisticOrder.map((entry) => entry.id));
+      setCatalogFields(sortCatalogByDisplayOrder(serverCatalog));
+    } catch (err: any) {
+      setCatalogFields(sortCatalogByDisplayOrder(previousState));
+      setError(err?.message || 'No se pudo reordenar el catalogo de campos.');
+    } finally {
+      setReorderingId(null);
+    }
+  };
+
+  const handleCreateComment = async () => {
+    const normalized = newCommentName.trim();
+    if (!normalized || !canManageComments) return;
+
+    setCommentSaving(true);
+    setCommentError('');
+    try {
+      await createCustomComment(normalized);
+      setNewCommentName('');
+      await loadComments();
+      showSuccess('Incidencia agregada correctamente.');
+    } catch (err: any) {
+      setCommentError(err?.message || 'No se pudo crear la incidencia.');
+    } finally {
+      setCommentSaving(false);
+    }
+  };
+
+  const startEditingComment = (comment: string) => {
+    setEditingCommentName(comment);
+    setEditingCommentValue(comment);
+    setCommentError('');
+  };
+
+  const cancelEditingComment = () => {
+    setEditingCommentName(null);
+    setEditingCommentValue('');
+  };
+
+  const handleSaveEditedComment = async () => {
+    if (!editingCommentName || !canManageComments) return;
+
+    const normalized = editingCommentValue.trim();
+    if (!normalized) {
+      setCommentError('El nombre de la incidencia no puede quedar vacío.');
+      return;
+    }
+
+    if (normalized === editingCommentName) {
+      cancelEditingComment();
+      return;
+    }
+
+    if (!window.confirm(`¿Renombrar "${editingCommentName}" a "${normalized}"?\n\nEsto actualizará los registros históricos que usen ese texto.`)) {
+      return;
+    }
+
+    setCommentSaving(true);
+    setCommentError('');
+    try {
+      await renameCustomComment(editingCommentName, normalized);
+      cancelEditingComment();
+      await loadComments();
+      showSuccess('Incidencia actualizada correctamente.');
+    } catch (err: any) {
+      setCommentError(err?.message || 'No se pudo renombrar la incidencia.');
+    } finally {
+      setCommentSaving(false);
+    }
+  };
+
+  const handleDeleteComment = async (comment: string) => {
+    if (!canManageComments) return;
+    if (!window.confirm(`¿Eliminar "${comment}" del catalogo de incidencias?\n\nLos registros históricos no se borrarán.`)) return;
+
+    setDeletingComment(comment);
+    setCommentError('');
+    try {
+      await deleteCustomComment(comment);
+      if (editingCommentName === comment) {
+        cancelEditingComment();
+      }
+      await loadComments();
+      showSuccess('Incidencia eliminada correctamente.');
+    } catch (err: any) {
+      setCommentError(err?.message || 'No se pudo eliminar la incidencia.');
+    } finally {
+      setDeletingComment(null);
     }
   };
 
@@ -387,16 +542,19 @@ const MachineFieldManager: React.FC = () => {
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-      <div className="px-6 py-4 bg-emerald-600 text-white flex items-center justify-between">
-        <div>
+      <div className="px-4 sm:px-6 py-4 bg-emerald-600 text-white flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
           <h2 className="font-bold text-lg">Catalogo de Campos Dinamicos</h2>
           <p className="text-emerald-50 text-sm">Crea un campo una vez y asignalo a una o varias maquinas.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
           <button
             type="button"
-            onClick={() => void loadCatalog()}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-white/20 hover:bg-white/30 text-sm font-semibold"
+            onClick={() => {
+              void loadCatalog();
+              void loadComments();
+            }}
+            className="inline-flex w-full items-center justify-center gap-2 px-3 py-2 rounded-lg bg-white/20 hover:bg-white/30 text-sm font-semibold sm:w-auto"
           >
             <RefreshCw className="w-4 h-4" /> Recargar
           </button>
@@ -407,7 +565,7 @@ const MachineFieldManager: React.FC = () => {
                 setForm(makeEmpty());
                 setError('');
               }}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-white text-emerald-700 text-sm font-bold hover:bg-emerald-50"
+              className="inline-flex w-full items-center justify-center gap-2 px-3 py-2 rounded-lg bg-white text-emerald-700 text-sm font-bold hover:bg-emerald-50 sm:w-auto"
             >
               <Plus className="w-4 h-4" /> Nuevo campo
             </button>
@@ -415,10 +573,10 @@ const MachineFieldManager: React.FC = () => {
         </div>
       </div>
 
-      <div className="p-6 space-y-5">
+      <div className="p-4 sm:p-6 space-y-5">
         {form && (
-          <div className="rounded-xl border border-blue-200 bg-blue-50 p-5 space-y-5">
-            <div className="flex items-center justify-between">
+          <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 sm:p-5 space-y-5">
+            <div className="flex items-center justify-between gap-3">
               <h3 className="text-sm font-bold text-slate-800">{form.id ? 'Editar campo' : 'Nuevo campo'}</h3>
               <button
                 type="button"
@@ -483,13 +641,13 @@ const MachineFieldManager: React.FC = () => {
 
             <div>
               <p className="text-xs font-bold text-slate-600 uppercase tracking-wide mb-2">Asignar a maquinas</p>
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
                 {(MACHINES as MachineType[]).map((machine) => {
                   const checked = form.assignedMachines.includes(machine);
                   return (
                     <label
                       key={machine}
-                      className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer select-none font-medium ${
+                      className={`flex min-w-0 items-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer select-none font-medium ${
                         checked
                           ? 'bg-emerald-50 border-emerald-300 text-emerald-700'
                           : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
@@ -508,12 +666,12 @@ const MachineFieldManager: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex items-center gap-3 pt-1">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3 pt-1">
               <button
                 type="button"
                 onClick={handleSave}
                 disabled={saving}
-                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-blue-600 text-white font-bold hover:bg-blue-700 disabled:opacity-60"
+                className="inline-flex w-full sm:w-auto items-center justify-center gap-2 px-5 py-2.5 rounded-lg bg-blue-600 text-white font-bold hover:bg-blue-700 disabled:opacity-60"
               >
                 <Save className="w-4 h-4" />
                 {saving ? 'Guardando...' : form.id ? 'Actualizar campo' : 'Crear campo'}
@@ -524,7 +682,7 @@ const MachineFieldManager: React.FC = () => {
                   setForm(null);
                   setError('');
                 }}
-                className="px-4 py-2.5 rounded-lg border border-slate-300 text-slate-600 text-sm font-semibold hover:bg-slate-50"
+                className="w-full sm:w-auto px-4 py-2.5 rounded-lg border border-slate-300 text-slate-600 text-sm font-semibold hover:bg-slate-50"
               >
                 Cancelar
               </button>
@@ -544,6 +702,131 @@ const MachineFieldManager: React.FC = () => {
             {success}
           </div>
         )}
+
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 sm:p-5 space-y-4">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide">Incidencias globales</h3>
+              <p className="text-sm text-slate-500 mt-1">Se usan en el campo "Comentario / Incidencia" del registro.</p>
+            </div>
+            {!canManageComments && (
+              <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-200 text-slate-600 w-fit">
+                Solo lectura
+              </span>
+            )}
+          </div>
+
+          {canManageComments && (
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                type="text"
+                value={newCommentName}
+                onChange={(e) => setNewCommentName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    void handleCreateComment();
+                  }
+                }}
+                placeholder="Nueva incidencia global"
+                className="flex-1 px-3 py-2.5 border border-slate-300 rounded-lg text-sm bg-white"
+              />
+              <button
+                type="button"
+                onClick={() => void handleCreateComment()}
+                disabled={commentSaving}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 disabled:opacity-60"
+              >
+                <Plus className="w-4 h-4" /> Agregar incidencia
+              </button>
+            </div>
+          )}
+
+          {commentError && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
+              {commentError}
+            </div>
+          )}
+
+          {commentsLoading ? (
+            <div className="p-4 text-sm text-slate-500 bg-white border border-slate-200 rounded-lg">
+              Cargando incidencias...
+            </div>
+          ) : customComments.length === 0 ? (
+            <div className="p-6 text-sm text-slate-500 bg-white border border-dashed border-slate-300 rounded-lg text-center">
+              No hay incidencias globales configuradas.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {customComments.map((comment, index) => {
+                const isEditing = editingCommentName === comment;
+                return (
+                  <div
+                    key={`${comment}-${index}`}
+                    className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-white p-3 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    {isEditing ? (
+                      <div className="flex flex-1 items-center gap-2">
+                        <input
+                          type="text"
+                          value={editingCommentValue}
+                          onChange={(e) => setEditingCommentValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              void handleSaveEditedComment();
+                            }
+                          }}
+                          className="flex-1 px-3 py-2 border border-blue-300 rounded-lg text-sm bg-white"
+                          autoFocus
+                        />
+                        <button
+                          type="button"
+                          onClick={() => void handleSaveEditedComment()}
+                          disabled={commentSaving}
+                          className="inline-flex items-center justify-center p-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60"
+                        >
+                          <Save className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={cancelEditingComment}
+                          className="inline-flex items-center justify-center p-2 rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <span className="flex-1 break-words text-sm font-medium text-slate-700">{comment}</span>
+                        {canManageComments && (
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => startEditingComment(comment)}
+                              disabled={Boolean(editingCommentName)}
+                              className="inline-flex items-center gap-1 px-3 py-2 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:opacity-40"
+                            >
+                              <Edit2 className="w-3 h-3" /> Editar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleDeleteComment(comment)}
+                              disabled={deletingComment === comment}
+                              className="inline-flex items-center gap-1 px-3 py-2 text-xs font-semibold rounded-lg bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 disabled:opacity-50"
+                            >
+                              <Trash2 className="w-3 h-3" /> {deletingComment === comment ? '...' : 'Eliminar'}
+                            </button>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
 
         {loading ? (
           <div className="p-6 text-slate-500 text-sm bg-slate-50 rounded-lg border border-slate-200">
@@ -565,38 +848,62 @@ const MachineFieldManager: React.FC = () => {
           </div>
         ) : (
           <div className="space-y-2">
-            {catalogFields.map((entry) => (
+            {sortCatalogByDisplayOrder(catalogFields).map((entry, index, orderedEntries) => (
               <div
                 key={entry.id}
-                className="flex flex-wrap items-center gap-2 px-4 py-3 rounded-lg border border-slate-200 bg-white hover:border-slate-300"
+                className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_auto] gap-3 px-4 py-3 rounded-lg border border-slate-200 bg-white hover:border-slate-300"
               >
-                <span className="font-semibold text-slate-800 text-sm">{entry.label}</span>
-                <span className="text-xs font-mono text-slate-400 bg-slate-100 px-2 py-0.5 rounded">{entry.key}</span>
-                <span className={`text-xs font-semibold px-2 py-0.5 rounded ${FIELD_TYPE_BADGE[entry.type]}`}>
-                  {FIELD_TYPE_LABELS[entry.type]}
-                </span>
-                {entry.required && (
-                  <span className="text-xs font-semibold px-2 py-0.5 rounded bg-red-50 text-red-600">Obligatorio</span>
-                )}
+                <div className="min-w-0 space-y-2">
+                  <div className="flex flex-wrap items-center gap-2 min-w-0">
+                    <span className="font-semibold text-slate-800 text-sm break-words">{entry.label}</span>
+                    <span className="max-w-full break-all text-xs font-mono text-slate-400 bg-slate-100 px-2 py-0.5 rounded">{entry.key}</span>
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded ${FIELD_TYPE_BADGE[entry.type]}`}>
+                      {FIELD_TYPE_LABELS[entry.type]}
+                    </span>
+                    {entry.required && (
+                      <span className="text-xs font-semibold px-2 py-0.5 rounded bg-red-50 text-red-600">Obligatorio</span>
+                    )}
+                  </div>
 
-                <div className="flex flex-wrap gap-1 flex-1 min-w-0">
-                  {entry.assignments.length === 0 ? (
-                    <span className="text-xs text-slate-400 italic">Sin maquinas asignadas</span>
-                  ) : (
-                    [...entry.assignments]
-                      .sort((a, b) => a.sortOrder - b.sortOrder)
-                      .map((assignment) => (
-                        <span
-                          key={`${entry.id}-${assignment.machine}`}
-                          className="text-xs font-medium px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200"
-                        >
-                          {assignment.machine}
-                        </span>
-                      ))
-                  )}
+                  <div className="flex flex-wrap gap-1 min-w-0">
+                    {entry.assignments.length === 0 ? (
+                      <span className="text-xs text-slate-400 italic">Sin maquinas asignadas</span>
+                    ) : (
+                      [...entry.assignments]
+                        .sort((a, b) => a.sortOrder - b.sortOrder)
+                        .map((assignment) => (
+                          <span
+                            key={`${entry.id}-${assignment.machine}`}
+                            className="text-xs font-medium px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200"
+                          >
+                            {assignment.machine}
+                          </span>
+                        ))
+                    )}
+                  </div>
                 </div>
 
-                <div className="flex items-center gap-2 ml-auto">
+                <div className="flex items-center gap-2 w-full lg:w-auto">
+                  <button
+                    type="button"
+                    onClick={() => void handleMoveField(entry.id, 'up')}
+                    disabled={Boolean(reorderingId) || index === 0}
+                    className="inline-flex flex-1 lg:flex-none items-center justify-center gap-1 px-3 py-2 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:opacity-40"
+                    title="Subir campo"
+                  >
+                    <ArrowUp className="w-3 h-3" /> Subir
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => void handleMoveField(entry.id, 'down')}
+                    disabled={Boolean(reorderingId) || index === orderedEntries.length - 1}
+                    className="inline-flex flex-1 lg:flex-none items-center justify-center gap-1 px-3 py-2 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:opacity-40"
+                    title="Bajar campo"
+                  >
+                    <ArrowDown className="w-3 h-3" /> Bajar
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => {
@@ -604,7 +911,7 @@ const MachineFieldManager: React.FC = () => {
                       setError('');
                     }}
                     disabled={Boolean(form)}
-                    className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:opacity-40"
+                    className="inline-flex flex-1 lg:flex-none items-center justify-center gap-1 px-3 py-2 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:opacity-40"
                   >
                     <Edit2 className="w-3 h-3" /> Editar
                   </button>
@@ -613,7 +920,7 @@ const MachineFieldManager: React.FC = () => {
                     type="button"
                     onClick={() => void handleDelete(entry)}
                     disabled={deletingId === entry.id}
-                    className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-lg bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 disabled:opacity-50"
+                    className="inline-flex flex-1 lg:flex-none items-center justify-center gap-1 px-3 py-2 text-xs font-semibold rounded-lg bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 disabled:opacity-50"
                   >
                     <Trash2 className="w-3 h-3" /> {deletingId === entry.id ? '...' : 'Eliminar'}
                   </button>

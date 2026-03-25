@@ -1,9 +1,22 @@
-import React, { useEffect, useState } from 'react';
-import { Save, UserCircle2, AlertCircle, CheckCircle2, KeyRound, User } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Save, UserCircle2, AlertCircle, CheckCircle2, KeyRound, User, Database, FileDown, FileUp, Loader2, ShieldAlert } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
-const UserProfile: React.FC = () => {
+interface UserProfileProps {
+  canExportBackup: boolean;
+  canImportBackup: boolean;
+  onExportBackup: () => Promise<void>;
+  onImportBackup: (file: File) => Promise<void>;
+}
+
+const UserProfile: React.FC<UserProfileProps> = ({
+  canExportBackup,
+  canImportBackup,
+  onExportBackup,
+  onImportBackup
+}) => {
   const { user, checkAuth } = useAuth();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [operatorCode, setOperatorCode] = useState('');
   const [name, setName] = useState('');
@@ -12,8 +25,11 @@ const UserProfile: React.FC = () => {
   const [confirmPin, setConfirmPin] = useState('');
 
   const [loading, setLoading] = useState(false);
+  const [backupLoading, setBackupLoading] = useState<'export' | 'import' | null>(null);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [backupError, setBackupError] = useState('');
+  const [backupSuccess, setBackupSuccess] = useState('');
 
   useEffect(() => {
     setOperatorCode(user?.operator_code || '');
@@ -38,9 +54,14 @@ const UserProfile: React.FC = () => {
       return;
     }
 
+    if (!/^\d+$/.test(trimmedCode)) {
+      setError('El código de operario debe contener solo números.');
+      return;
+    }
+
     if (trimmedNewPin) {
-      if (trimmedNewPin.length < 4) {
-        setError('El nuevo PIN debe tener al menos 4 dígitos.');
+      if (trimmedNewPin.length !== 4) {
+        setError('El nuevo PIN debe tener 4 dígitos.');
         return;
       }
       if (!trimmedCurrentPin) {
@@ -94,6 +115,50 @@ const UserProfile: React.FC = () => {
     }
   };
 
+  const clearBackupFeedback = () => {
+    setBackupError('');
+    setBackupSuccess('');
+  };
+
+  const handleExportBackup = async () => {
+    clearBackupFeedback();
+    setBackupLoading('export');
+    try {
+      await onExportBackup();
+      setBackupSuccess('Backup exportado. La descarga deberia iniciar automaticamente.');
+    } catch (err: any) {
+      setBackupError(err?.message || 'No se pudo exportar el backup.');
+    } finally {
+      setBackupLoading(null);
+    }
+  };
+
+  const handleImportClick = () => {
+    clearBackupFeedback();
+    const accepted = window.confirm('Importar un backup puede reemplazar datos existentes y recargara la aplicacion al finalizar. ¿Deseas continuar?');
+    if (!accepted) return;
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    clearBackupFeedback();
+    setBackupLoading('import');
+
+    try {
+      await onImportBackup(file);
+      setBackupSuccess('Datos importados correctamente. La pagina se recargara.');
+      window.setTimeout(() => window.location.reload(), 700);
+    } catch (err: any) {
+      setBackupError(err?.message || 'Error al importar los datos. Verifica el archivo JSON.');
+    } finally {
+      setBackupLoading(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
   return (
     <div className="flex-1 p-4 md:p-8 overflow-y-auto bg-slate-50">
       <div className="max-w-3xl mx-auto space-y-6">
@@ -104,6 +169,14 @@ const UserProfile: React.FC = () => {
           </h2>
           <p className="text-slate-500 mt-1">Actualiza tu código de operario, nombre y PIN sin perder vínculo con tus registros históricos.</p>
         </div>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".json"
+          onChange={handleFileChange}
+          className="hidden"
+        />
 
         <form onSubmit={handleSubmit} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-5">
           {error && (
@@ -127,7 +200,9 @@ const UserProfile: React.FC = () => {
                 <User className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   value={operatorCode}
-                  onChange={(e) => setOperatorCode(e.target.value)}
+                  onChange={(e) => setOperatorCode(e.target.value.replace(/\D/g, ''))}
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   className="w-full pl-9 pr-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                   maxLength={20}
                 />
@@ -157,26 +232,32 @@ const UserProfile: React.FC = () => {
               <input
                 type="password"
                 value={currentPin}
-                onChange={(e) => setCurrentPin(e.target.value)}
+                onChange={(e) => setCurrentPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                inputMode="numeric"
+                pattern="[0-9]*"
                 placeholder="PIN actual"
                 className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                maxLength={12}
+                maxLength={4}
               />
               <input
                 type="password"
                 value={newPin}
-                onChange={(e) => setNewPin(e.target.value)}
+                onChange={(e) => setNewPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                inputMode="numeric"
+                pattern="[0-9]*"
                 placeholder="Nuevo PIN"
                 className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                maxLength={12}
+                maxLength={4}
               />
               <input
                 type="password"
                 value={confirmPin}
-                onChange={(e) => setConfirmPin(e.target.value)}
+                onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                inputMode="numeric"
+                pattern="[0-9]*"
                 placeholder="Confirmar nuevo PIN"
                 className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                maxLength={12}
+                maxLength={4}
               />
             </div>
           </div>
@@ -192,6 +273,59 @@ const UserProfile: React.FC = () => {
             </button>
           </div>
         </form>
+
+        <section className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4">
+          <div>
+            <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
+              <Database className="w-5 h-5 text-blue-600" />
+              Gestion de datos
+            </h3>
+            <p className="text-sm text-slate-500 mt-1">Exporta o importa backups desde tu perfil para mantener estas acciones dentro del flujo de la app.</p>
+          </div>
+
+          {backupError && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-center gap-2 text-sm">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              <span>{backupError}</span>
+            </div>
+          )}
+
+          {backupSuccess && (
+            <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg flex items-center gap-2 text-sm">
+              <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+              <span>{backupSuccess}</span>
+            </div>
+          )}
+
+          {!canExportBackup && !canImportBackup ? (
+            <div className="bg-amber-50 border border-amber-200 text-amber-700 px-4 py-3 rounded-lg flex items-center gap-2 text-sm">
+              <ShieldAlert className="w-4 h-4 flex-shrink-0" />
+              <span>No tienes permisos para exportar o importar backups.</span>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={handleExportBackup}
+                disabled={!canExportBackup || backupLoading !== null}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 border border-slate-200 rounded-lg text-sm font-bold text-slate-700 bg-slate-50 hover:bg-slate-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {backupLoading === 'export' ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
+                Exportar Backup
+              </button>
+
+              <button
+                type="button"
+                onClick={handleImportClick}
+                disabled={!canImportBackup || backupLoading !== null}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {backupLoading === 'import' ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileUp className="w-4 h-4" />}
+                Importar Backup
+              </button>
+            </div>
+          )}
+        </section>
       </div>
     </div>
   );

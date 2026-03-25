@@ -1,0 +1,137 @@
+/* =========================================
+   Animaciones Personalizadas
+   ========================================= */
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(100%); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.2s ease-out both;
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.25s ease-out both;
+}
+
+.animate-scale-in {
+  animation: scaleIn 0.2s ease-out both;
+}
+
+.animate-slide-in-right {
+  animation: slideInRight 0.25s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+}
+
+@keyframes pigmeaLockDrift {
+  0% {
+    transform: translate3d(-4%, -3%, 0) scale(1.08);
+  }
+  50% {
+    transform: translate3d(3%, 2%, 0) scale(1.12);
+  }
+  100% {
+    transform: translate3d(-4%, -3%, 0) scale(1.08);
+  }
+}
+
+@keyframes pigmeaLockTravelLayerOne {
+  0% {
+    transform: translate3d(-10%, -6%, 0) scale(1.05) rotate(0deg);
+  }
+  50% {
+    transform: translate3d(8%, 5%, 0) scale(1.14) rotate(5deg);
+  }
+  100% {
+    transform: translate3d(-10%, -6%, 0) scale(1.05) rotate(0deg);
+  }
+}
+
+@keyframes pigmeaLockTravelLayerTwo {
+  0% {
+    transform: translate3d(9%, 7%, 0) scale(1.1) rotate(0deg);
+  }
+  50% {
+    transform: translate3d(-7%, -5%, 0) scale(1.18) rotate(-6deg);
+  }
+  100% {
+    transform: translate3d(9%, 7%, 0) scale(1.1) rotate(0deg);
+  }
+}
+
+.pigmea-lock-travel-bg {
+  position: absolute;
+  inset: -25%;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+  background: linear-gradient(132deg, #020617 0%, #0f172a 22%, #172554 48%, #111827 72%, #030712 100%);
+  animation: pigmeaLockDrift 14s ease-in-out infinite;
+  will-change: transform;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
+.pigmea-lock-travel-bg::before,
+.pigmea-lock-travel-bg::after {
+  content: '';
+  position: absolute;
+  inset: -14%;
+  background-repeat: no-repeat;
+  will-change: transform, opacity;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
+.pigmea-lock-travel-bg::before {
+  background-image:
+    radial-gradient(circle at 12% 18%, rgba(34, 211, 238, 0.75) 0%, rgba(34, 211, 238, 0.22) 18%, transparent 42%),
+    radial-gradient(circle at 78% 20%, rgba(249, 115, 22, 0.65) 0%, rgba(249, 115, 22, 0.18) 20%, transparent 46%),
+    linear-gradient(115deg, rgba(56, 189, 248, 0.14) 0%, rgba(56, 189, 248, 0.02) 34%, transparent 58%);
+  animation: pigmeaLockTravelLayerOne 18s ease-in-out infinite;
+  opacity: 0.98;
+}
+
+.pigmea-lock-travel-bg::after {
+  background-image:
+    radial-gradient(circle at 76% 82%, rgba(168, 85, 247, 0.52) 0%, rgba(168, 85, 247, 0.14) 22%, transparent 44%),
+    radial-gradient(circle at 24% 76%, rgba(59, 130, 246, 0.34) 0%, rgba(59, 130, 246, 0.08) 18%, transparent 38%),
+    linear-gradient(205deg, rgba(249, 115, 22, 0.14) 0%, rgba(249, 115, 22, 0.02) 34%, transparent 58%);
+  animation: pigmeaLockTravelLayerTwo 22s ease-in-out infinite;
+  opacity: 0.92;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pigmea-lock-travel-bg {
+    animation: none;
+    transform: none;
+  }
+
+  .pigmea-lock-travel-bg::before,
+  .pigmea-lock-travel-bg::after {
+    animation: none;
+    transform: none;
+  }
+}
+
+/* =========================================
+   Utilidades de safe-area (notch / home indicator)
+   ========================================= */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
