@@ -247,14 +247,16 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
 
   // Filter logic for Operators
   useEffect(() => {
-    if (!operatorInput) {
-      setFilteredOperators(availableOperatorOptions);
-    } else {
+    let operators = availableOperatorOptions;
+    if (operatorInput) {
       const lowerInput = operatorInput.toLowerCase();
-      setFilteredOperators(availableOperatorOptions.filter(o => 
+      operators = operators.filter(o => 
         o.name.toLowerCase().includes(lowerInput)
-      ));
+      );
     }
+    // Sort alphabetically
+    const sorted = [...operators].sort((a, b) => a.name.localeCompare(b.name));
+    setFilteredOperators(sorted);
   }, [operatorInput, availableOperatorOptions]);
 
   // Click outside to close dropdowns
@@ -638,7 +640,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
                     ref={setFocusableFieldRef('operator')}
                     type="text"
                     required
-                    placeholder="Nombre del operario..."
+                    placeholder="Selecciona un operario..."
                     value={operatorInput}
                     onChange={e => {
                       setOperatorInput(e.target.value);
@@ -648,7 +650,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
                     onFocus={handleOperatorFocus}
                     onKeyDown={handleFieldAdvance('operator')}
                     enterKeyHint={getEnterKeyHint('operator')}
-                    className="w-full pl-4 pr-10 py-3 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
+                    className="w-full pl-4 pr-10 py-3 bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
                     autoComplete="off"
                   />
                   <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center">
@@ -664,7 +666,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
                 </div>
 
                 {showOperatorSuggestions && (
-                  <div className="absolute z-50 w-full bottom-full mb-2 bg-white border border-slate-200 rounded-xl shadow-xl max-h-60 overflow-y-auto animate-fade-in origin-bottom">
+                  <div className="absolute z-50 w-full bottom-full mb-2 bg-white border border-slate-200 rounded-lg shadow-xl max-h-60 overflow-y-auto animate-fade-in origin-bottom">
                     {filteredOperators.length > 0 ? (
                       <div className="divide-y divide-slate-50">
                         {filteredOperators.map((op, index) => (
