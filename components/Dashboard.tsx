@@ -335,12 +335,6 @@ const buildSegmentCompareData = (
   return { rows, segments };
 };
 
-const applyStableWidgetOrder = (widgets: DashboardWidgetConfig[]) => {
-  const normalWidgets = widgets.filter((widget) => widget.chartType !== 'segment_compare');
-  const compareWidgets = widgets.filter((widget) => widget.chartType === 'segment_compare');
-  return [...normalWidgets, ...compareWidgets];
-};
-
 const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = false, onOpenAdmin }) => {
   const [configs, setConfigs] = useState<DashboardConfig[]>([]);
   const [fieldOptions, setFieldOptions] = useState<DashboardFieldOption[]>(DASHBOARD_ALLOWED_CORE_FIELDS);
@@ -457,7 +451,7 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
   );
 
   const orderedWidgets = useMemo(
-    () => (selectedConfig ? applyStableWidgetOrder(selectedConfig.widgets || []) : []),
+    () => (selectedConfig ? selectedConfig.widgets || [] : []),
     [selectedConfig]
   );
 

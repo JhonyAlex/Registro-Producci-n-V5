@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Plus, Save, Trash2, RefreshCw, Settings2, BarChart3, Info } from 'lucide-react';
+import { Plus, Save, Trash2, RefreshCw, Settings2, BarChart3, Info, ArrowUp, ArrowDown } from 'lucide-react';
 import { DashboardConfig, DashboardFieldOption, DashboardWidgetConfig, ProductionRecord } from '../types';
 import { buildDynamicFieldOptionsFromCatalog, DASHBOARD_ALLOWED_CORE_FIELDS } from '../utils/dashboardFieldPolicy';
 import {
@@ -209,6 +209,23 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
     }));
   };
 
+  const moveWidget = (fromIndex: number, toIndex: number) => {
+    setForm((prev) => {
+      if (toIndex < 0 || toIndex >= prev.widgets.length) {
+        return prev;
+      }
+
+      const reordered = [...prev.widgets];
+      const [movedWidget] = reordered.splice(fromIndex, 1);
+      reordered.splice(toIndex, 0, movedWidget);
+
+      return {
+        ...prev,
+        widgets: reordered,
+      };
+    });
+  };
+
   const handleSave = async () => {
     if (!form.name.trim()) {
       setError('El nombre del dashboard es obligatorio.');
@@ -416,13 +433,33 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
               <div key={widget.id} className="bg-white border border-slate-200 shadow-sm rounded-xl p-4 space-y-3">
                 <div className="flex justify-between items-center pb-2 border-b border-slate-100">
                   <p className="text-sm font-bold text-slate-800">Widget {index + 1}</p>
-                  <button
-                    type="button"
-                    onClick={() => removeWidget(index)}
-                    className="text-xs font-semibold text-red-600 hover:text-red-800 flex items-center gap-1"
-                  >
-                    <Trash2 className="w-3 h-3" /> Eliminar
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => moveWidget(index, index - 1)}
+                      disabled={index === 0}
+                      className="inline-flex items-center justify-center h-7 w-7 rounded-md border border-slate-300 text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                      title="Mover arriba"
+                    >
+                      <ArrowUp className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => moveWidget(index, index + 1)}
+                      disabled={index === form.widgets.length - 1}
+                      className="inline-flex items-center justify-center h-7 w-7 rounded-md border border-slate-300 text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                      title="Mover abajo"
+                    >
+                      <ArrowDown className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => removeWidget(index)}
+                      className="text-xs font-semibold text-red-600 hover:text-red-800 flex items-center gap-1 ml-1"
+                    >
+                      <Trash2 className="w-3 h-3" /> Eliminar
+                    </button>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
