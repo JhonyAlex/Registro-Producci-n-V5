@@ -485,7 +485,7 @@ type DashboardWidgetConfig = {
   valueField: string;
   secondaryValueField?: string;
   aggregation: DashboardAggregation;
-  limit?: number;
+  spanColumns?: 1 | 2;
 };
 
 type DashboardConfigPayload = {
@@ -823,7 +823,7 @@ const sanitizeDashboardConfigPayload = (incoming: any): DashboardConfigPayload =
     const valueField = String(widget?.valueField || '').trim();
     const secondaryValueField = normalizeOptionalString(widget?.secondaryValueField) || undefined;
     const aggregation = String(widget?.aggregation || 'count').trim() as DashboardAggregation;
-    const limit = Number(widget?.limit || 0);
+    const spanColumns = Number(widget?.spanColumns) === 1 ? 1 : 2;
 
     if (!DASHBOARD_CHART_TYPES.includes(chartType)) {
       throw new Error(`Tipo de gráfico inválido en ${title}.`);
@@ -855,7 +855,7 @@ const sanitizeDashboardConfigPayload = (incoming: any): DashboardConfigPayload =
       valueField,
       secondaryValueField,
       aggregation,
-      limit: Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), 100) : undefined,
+      spanColumns,
     };
   });
 

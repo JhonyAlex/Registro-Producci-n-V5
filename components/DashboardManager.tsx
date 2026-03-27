@@ -51,8 +51,7 @@ const makeEmptyDashboard = (): EditableDashboard => ({
       groupBy: 'machine',
       valueField: 'meters',
       aggregation: 'sum',
-      limit: 12,
-      limitMax: 100,
+      spanColumns: 2,
     },
   ],
   isDefault: false,
@@ -110,8 +109,7 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
       const sanitizedConfigs = dashboardConfigs.map((config) => ({
         ...config,
         widgets: (config.widgets || []).map((w) => {
-          const normalizedLimitMax = Math.max(1, Math.min(Number(w.limitMax) || 100, 1000));
-          const normalizedLimit = Math.max(1, Math.min(Number(w.limit) || 12, normalizedLimitMax));
+          const normalizedSpanColumns = Number((w as any).spanColumns) === 1 ? 1 : 2;
 
           return {
             ...w,
@@ -132,8 +130,7 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
               w.aggregation === 'count' || numericKeys.has(w.valueField)
                 ? w.aggregation
                 : 'count',
-            limit: normalizedLimit,
-            limitMax: normalizedLimitMax,
+            spanColumns: normalizedSpanColumns,
           };
         }),
       }));
@@ -199,8 +196,7 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
           groupBy: 'machine',
           valueField: 'meters',
           aggregation: 'sum',
-          limit: 12,
-          limitMax: 100,
+          spanColumns: 2,
         },
       ],
     }));
@@ -540,24 +536,17 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
                     </div>
                   )}
 
-                  {widget.chartType !== 'kpi' && (
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Limite (Top N)</label>
-                      <input
-                        type="number"
-                        min={1}
-                        max={widget.limitMax || 100}
-                        value={widget.limit || 12}
-                        onChange={(e) => {
-                          const maxLimit = widget.limitMax || 100;
-                          const requested = Number(e.target.value) || 12;
-                          updateWidget(index, { limit: Math.max(1, Math.min(requested, maxLimit)) });
-                        }}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                        placeholder="Mostrar maximo N barras/tramos"
-                      />
-                    </div>
-                  )}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Ancho del widget en panel</label>
+                    <select
+                      value={widget.spanColumns === 1 ? '1' : '2'}
+                      onChange={(e) => updateWidget(index, { spanColumns: e.target.value === '1' ? 1 : 2 })}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                    >
+                      <option value="1">1 columna</option>
+                      <option value="2">2 columnas</option>
+                    </select>
+                  </div>
 
                   {widget.chartType === 'segment_compare' && (
                     <div className="md:col-span-2">
@@ -584,27 +573,6 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
                     </div>
                   )}
 
-                  {widget.chartType !== 'kpi' && (
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Maximo permitido</label>
-                      <input
-                        type="number"
-                        min={1}
-                        max={1000}
-                        value={widget.limitMax || 100}
-                        onChange={(e) => {
-                          const requestedMax = Number(e.target.value) || 100;
-                          const normalizedMax = Math.max(1, Math.min(requestedMax, 1000));
-                          updateWidget(index, {
-                            limitMax: normalizedMax,
-                            limit: Math.min(widget.limit || 12, normalizedMax),
-                          });
-                        }}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                        placeholder="Definir tope maximo de N"
-                      />
-                    </div>
-                  )}
                 </div>
               </div>
             ))}

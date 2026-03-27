@@ -96,8 +96,7 @@ const buildGroupedData = (
   records: ProductionRecord[],
   baseField: string,
   valueField: string,
-  aggregation: DashboardWidgetConfig['aggregation'],
-  limit?: number
+  aggregation: DashboardWidgetConfig['aggregation']
 ) => {
   const groups = new Map<string, GroupAccumulator>();
 
@@ -125,10 +124,6 @@ const buildGroupedData = (
     rows = rows.sort((a, b) => a.label.localeCompare(b.label));
   } else {
     rows = rows.sort((a, b) => b.value - a.value);
-  }
-
-  if (limit && limit > 0) {
-    rows = rows.slice(0, limit);
   }
 
   return rows;
@@ -202,8 +197,7 @@ const buildSegmentCompareData = (
   comparisonField: string,
   selectedComparisonValues: string[],
   valueField: string,
-  aggregation: DashboardWidgetConfig['aggregation'],
-  limit?: number
+  aggregation: DashboardWidgetConfig['aggregation']
 ) => {
   const groups = new Map<string, { label: string; totals: Record<string, GroupAccumulator> }>();
   const explicitSegments = selectedComparisonValues
@@ -264,10 +258,6 @@ const buildSegmentCompareData = (
     rows = rows.sort((a, b) => String(a.label).localeCompare(String(b.label)));
   } else {
     rows = rows.sort((a, b) => Number(b.total || 0) - Number(a.total || 0));
-  }
-
-  if (limit && limit > 0) {
-    rows = rows.slice(0, limit);
   }
 
   return { rows, segments };
@@ -337,6 +327,7 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
             valueField: safeValueField,
             secondaryValueField: secondary,
             aggregation: safeAggregation,
+            spanColumns: Number((widget as any).spanColumns) === 1 ? 1 : 2,
           };
         });
 
@@ -416,9 +407,6 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
 
   const renderWidget = (widget: DashboardWidgetConfig) => {
     const groupByField = widget.groupBy || 'machine';
-    const effectiveLimit = widget.limit && widget.limit > 0
-      ? Math.min(widget.limit, widget.limitMax || 100)
-      : undefined;
 
     if (widget.chartType === 'kpi') {
       const val = buildKpiData(filteredRecords, widget.valueField, widget.aggregation);
@@ -491,8 +479,7 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
         comparisonField,
         selectedComparisonValues,
         widget.valueField,
-        widget.aggregation,
-        effectiveLimit
+        widget.aggregation
       );
 
       const totalVisible = rows.reduce((acc, row) => acc + Number(row.total || 0), 0);
@@ -645,8 +632,7 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
       filteredRecords,
       groupByField,
       widget.valueField,
-      widget.aggregation,
-      effectiveLimit
+      widget.aggregation
     );
 
     if (widget.chartType === 'pie') {
@@ -899,13 +885,7 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
         {orderedWidgets.map((widget) => (
           <div
             key={widget.id}
-            className={`bg-white border border-slate-200 rounded-2xl p-5 ${
-              widget.chartType === 'kpi'
-                ? 'col-span-1'
-                : widget.chartType === 'segment_compare'
-                  ? 'col-span-1 md:col-span-2 xl:col-span-2'
-                  : 'col-span-1 md:col-span-2'
-            }`}
+            className={`bg-white border border-slate-200 rounded-2xl p-5 ${widget.spanColumns === 1 ? 'col-span-1' : 'col-span-1 md:col-span-2'}`}
           >
             <div className="mb-3">
               <h4 className="font-bold text-slate-900">{widget.title}</h4>
