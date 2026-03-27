@@ -16,6 +16,7 @@ import {
   Pie,
   Cell,
   ComposedChart,
+  LabelList,
 } from 'recharts';
 import {
   LayoutDashboard,
@@ -39,6 +40,11 @@ type GroupAccumulator = {
   label: string;
   sum: number;
   count: number;
+};
+
+type WidgetSelectionState = {
+  groupValues?: string[];
+  comparisonValues?: string[];
 };
 
 const CHART_LABELS: Record<string, string> = {
@@ -174,9 +180,25 @@ const buildCombinedTrendData = (
     .sort((a, b) => a.label.localeCompare(b.label)); // Default sort by label (useful if date)
 };
 
+const buildKpiData = (
+  records: ProductionRecord[],
+  valueField: string,
+  aggregation: DashboardWidgetConfig['aggregation']
+): number => {
+  if (records.length === 0) return 0;
+  if (aggregation === 'count') return records.length;
+
+  const totalSum = records.reduce((acc, record) => acc + toNumeric(getRecordFieldValue(record, valueField)), 0);
+  if (aggregation === 'avg') {
+    return totalSum / records.length;
+  }
+  return totalSum;
+};
+
 const buildSegmentCompareData = (
   records: ProductionRecord[],
   baseField: string,
+  selectedGroupValues: string[],
   comparisonField: string,
   selectedComparisonValues: string[],
   valueField: string,
@@ -191,6 +213,10 @@ const buildSegmentCompareData = (
   records.forEach((record) => {
     const groupKey = toDisplayString(getRecordFieldValue(record, baseField));
     const segmentKey = toDisplayString(getRecordFieldValue(record, comparisonField));
+
+    if (selectedGroupValues.length > 0 && !selectedGroupValues.includes(groupKey)) {
+      return;
+    }
 
     if (explicitSegments.length > 0 && !explicitSegments.includes(segmentKey)) {
       return;
@@ -219,6 +245,7 @@ const buildSegmentCompareData = (
 
   let rows = Array.from(groups.values()).map((group) => {
     const row: Record<string, string | number> = { label: group.label, total: 0 };
+
     segments.forEach((segment) => {
       const bucket = group.totals[segment];
       const value = !bucket
@@ -229,6 +256,7 @@ const buildSegmentCompareData = (
       row[segment] = value;
       row.total = Number(row.total || 0) + value;
     });
+
     return row;
   });
 
@@ -245,25 +273,11 @@ const buildSegmentCompareData = (
   return { rows, segments };
 };
 
-const buildKpiData = (
-  records: ProductionRecord[],
-  valueField: string,
-  aggregation: DashboardWidgetConfig['aggregation']
-): number => {
-  if (records.length === 0) return 0;
-  if (aggregation === 'count') return records.length;
-
-  const totalSum = records.reduce((acc, record) => acc + toNumeric(getRecordFieldValue(record, valueField)), 0);
-  if (aggregation === 'avg') {
-    return totalSum / records.length;
-  }
-  return totalSum;
-};
-
 const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = false, onOpenAdmin }) => {
   const [configs, setConfigs] = useState<DashboardConfig[]>([]);
   const [fieldOptions, setFieldOptions] = useState<DashboardFieldOption[]>(DASHBOARD_ALLOWED_CORE_FIELDS);
   const [selectedConfigId, setSelectedConfigId] = useState('');
+  const [widgetSelections, setWidgetSelections] = useState<Record<string, WidgetSelectionState>>({});
   
   // Global Filters
   const [startDate, setStartDate] = useState('');
@@ -298,13 +312,6 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
           const safeAggregation = widget.aggregation === 'count' || (safeValueField && optionMap.get(safeValueField)?.type === 'number')
             ? widget.aggregation
             : 'count';
-          const safeComparisonField =
-            widget.comparisonField && optionMap.has(widget.comparisonField)
-              ? widget.comparisonField
-              : undefined;
-          const safeComparisonValues = Array.isArray(widget.comparisonValues)
-            ? widget.comparisonValues.map((value) => String(value || '').trim()).filter((value) => value.length > 0)
-            : undefined;
           return {
             ...widget,
             id: widget.id || `widget_${index + 1}`,
@@ -312,8 +319,15 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
               widget.groupBy && optionMap.has(widget.groupBy)
                 ? widget.groupBy
                 : (config.baseField && optionMap.has(config.baseField) ? config.baseField : 'machine'),
-            comparisonField: safeComparisonField,
-            comparisonValues: safeComparisonValues,
+            comparisonField:
+              widget.comparisonField && optionMap.has(widget.comparisonField)
+                ? widget.comparisonField
+                : undefined,
+            comparisonValues: Array.isArray(widget.comparisonValues)
+              ? widget.comparisonValues
+                  .map((value) => String(value || '').trim())
+                  .filter((value) => value.length > 0)
+              : undefined,
             valueField: safeValueField,
             secondaryValueField: secondary,
             aggregation: safeAggregation,
@@ -335,6 +349,8 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
       } else {
         setSelectedConfigId('');
       }
+
+      setWidgetSelections({});
     } catch (err: any) {
       setError(err?.message || 'No se pudieron cargar los dashboards dinamicos.');
     } finally {
@@ -375,6 +391,16 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
     if (val >= 1000000) return (val / 1000000).toFixed(2) + 'M';
     if (val >= 1000) return (val / 1000).toFixed(2) + 'K';
     return val.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  };
+
+  const updateWidgetSelection = (widgetId: string, patch: Partial<WidgetSelectionState>) => {
+    setWidgetSelections((prev) => ({
+      ...prev,
+      [widgetId]: {
+        ...prev[widgetId],
+        ...patch,
+      },
+    }));
   };
 
   const renderWidget = (widget: DashboardWidgetConfig) => {
@@ -424,16 +450,46 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
 
     if (widget.chartType === 'segment_compare') {
       const comparisonField = widget.comparisonField || 'shift';
-      const comparisonValues = widget.comparisonValues || [];
+
+      const availableGroupValues = Array.from(
+        new Set(filteredRecords.map((record) => toDisplayString(getRecordFieldValue(record, groupByField))))
+      ) as string[];
+      availableGroupValues.sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+
+      const availableComparisonValues = Array.from(
+        new Set(filteredRecords.map((record) => toDisplayString(getRecordFieldValue(record, comparisonField))))
+      ) as string[];
+      availableComparisonValues.sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+
+      const selectedGroupValues = (widgetSelections[widget.id]?.groupValues || []).filter((value) =>
+        availableGroupValues.includes(value)
+      );
+
+      const selectedComparisonValues =
+        widgetSelections[widget.id]?.comparisonValues && (widgetSelections[widget.id]?.comparisonValues || []).length > 0
+          ? (widgetSelections[widget.id]?.comparisonValues || []).filter((value) => availableComparisonValues.includes(value))
+          : (widget.comparisonValues || []).filter((value) => availableComparisonValues.includes(value));
+
       const { rows, segments } = buildSegmentCompareData(
         filteredRecords,
         groupByField,
+        selectedGroupValues,
         comparisonField,
-        comparisonValues,
+        selectedComparisonValues,
         widget.valueField,
         widget.aggregation,
         widget.limit
       );
+
+      const totalVisible = rows.reduce((acc, row) => acc + Number(row.total || 0), 0);
+      const bestRow = rows[0];
+      const segmentTotals = segments
+        .map((segment) => ({
+          segment,
+          total: rows.reduce((acc, row) => acc + Number(row[segment] || 0), 0),
+        }))
+        .sort((a, b) => b.total - a.total);
+      const topSegment = segmentTotals[0];
 
       if (segments.length === 0) {
         return (
@@ -444,51 +500,114 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
       }
 
       return (
-        <div className="h-72">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={rows} margin={{ top: 8, right: 12, left: 0, bottom: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748b' }} />
-              <YAxis tick={{ fontSize: 11, fill: '#64748b' }} />
-              <Tooltip formatter={(value) => Number(value).toLocaleString()} />
-              <Legend wrapperStyle={{ fontSize: '12px' }} />
-              {segments.map((segment, index) => (
-                <Bar
-                  key={segment}
-                  dataKey={segment}
-                  name={`${metricLabel(comparisonField, fieldMap)}: ${segment}`}
-                  fill={COLORS[index % COLORS.length]}
-                  radius={[4, 4, 0, 0]}
-                />
-              ))}
-            </BarChart>
-          </ResponsiveContainer>
+        <div className="space-y-3">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[11px] font-bold text-slate-500 mb-1">
+                Seleccionar {metricLabel(groupByField, fieldMap)} (multi)
+              </label>
+              <select
+                multiple
+                value={selectedGroupValues}
+                onChange={(e) => {
+                  const values = Array.from(
+                    e.target.selectedOptions,
+                    (option) => (option as HTMLOptionElement).value
+                  );
+                  updateWidgetSelection(widget.id, { groupValues: values });
+                }}
+                className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs min-h-[86px]"
+              >
+                {availableGroupValues.map((value) => (
+                  <option key={value} value={value}>{value}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold text-slate-500 mb-1">
+                Series ({metricLabel(comparisonField, fieldMap)})
+              </label>
+              <select
+                multiple
+                value={selectedComparisonValues}
+                onChange={(e) => {
+                  const values = Array.from(
+                    e.target.selectedOptions,
+                    (option) => (option as HTMLOptionElement).value
+                  );
+                  updateWidgetSelection(widget.id, { comparisonValues: values });
+                }}
+                className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs min-h-[86px]"
+              >
+                {availableComparisonValues.map((value) => (
+                  <option key={value} value={value}>{value}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="h-72">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={rows} margin={{ top: 8, right: 12, left: 0, bottom: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748b' }} />
+                <YAxis tick={{ fontSize: 11, fill: '#64748b' }} />
+                <Tooltip formatter={(value) => Number(value).toLocaleString()} />
+                <Legend wrapperStyle={{ fontSize: '12px' }} />
+                {segments.map((segment, index) => (
+                  <Bar
+                    key={segment}
+                    dataKey={segment}
+                    name={`${metricLabel(comparisonField, fieldMap)}: ${segment}`}
+                    fill={COLORS[index % COLORS.length]}
+                    radius={[4, 4, 0, 0]}
+                  >
+                    <LabelList
+                      dataKey={segment}
+                      position="top"
+                      formatter={(value: any) => formatNumber(Number(value || 0))}
+                      style={{ fill: '#334155', fontSize: 10, fontWeight: 700 }}
+                    />
+                  </Bar>
+                ))}
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+              <p className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Total Visible</p>
+              <p className="text-lg font-black text-slate-800">{formatNumber(totalVisible)}</p>
+            </div>
+            <div>
+              <p className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Mayor {metricLabel(groupByField, fieldMap)}</p>
+              <p className="text-sm font-bold text-slate-800">{bestRow ? String(bestRow.label) : 'Sin dato'}</p>
+              <p className="text-xs text-slate-500">{bestRow ? formatNumber(Number(bestRow.total || 0)) : '0'}</p>
+            </div>
+            <div>
+              <p className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Serie Principal</p>
+              <p className="text-sm font-bold text-slate-800">{topSegment ? topSegment.segment : 'Sin dato'}</p>
+              <p className="text-xs text-slate-500">{topSegment ? formatNumber(topSegment.total) : '0'}</p>
+            </div>
+          </div>
         </div>
       );
     }
 
-    const data = buildGroupedData(filteredRecords, groupByField, widget.valueField, widget.aggregation, widget.limit);
+    const data = buildGroupedData(
+      filteredRecords,
+      groupByField,
+      widget.valueField,
+      widget.aggregation,
+      widget.chartType === 'bar_horizontal' ? undefined : widget.limit
+    );
 
     if (widget.chartType === 'pie') {
-      const total = data.reduce((acc, item) => acc + Number(item.value || 0), 0);
-
       return (
         <div className="h-72">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
-              <Pie
-                data={data}
-                dataKey="value"
-                nameKey="label"
-                innerRadius={58}
-                outerRadius={98}
-                paddingAngle={3}
-                label={({ value }) => {
-                  const numericValue = Number(value || 0);
-                  const percentage = total > 0 ? (numericValue / total) * 100 : 0;
-                  return `${numericValue.toLocaleString(undefined, { maximumFractionDigits: 2 })} (${percentage.toFixed(1)}%)`;
-                }}
-              >
+              <Pie data={data} dataKey="value" nameKey="label" innerRadius={58} outerRadius={98} paddingAngle={3}>
                 {data.map((entry, index) => (
                   <Cell key={`${entry.label}-${index}`} fill={COLORS[index % COLORS.length]} />
                 ))}
@@ -540,13 +659,25 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
     }
 
     if (widget.chartType === 'bar_horizontal') {
+      const rowHeight = 34;
+      const headerAndPadding = 44;
+      const chartHeight = Math.max(280, data.length * rowHeight + headerAndPadding);
+      const maxLabelLength = data.reduce((max, entry) => Math.max(max, String(entry.label || '').length), 0);
+      const yAxisWidth = Math.min(320, Math.max(120, maxLabelLength * 7 + 20));
+
       return (
-        <div className="h-72">
+        <div style={{ height: `${chartHeight}px` }}>
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data} layout="vertical" margin={{ top: 8, right: 12, left: 28, bottom: 8 }}>
+            <BarChart data={data} layout="vertical" margin={{ top: 8, right: 12, left: 8, bottom: 8 }} barSize={20}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
               <XAxis type="number" tick={{ fontSize: 11, fill: '#64748b' }} />
-              <YAxis type="category" dataKey="label" width={120} tick={{ fontSize: 11, fill: '#64748b' }} />
+              <YAxis
+                type="category"
+                dataKey="label"
+                width={yAxisWidth}
+                interval={0}
+                tick={{ fontSize: 11, fill: '#64748b' }}
+              />
               <Tooltip formatter={(value) => Number(value).toLocaleString()} />
               <Bar dataKey="value" fill="#0ea5e9" radius={[0, 6, 6, 0]} />
             </BarChart>
