@@ -11,6 +11,34 @@ export const DASHBOARD_ALLOWED_CORE_FIELDS: DashboardFieldOption[] = [
   { key: 'changesComment', label: 'Comentario/incidencia', type: 'text', source: 'core' },
 ];
 
+export const normalizeDashboardDynamicFieldKey = (value: string) =>
+  String(value || '').trim().toLocaleLowerCase('es');
+
+export const getDynamicFieldValueByKey = (
+  dynamicFieldsValues: Record<string, unknown> | undefined,
+  field: string
+): unknown => {
+  const requestedKey = String(field || '').startsWith('dynamic.') ? String(field).slice(8) : String(field || '');
+  const trimmedKey = requestedKey.trim();
+
+  if (!trimmedKey || !dynamicFieldsValues) {
+    return undefined;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(dynamicFieldsValues, trimmedKey)) {
+    return dynamicFieldsValues[trimmedKey];
+  }
+
+  const normalizedRequestedKey = normalizeDashboardDynamicFieldKey(trimmedKey);
+  for (const [candidateKey, candidateValue] of Object.entries(dynamicFieldsValues)) {
+    if (normalizeDashboardDynamicFieldKey(candidateKey) === normalizedRequestedKey) {
+      return candidateValue;
+    }
+  }
+
+  return undefined;
+};
+
 export const buildDynamicFieldOptionsFromCatalog = (
   fieldCatalog: Array<Pick<FieldCatalogEntry, 'key' | 'label' | 'type'>>
 ): DashboardFieldOption[] => {
@@ -20,7 +48,7 @@ export const buildDynamicFieldOptionsFromCatalog = (
     const rawKey = String(field.key || '').trim();
     if (!rawKey) return;
 
-    const normalizedKey = rawKey.toLowerCase();
+    const normalizedKey = normalizeDashboardDynamicFieldKey(rawKey);
     if (uniqueByNormalizedKey.has(normalizedKey)) return;
 
     uniqueByNormalizedKey.set(normalizedKey, {
@@ -31,5 +59,26 @@ export const buildDynamicFieldOptionsFromCatalog = (
     });
   });
 
-  return Array.from(uniqueByNormalizedKey.values()).sort((a, b) => a.label.localeCompare(b.label));
+  const dynamicOptions = Array.from(uniqueByNormalizedKey.values());
+  const duplicateLabels = new Map<string, number>();
+
+  [...DASHBOARD_ALLOWED_CORE_FIELDS, ...dynamicOptions].forEach((field) => {
+    const normalizedLabel = normalizeDashboardDynamicFieldKey(field.label);
+    if (!normalizedLabel) return;
+    duplicateLabels.set(normalizedLabel, (duplicateLabels.get(normalizedLabel) || 0) + 1);
+  });
+
+  return dynamicOptions
+    .map((field) => {
+      const normalizedLabel = normalizeDashboardDynamicFieldKey(field.label);
+      if ((duplicateLabels.get(normalizedLabel) || 0) <= 1) {
+        return field;
+      }
+
+      return {
+        ...field,
+        label: `${field.label} (${field.key.slice(8)})`,
+      };
+    })
+    .sort((a, b) => a.label.localeCompare(b.label, 'es', { sensitivity: 'base' }));
 };

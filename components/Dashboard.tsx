@@ -28,7 +28,11 @@ import {
 } from 'lucide-react';
 import { DashboardConfig, DashboardFieldOption, DashboardWidgetConfig, ProductionRecord, MachineType, ShiftType } from '../types';
 import { exportToExcel, getDashboardConfigs, getFieldCatalog } from '../services/storageService';
-import { buildDynamicFieldOptionsFromCatalog, DASHBOARD_ALLOWED_CORE_FIELDS } from '../utils/dashboardFieldPolicy';
+import {
+  buildDynamicFieldOptionsFromCatalog,
+  DASHBOARD_ALLOWED_CORE_FIELDS,
+  getDynamicFieldValueByKey,
+} from '../utils/dashboardFieldPolicy';
 
 interface DashboardProps {
   records: ProductionRecord[];
@@ -63,12 +67,9 @@ const COLORS = ['#0ea5e9', '#16a34a', '#f97316', '#ef4444', '#a855f7', '#f43f5e'
 
 const RADIAN = Math.PI / 180;
 
-const normalizeDynamicKey = (field: string) => (field.startsWith('dynamic.') ? field.slice(8) : field);
-
 const getRecordFieldValue = (record: ProductionRecord, field: string): unknown => {
   if (field.startsWith('dynamic.')) {
-    const dynamicKey = normalizeDynamicKey(field);
-    return record.dynamicFieldsValues?.[dynamicKey];
+    return getDynamicFieldValueByKey(record.dynamicFieldsValues, field);
   }
 
   return (record as any)[field];

@@ -781,6 +781,103 @@ const applyFieldCatalogDisplayOrder = async (executor: QueryExecutor, orderedIds
   );
 };
 
+const migrateProductionRecordDynamicFieldKey = async (
+  executor: QueryExecutor,
+  previousKey: string,
+  nextKey: string
+): Promise<void> => {
+  if (!previousKey || !nextKey || previousKey === nextKey) {
+    return;
+  }
+
+  await executor.query(
+    `UPDATE production_records
+     SET dynamic_fields_values = CASE
+       WHEN dynamic_fields_values ? $2 THEN dynamic_fields_values - $1
+       ELSE (dynamic_fields_values - $1) || jsonb_build_object($2, dynamic_fields_values -> $1)
+     END
+     WHERE dynamic_fields_values ? $1`,
+    [previousKey, nextKey]
+  );
+};
+
+const remapDashboardDynamicFieldRef = (value: unknown, previousKey: string, nextKey: string) => {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  return value === `dynamic.${previousKey}` ? `dynamic.${nextKey}` : value;
+};
+
+const migrateDashboardConfigDynamicFieldKey = async (
+  executor: QueryExecutor,
+  previousKey: string,
+  nextKey: string
+): Promise<void> => {
+  if (!previousKey || !nextKey || previousKey === nextKey) {
+    return;
+  }
+
+  const configsResult = await executor.query(
+    `SELECT id, base_field as "baseField", related_fields as "relatedFields", widgets
+     FROM dashboard_configs`
+  );
+
+  for (const row of configsResult.rows) {
+    let changed = false;
+    const nextBaseField = remapDashboardDynamicFieldRef(row.baseField, previousKey, nextKey);
+    if (nextBaseField !== row.baseField) {
+      changed = true;
+    }
+
+    const sourceRelatedFields = Array.isArray(row.relatedFields) ? row.relatedFields : [];
+    const nextRelatedFields = sourceRelatedFields.map((field) => {
+      const remapped = remapDashboardDynamicFieldRef(field, previousKey, nextKey);
+      if (remapped !== field) {
+        changed = true;
+      }
+      return remapped;
+    });
+
+    const sourceWidgets = Array.isArray(row.widgets) ? row.widgets : [];
+    const nextWidgets = sourceWidgets.map((widget: any) => {
+      if (!widget || typeof widget !== 'object') {
+        return widget;
+      }
+
+      const nextWidget = { ...widget };
+      (['groupBy', 'comparisonField', 'valueField', 'secondaryValueField'] as const).forEach((fieldName) => {
+        const remapped = remapDashboardDynamicFieldRef(nextWidget[fieldName], previousKey, nextKey);
+        if (remapped !== nextWidget[fieldName]) {
+          changed = true;
+          nextWidget[fieldName] = remapped;
+        }
+      });
+
+      return nextWidget;
+    });
+
+    if (!changed) {
+      continue;
+    }
+
+    await executor.query(
+      `UPDATE dashboard_configs
+       SET base_field = $1,
+           related_fields = $2::jsonb,
+           widgets = $3::jsonb,
+           updated_at = NOW()
+       WHERE id = $4`,
+      [
+        typeof nextBaseField === 'string' ? nextBaseField : null,
+        JSON.stringify(nextRelatedFields),
+        JSON.stringify(nextWidgets),
+        row.id,
+      ]
+    );
+  }
+};
+
 const sanitizeDashboardConfigPayload = (incoming: any): DashboardConfigPayload => {
   const name = String(incoming?.name || '').trim();
   const baseField = normalizeOptionalString(incoming?.baseField);
@@ -2430,6 +2527,12 @@ app.put('/api/settings/field-catalog/:id', authenticate, requirePermission('sett
     ensureCatalogFieldKeyAllowed(normalizedKey);
     await ensureCatalogFieldKeyIsUniqueCaseInsensitive(normalizedKey, id);
 
+    const currentFieldResult = await pool.query('SELECT key FROM field_catalog WHERE id = $1 LIMIT 1', [id]);
+    if (currentFieldResult.rowCount === 0) {
+      return res.status(404).json({ error: 'Campo no encontrado.' });
+    }
+    const previousKey = String(currentFieldResult.rows[0]?.key || '').trim();
+
     await pool.query('BEGIN');
     const fieldResult = await pool.query(
       `UPDATE field_catalog
@@ -2452,6 +2555,10 @@ app.put('/api/settings/field-catalog/:id', authenticate, requirePermission('sett
       return res.status(404).json({ error: 'Campo no encontrado.' });
     }
     const field = fieldResult.rows[0];
+
+    await migrateProductionRecordDynamicFieldKey(pool, previousKey, normalizedKey);
+    await migrateDashboardConfigDynamicFieldKey(pool, previousKey, normalizedKey);
+
     const oldRows = await pool.query('SELECT machine FROM field_catalog_assignments WHERE field_id = $1', [id]);
     const oldMachines = oldRows.rows.map((r: any) => r.machine);
     await pool.query('DELETE FROM field_catalog_assignments WHERE field_id = $1', [id]);
@@ -2464,7 +2571,12 @@ app.put('/api/settings/field-catalog/:id', authenticate, requirePermission('sett
         [id, validMachines[i], i]
       );
     }
-    await logAudit(user.id, 'field_catalog_updated', { key: field.key, label: field.label, machines: validMachines }, req.ip || '');
+    await logAudit(
+      user.id,
+      'field_catalog_updated',
+      { previousKey, key: field.key, label: field.label, machines: validMachines },
+      req.ip || ''
+    );
     await pool.query('COMMIT');
     const affected = new Set([...oldMachines, ...validMachines]);
     affected.forEach((m: string) => io.emit('machine_schema_changed', { machine: m }));
