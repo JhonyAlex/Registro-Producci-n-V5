@@ -42,11 +42,6 @@ type GroupAccumulator = {
   count: number;
 };
 
-type WidgetSelectionState = {
-  groupValues?: string[];
-  comparisonValues?: string[];
-};
-
 const CHART_LABELS: Record<string, string> = {
   kpi: 'Tarjeta KPI',
   bar: 'Barras',
@@ -55,7 +50,7 @@ const CHART_LABELS: Record<string, string> = {
   area: 'Area',
   pie: 'Torta',
   combined_trend: 'Tendencia Combinada',
-  segment_compare: 'Comparativo por Segmentos',
+  segment_compare: 'Comparativo Operativo (2D)',
 };
 
 const AGGREGATION_LABELS: Record<string, string> = {
@@ -272,6 +267,8 @@ const buildSegmentCompareData = (
   aggregation: DashboardWidgetConfig['aggregation']
 ) => {
   const groups = new Map<string, { label: string; totals: Record<string, GroupAccumulator> }>();
+  let globalSum = 0;
+  let globalCount = 0;
   const explicitSegments = selectedComparisonValues
     .map((value) => String(value || '').trim())
     .filter((value) => value.length > 0);
@@ -294,9 +291,14 @@ const buildSegmentCompareData = (
     if (aggregation === 'count') {
       segment.sum += 1;
       segment.count += 1;
+      globalSum += 1;
+      globalCount += 1;
     } else {
-      segment.sum += toNumeric(getRecordFieldValue(record, valueField));
+      const numeric = toNumeric(getRecordFieldValue(record, valueField));
+      segment.sum += numeric;
       segment.count += 1;
+      globalSum += numeric;
+      globalCount += 1;
     }
 
     current.totals[segmentKey] = segment;
@@ -311,6 +313,8 @@ const buildSegmentCompareData = (
 
   let rows = Array.from(groups.values()).map((group) => {
     const row: Record<string, string | number> = { label: group.label, total: 0 };
+    let rowSum = 0;
+    let rowCount = 0;
 
     segments.forEach((segment) => {
       const bucket = group.totals[segment];
@@ -320,8 +324,14 @@ const buildSegmentCompareData = (
           ? (bucket.count > 0 ? bucket.sum / bucket.count : 0)
           : bucket.sum;
       row[segment] = value;
-      row.total = Number(row.total || 0) + value;
+
+      if (bucket) {
+        rowSum += bucket.sum;
+        rowCount += bucket.count;
+      }
     });
+
+    row.total = aggregation === 'avg' ? (rowCount > 0 ? rowSum / rowCount : 0) : rowSum;
 
     return row;
   });
@@ -332,14 +342,34 @@ const buildSegmentCompareData = (
     rows = rows.sort((a, b) => Number(b.total || 0) - Number(a.total || 0));
   }
 
-  return { rows, segments };
+  const segmentMetrics = segments
+    .map((segment) => {
+      let sum = 0;
+      let count = 0;
+
+      Array.from(groups.values()).forEach((group) => {
+        const bucket = group.totals[segment];
+        if (!bucket) return;
+        sum += bucket.sum;
+        count += bucket.count;
+      });
+
+      return {
+        segment,
+        total: aggregation === 'avg' ? (count > 0 ? sum / count : 0) : sum,
+      };
+    })
+    .sort((a, b) => b.total - a.total);
+
+  const grandTotal = aggregation === 'avg' ? (globalCount > 0 ? globalSum / globalCount : 0) : globalSum;
+
+  return { rows, segments, segmentMetrics, grandTotal, recordCount: globalCount };
 };
 
 const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = false, onOpenAdmin }) => {
   const [configs, setConfigs] = useState<DashboardConfig[]>([]);
   const [fieldOptions, setFieldOptions] = useState<DashboardFieldOption[]>(DASHBOARD_ALLOWED_CORE_FIELDS);
   const [selectedConfigId, setSelectedConfigId] = useState('');
-  const [widgetSelections, setWidgetSelections] = useState<Record<string, WidgetSelectionState>>({});
   
   // Global Filters
   const [startDate, setStartDate] = useState('');
@@ -412,8 +442,6 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
       } else {
         setSelectedConfigId('');
       }
-
-      setWidgetSelections({});
     } catch (err: any) {
       setError(err?.message || 'No se pudieron cargar los dashboards dinamicos.');
     } finally {
@@ -459,16 +487,6 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
     if (val >= 1000000) return (val / 1000000).toFixed(2) + 'M';
     if (val >= 1000) return (val / 1000).toFixed(2) + 'K';
     return val.toLocaleString(undefined, { maximumFractionDigits: 2 });
-  };
-
-  const updateWidgetSelection = (widgetId: string, patch: Partial<WidgetSelectionState>) => {
-    setWidgetSelections((prev) => ({
-      ...prev,
-      [widgetId]: {
-        ...prev[widgetId],
-        ...patch,
-      },
-    }));
   };
 
   const renderWidget = (widget: DashboardWidgetConfig) => {
@@ -519,26 +537,17 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
     if (widget.chartType === 'segment_compare') {
       const comparisonField = widget.comparisonField || 'shift';
 
-      const availableGroupValues = Array.from(
-        new Set(filteredRecords.map((record) => toDisplayString(getRecordFieldValue(record, groupByField))))
-      ) as string[];
-      availableGroupValues.sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
-
       const availableComparisonValues = Array.from(
         new Set(filteredRecords.map((record) => toDisplayString(getRecordFieldValue(record, comparisonField))))
       ) as string[];
       availableComparisonValues.sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
 
-      const selectedGroupValues = (widgetSelections[widget.id]?.groupValues || []).filter((value) =>
-        availableGroupValues.includes(value)
+      const selectedGroupValues: string[] = [];
+      const selectedComparisonValues = (widget.comparisonValues || []).filter((value) =>
+        availableComparisonValues.includes(value)
       );
 
-      const selectedComparisonValues =
-        widgetSelections[widget.id]?.comparisonValues && (widgetSelections[widget.id]?.comparisonValues || []).length > 0
-          ? (widgetSelections[widget.id]?.comparisonValues || []).filter((value) => availableComparisonValues.includes(value))
-          : (widget.comparisonValues || []).filter((value) => availableComparisonValues.includes(value));
-
-      const { rows, segments } = buildSegmentCompareData(
+      const { rows, segments, segmentMetrics, grandTotal, recordCount } = buildSegmentCompareData(
         filteredRecords,
         groupByField,
         selectedGroupValues,
@@ -548,16 +557,9 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
         widget.aggregation
       );
 
-      const totalVisible = rows.reduce((acc, row) => acc + Number(row.total || 0), 0);
       const bestRow = rows[0];
       const detailRows = rows.slice(0, 8);
-      const segmentTotals = segments
-        .map((segment) => ({
-          segment,
-          total: rows.reduce((acc, row) => acc + Number(row[segment] || 0), 0),
-        }))
-        .sort((a, b) => b.total - a.total);
-      const topSegment = segmentTotals[0];
+      const topSegment = segmentMetrics[0];
 
       if (segments.length === 0) {
         return (
@@ -569,65 +571,21 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
 
       return (
         <div className="space-y-4">
-          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
-            <div className="flex items-center justify-between gap-2 mb-2">
-              <p className="text-xs font-bold text-slate-700 uppercase tracking-wide">Controles del panel</p>
-              <button
-                type="button"
-                onClick={() => updateWidgetSelection(widget.id, { groupValues: [], comparisonValues: [] })}
-                className="px-2 py-1 text-xs rounded-md border border-slate-300 text-slate-700 hover:bg-white"
-              >
-                Limpiar filtros
-              </button>
-            </div>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
-              <div>
-                <label className="block text-[11px] font-bold text-slate-500 mb-1">
-                  Seleccionar {metricLabel(groupByField, fieldMap)} (multi)
-                </label>
-                <select
-                  multiple
-                  value={selectedGroupValues}
-                  onChange={(e) => {
-                    const values = Array.from(
-                      e.target.selectedOptions,
-                      (option) => (option as HTMLOptionElement).value
-                    );
-                    updateWidgetSelection(widget.id, { groupValues: values });
-                  }}
-                  className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs min-h-[96px]"
-                >
-                  {availableGroupValues.map((value) => (
-                    <option key={value} value={value}>{value}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-[11px] font-bold text-slate-500 mb-1">
-                  Series ({metricLabel(comparisonField, fieldMap)})
-                </label>
-                <select
-                  multiple
-                  value={selectedComparisonValues}
-                  onChange={(e) => {
-                    const values = Array.from(
-                      e.target.selectedOptions,
-                      (option) => (option as HTMLOptionElement).value
-                    );
-                    updateWidgetSelection(widget.id, { comparisonValues: values });
-                  }}
-                  className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs min-h-[96px]"
-                >
-                  {availableComparisonValues.map((value) => (
-                    <option key={value} value={value}>{value}</option>
-                  ))}
-                </select>
-              </div>
+          <div className="bg-gradient-to-r from-slate-50 to-blue-50 border border-slate-200 rounded-xl p-3">
+            <p className="text-xs font-black text-slate-800 uppercase tracking-wide mb-1">Comparativo Operativo (2D)</p>
+            <p className="text-[11px] text-slate-600">
+              Este grafico usa solo los <span className="font-bold">Filtros de Datos</span> de la parte superior.
+              {selectedComparisonValues.length > 0
+                ? ` Series configuradas: ${selectedComparisonValues.join(', ')}`
+                : ' Series: automaticas segun los datos visibles.'}
+            </p>
+            <div className="mt-2 text-[11px] text-slate-500">
+              Eje X: {metricLabel(groupByField, fieldMap)} · Serie: {metricLabel(comparisonField, fieldMap)}
             </div>
           </div>
 
           <div className="grid grid-cols-1 xl:grid-cols-5 gap-3">
-            <div className="xl:col-span-3 h-[360px]">
+            <div className="xl:col-span-3 h-[380px] bg-white border border-slate-200 rounded-xl p-2">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={rows} margin={{ top: 14, right: 16, left: 0, bottom: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -659,8 +617,11 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
               <h5 className="text-sm font-extrabold text-slate-900 mb-2">Resumen de datos</h5>
               <div className="grid grid-cols-1 gap-2 mb-3">
                 <div className="bg-white border border-slate-200 rounded-lg p-2">
-                  <p className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Total Visible</p>
-                  <p className="text-lg font-black text-slate-800">{formatNumber(totalVisible)}</p>
+                  <p className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">
+                    {widget.aggregation === 'avg' ? 'Promedio Global' : 'Total Visible'}
+                  </p>
+                  <p className="text-lg font-black text-slate-800">{formatNumber(grandTotal)}</p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">Registros considerados: {recordCount}</p>
                 </div>
                 <div className="bg-white border border-slate-200 rounded-lg p-2">
                   <p className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Mayor {metricLabel(groupByField, fieldMap)}</p>
@@ -900,10 +861,10 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
         </div>
       </div>
 
-      {/* Global Filters Bar */}
+      {/* Global Data Filters */}
       <div className="bg-white border border-slate-200 rounded-2xl p-4">
         <div className="flex items-center gap-2 text-slate-700 font-bold mb-3 text-sm">
-          <Filter className="w-4 h-4" /> Filtros Globales del Dashboard
+          <Filter className="w-4 h-4" /> Filtros de Datos
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div>
