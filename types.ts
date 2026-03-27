@@ -117,7 +117,15 @@ export interface FilterState {
 
 export type DashboardFieldType = 'number' | 'text' | 'date';
 
-export type DashboardChartType = 'bar' | 'bar_horizontal' | 'line' | 'area' | 'pie' | 'combined_trend' | 'kpi';
+export type DashboardChartType =
+  | 'bar'
+  | 'bar_horizontal'
+  | 'line'
+  | 'area'
+  | 'pie'
+  | 'combined_trend'
+  | 'segment_compare'
+  | 'kpi';
 
 export type DashboardAggregationType = 'count' | 'sum' | 'avg';
 
@@ -133,6 +141,8 @@ export interface DashboardWidgetConfig {
   title: string;
   chartType: DashboardChartType;
   groupBy?: string; // New field for V2
+  comparisonField?: string;
+  comparisonValues?: string[];
   valueField: string;
   secondaryValueField?: string;
   aggregation: DashboardAggregationType;

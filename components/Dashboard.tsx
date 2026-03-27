@@ -49,6 +49,7 @@ const CHART_LABELS: Record<string, string> = {
   area: 'Area',
   pie: 'Torta',
   combined_trend: 'Tendencia Combinada',
+  segment_compare: 'Comparativo por Segmentos',
 };
 
 const AGGREGATION_LABELS: Record<string, string> = {
@@ -173,6 +174,77 @@ const buildCombinedTrendData = (
     .sort((a, b) => a.label.localeCompare(b.label)); // Default sort by label (useful if date)
 };
 
+const buildSegmentCompareData = (
+  records: ProductionRecord[],
+  baseField: string,
+  comparisonField: string,
+  selectedComparisonValues: string[],
+  valueField: string,
+  aggregation: DashboardWidgetConfig['aggregation'],
+  limit?: number
+) => {
+  const groups = new Map<string, { label: string; totals: Record<string, GroupAccumulator> }>();
+  const explicitSegments = selectedComparisonValues
+    .map((value) => String(value || '').trim())
+    .filter((value) => value.length > 0);
+
+  records.forEach((record) => {
+    const groupKey = toDisplayString(getRecordFieldValue(record, baseField));
+    const segmentKey = toDisplayString(getRecordFieldValue(record, comparisonField));
+
+    if (explicitSegments.length > 0 && !explicitSegments.includes(segmentKey)) {
+      return;
+    }
+
+    const current = groups.get(groupKey) || { label: groupKey, totals: {} };
+    const segment = current.totals[segmentKey] || { label: segmentKey, sum: 0, count: 0 };
+
+    if (aggregation === 'count') {
+      segment.sum += 1;
+      segment.count += 1;
+    } else {
+      segment.sum += toNumeric(getRecordFieldValue(record, valueField));
+      segment.count += 1;
+    }
+
+    current.totals[segmentKey] = segment;
+    groups.set(groupKey, current);
+  });
+
+  const inferredSegments = Array.from(
+    new Set(Array.from(groups.values()).flatMap((group) => Object.keys(group.totals)))
+  ).sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+
+  const segments = explicitSegments.length > 0 ? explicitSegments : inferredSegments.slice(0, 6);
+
+  let rows = Array.from(groups.values()).map((group) => {
+    const row: Record<string, string | number> = { label: group.label, total: 0 };
+    segments.forEach((segment) => {
+      const bucket = group.totals[segment];
+      const value = !bucket
+        ? 0
+        : aggregation === 'avg'
+          ? (bucket.count > 0 ? bucket.sum / bucket.count : 0)
+          : bucket.sum;
+      row[segment] = value;
+      row.total = Number(row.total || 0) + value;
+    });
+    return row;
+  });
+
+  if (baseField === 'date') {
+    rows = rows.sort((a, b) => String(a.label).localeCompare(String(b.label)));
+  } else {
+    rows = rows.sort((a, b) => Number(b.total || 0) - Number(a.total || 0));
+  }
+
+  if (limit && limit > 0) {
+    rows = rows.slice(0, limit);
+  }
+
+  return { rows, segments };
+};
+
 const buildKpiData = (
   records: ProductionRecord[],
   valueField: string,
@@ -226,6 +298,13 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
           const safeAggregation = widget.aggregation === 'count' || (safeValueField && optionMap.get(safeValueField)?.type === 'number')
             ? widget.aggregation
             : 'count';
+          const safeComparisonField =
+            widget.comparisonField && optionMap.has(widget.comparisonField)
+              ? widget.comparisonField
+              : undefined;
+          const safeComparisonValues = Array.isArray(widget.comparisonValues)
+            ? widget.comparisonValues.map((value) => String(value || '').trim()).filter((value) => value.length > 0)
+            : undefined;
           return {
             ...widget,
             id: widget.id || `widget_${index + 1}`,
@@ -233,6 +312,8 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
               widget.groupBy && optionMap.has(widget.groupBy)
                 ? widget.groupBy
                 : (config.baseField && optionMap.has(config.baseField) ? config.baseField : 'machine'),
+            comparisonField: safeComparisonField,
+            comparisonValues: safeComparisonValues,
             valueField: safeValueField,
             secondaryValueField: secondary,
             aggregation: safeAggregation,
@@ -336,6 +417,51 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
                 dot={{ r: 3 }}
               />
             </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+      );
+    }
+
+    if (widget.chartType === 'segment_compare') {
+      const comparisonField = widget.comparisonField || 'shift';
+      const comparisonValues = widget.comparisonValues || [];
+      const { rows, segments } = buildSegmentCompareData(
+        filteredRecords,
+        groupByField,
+        comparisonField,
+        comparisonValues,
+        widget.valueField,
+        widget.aggregation,
+        widget.limit
+      );
+
+      if (segments.length === 0) {
+        return (
+          <div className="h-72 flex items-center justify-center text-sm text-slate-500">
+            Sin segmentos para mostrar con la configuracion actual.
+          </div>
+        );
+      }
+
+      return (
+        <div className="h-72">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={rows} margin={{ top: 8, right: 12, left: 0, bottom: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+              <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748b' }} />
+              <YAxis tick={{ fontSize: 11, fill: '#64748b' }} />
+              <Tooltip formatter={(value) => Number(value).toLocaleString()} />
+              <Legend wrapperStyle={{ fontSize: '12px' }} />
+              {segments.map((segment, index) => (
+                <Bar
+                  key={segment}
+                  dataKey={segment}
+                  name={`${metricLabel(comparisonField, fieldMap)}: ${segment}`}
+                  fill={COLORS[index % COLORS.length]}
+                  radius={[4, 4, 0, 0]}
+                />
+              ))}
+            </BarChart>
           </ResponsiveContainer>
         </div>
       );
