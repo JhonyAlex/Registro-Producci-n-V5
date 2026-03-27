@@ -97,16 +97,18 @@ const metricLabel = (valueField: string, fieldMap: Record<string, DashboardField
 const getWidgetSpanClass = (widget: DashboardWidgetConfig) => {
   return widget.spanColumns === 1
     ? 'col-span-1'
-    : 'col-span-1 md:col-span-2 lg:col-span-2 xl:col-span-2';
+    : 'col-span-1 md:col-span-2';
 };
 
-const renderPieValueLabel = ({
+const renderPieExternalLabel = ({
   cx,
   cy,
   midAngle,
   innerRadius,
   outerRadius,
   value,
+  name,
+  fill,
 }: {
   cx?: number;
   cy?: number;
@@ -114,6 +116,8 @@ const renderPieValueLabel = ({
   innerRadius?: number;
   outerRadius?: number;
   value?: number;
+  name?: string;
+  fill?: string;
 }) => {
   if (
     typeof cx !== 'number' ||
@@ -126,22 +130,37 @@ const renderPieValueLabel = ({
     return null;
   }
 
-  const radius = innerRadius + (outerRadius - innerRadius) * 0.52;
-  const x = cx + radius * Math.cos(-midAngle * RADIAN);
-  const y = cy + radius * Math.sin(-midAngle * RADIAN);
+  const startRadius = outerRadius + 4;
+  const middleRadius = outerRadius + 16;
+  const startX = cx + startRadius * Math.cos(-midAngle * RADIAN);
+  const startY = cy + startRadius * Math.sin(-midAngle * RADIAN);
+  const midX = cx + middleRadius * Math.cos(-midAngle * RADIAN);
+  const midY = cy + middleRadius * Math.sin(-midAngle * RADIAN);
+  const endX = midX + (midX > cx ? 12 : -12);
+  const anchor = endX > cx ? 'start' : 'end';
+  const strokeColor = fill || '#334155';
+  const labelText = `${String(name || '')}: ${Number(value).toLocaleString()}`;
 
   return (
-    <text
-      x={x}
-      y={y}
-      fill="#0f172a"
-      textAnchor={x > cx ? 'start' : 'end'}
-      dominantBaseline="central"
-      fontSize={11}
-      fontWeight={700}
-    >
-      {Number(value).toLocaleString()}
-    </text>
+    <g>
+      <polyline
+        points={`${startX},${startY} ${midX},${midY} ${endX},${midY}`}
+        fill="none"
+        stroke={strokeColor}
+        strokeWidth={1.5}
+      />
+      <text
+        x={endX + (anchor === 'start' ? 4 : -4)}
+        y={midY}
+        fill={strokeColor}
+        textAnchor={anchor}
+        dominantBaseline="central"
+        fontSize={11}
+        fontWeight={700}
+      >
+        {labelText}
+      </text>
+    </g>
   );
 };
 
@@ -700,7 +719,7 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
                 innerRadius={58}
                 outerRadius={98}
                 paddingAngle={3}
-                label={renderPieValueLabel}
+                label={renderPieExternalLabel}
                 labelLine={false}
               >
                 {data.map((entry, index) => (
@@ -943,7 +962,7 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 grid-flow-row-dense">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 grid-flow-row-dense">
         {orderedWidgets.map((widget) => (
           <div
             key={widget.id}
