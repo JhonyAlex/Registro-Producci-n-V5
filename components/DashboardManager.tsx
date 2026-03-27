@@ -30,6 +30,7 @@ const CHART_TYPES = [
   { value: 'area', label: 'Area' },
   { value: 'pie', label: 'Torta' },
   { value: 'combined_trend', label: 'Tendencia Combinada' },
+  { value: 'segment_compare', label: 'Comparativo Operativo (2D)' },
 ] as const;
 
 const AGGREGATIONS = [
@@ -48,13 +49,31 @@ const makeEmptyDashboard = (): EditableDashboard => ({
       title: 'Produccion por Maquina',
       chartType: 'bar',
       groupBy: 'machine',
-      valueField: 'operator',
-      aggregation: 'count',
+      valueField: 'meters',
+      aggregation: 'sum',
       limit: 12,
+      limitMax: 100,
     },
   ],
   isDefault: false,
 });
+
+const normalizeDynamicKey = (field: string) => (field.startsWith('dynamic.') ? field.slice(8) : field);
+
+const getRecordFieldValue = (record: ProductionRecord, field: string): unknown => {
+  if (field.startsWith('dynamic.')) {
+    const dynamicKey = normalizeDynamicKey(field);
+    return record.dynamicFieldsValues?.[dynamicKey];
+  }
+
+  return (record as any)[field];
+};
+
+const toDisplayString = (value: unknown): string => {
+  if (value === null || value === undefined || value === '') return 'Sin dato';
+  if (Array.isArray(value)) return value.join(', ') || 'Sin dato';
+  return String(value);
+};
 
 const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
   const [configs, setConfigs] = useState<DashboardConfig[]>([]);
@@ -88,12 +107,22 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
       );
 
       // Migrar al vuelo configs antiguos
-      const normalizedConfigs = dashboardConfigs.map(config => {
-        return {
-          ...config,
-          widgets: (config.widgets || []).map(w => ({
+      const sanitizedConfigs = dashboardConfigs.map((config) => ({
+        ...config,
+        widgets: (config.widgets || []).map((w) => {
+          const normalizedLimitMax = Math.max(1, Math.min(Number(w.limitMax) || 100, 1000));
+          const normalizedLimit = Math.max(1, Math.min(Number(w.limit) || 12, normalizedLimitMax));
+
+          return {
             ...w,
             groupBy: w.groupBy && optionMap.has(w.groupBy) ? w.groupBy : (config.baseField && optionMap.has(config.baseField) ? config.baseField : 'machine'),
+            comparisonField:
+              w.comparisonField && optionMap.has(w.comparisonField) ? w.comparisonField : undefined,
+            comparisonValues: Array.isArray(w.comparisonValues)
+              ? w.comparisonValues
+                  .map((value) => String(value || '').trim())
+                  .filter((value) => value.length > 0)
+              : undefined,
             valueField: optionMap.has(w.valueField)
               ? w.valueField
               : (numericKeys.size > 0 ? Array.from(numericKeys)[0] : 'operator'),
@@ -103,13 +132,15 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
               w.aggregation === 'count' || numericKeys.has(w.valueField)
                 ? w.aggregation
                 : 'count',
-          }))
-        };
-      });
+            limit: normalizedLimit,
+            limitMax: normalizedLimitMax,
+          };
+        }),
+      }));
 
-      setConfigs(normalizedConfigs);
+      setConfigs(sanitizedConfigs);
 
-      const first = normalizedConfigs[0];
+      const first = sanitizedConfigs[0];
       if (first) {
         setForm({
           id: first.id,
@@ -166,9 +197,10 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
           title: `Nuevo Widget`,
           chartType: 'bar',
           groupBy: 'machine',
-          valueField: 'operator',
-          aggregation: 'count',
+          valueField: 'meters',
+          aggregation: 'sum',
           limit: 12,
+          limitMax: 100,
         },
       ],
     }));
@@ -247,6 +279,25 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
     () => fieldOptions.filter((field) => field.type === 'number'),
     [fieldOptions]
   );
+
+  const comparableFieldOptions = useMemo(
+    () => fieldOptions.filter((field) => field.type === 'text' || field.type === 'date'),
+    [fieldOptions]
+  );
+
+  const uniqueValuesByField = useMemo(() => {
+    const map: Record<string, string[]> = {};
+
+    comparableFieldOptions.forEach((field) => {
+      const values = new Set<string>();
+      records.forEach((record) => {
+        values.add(toDisplayString(getRecordFieldValue(record, field.key)));
+      });
+      map[field.key] = Array.from(values).sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+    });
+
+    return map;
+  }, [comparableFieldOptions, records]);
 
   if (loading) {
     return (
@@ -404,13 +455,30 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
 
                   {widget.chartType !== 'kpi' && (
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Dimension (Eje X / Agrupar por)</label>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">
+                        {widget.chartType === 'segment_compare' ? 'Campo Principal (Ej: Operario)' : 'Dimension (Eje X / Agrupar por)'}
+                      </label>
                       <select
                         value={widget.groupBy || 'machine'}
                         onChange={(e) => updateWidget(index, { groupBy: e.target.value })}
                         className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
                       >
                         {fieldOptions.map((field) => (
+                          <option key={field.key} value={field.key}>{field.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {widget.chartType === 'segment_compare' && (
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Campo de Serie (Ej: Turno)</label>
+                      <select
+                        value={widget.comparisonField || 'shift'}
+                        onChange={(e) => updateWidget(index, { comparisonField: e.target.value, comparisonValues: [] })}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                      >
+                        {comparableFieldOptions.map((field) => (
                           <option key={field.key} value={field.key}>{field.label}</option>
                         ))}
                       </select>
@@ -478,11 +546,62 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
                       <input
                         type="number"
                         min={1}
-                        max={100}
+                        max={widget.limitMax || 100}
                         value={widget.limit || 12}
-                        onChange={(e) => updateWidget(index, { limit: Number(e.target.value) || 12 })}
+                        onChange={(e) => {
+                          const maxLimit = widget.limitMax || 100;
+                          const requested = Number(e.target.value) || 12;
+                          updateWidget(index, { limit: Math.max(1, Math.min(requested, maxLimit)) });
+                        }}
                         className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
                         placeholder="Mostrar maximo N barras/tramos"
+                      />
+                    </div>
+                  )}
+
+                  {widget.chartType === 'segment_compare' && (
+                    <div className="md:col-span-2">
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Valores de Serie (1 o varios)</label>
+                      <select
+                        multiple
+                        value={widget.comparisonValues || []}
+                        onChange={(e) => {
+                          const values = Array.from(
+                            e.target.selectedOptions,
+                            (option) => (option as HTMLOptionElement).value
+                          );
+                          updateWidget(index, { comparisonValues: values });
+                        }}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm min-h-[120px]"
+                      >
+                        {(uniqueValuesByField[widget.comparisonField || 'shift'] || []).map((value) => (
+                          <option key={value} value={value}>{value}</option>
+                        ))}
+                      </select>
+                      <p className="text-[11px] text-slate-500 mt-1">
+                        Tip: para tu caso, elegi Serie = Turno y selecciona Manana para ver operarios y sus metros.
+                      </p>
+                    </div>
+                  )}
+
+                  {widget.chartType !== 'kpi' && (
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Maximo permitido</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={1000}
+                        value={widget.limitMax || 100}
+                        onChange={(e) => {
+                          const requestedMax = Number(e.target.value) || 100;
+                          const normalizedMax = Math.max(1, Math.min(requestedMax, 1000));
+                          updateWidget(index, {
+                            limitMax: normalizedMax,
+                            limit: Math.min(widget.limit || 12, normalizedMax),
+                          });
+                        }}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                        placeholder="Definir tope maximo de N"
                       />
                     </div>
                   )}

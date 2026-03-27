@@ -147,6 +147,7 @@ export interface DashboardWidgetConfig {
   secondaryValueField?: string;
   aggregation: DashboardAggregationType;
   limit?: number;
+  limitMax?: number;
 }
 
 export interface DashboardConfig {

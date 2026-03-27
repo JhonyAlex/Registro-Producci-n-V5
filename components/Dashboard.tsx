@@ -273,6 +273,12 @@ const buildSegmentCompareData = (
   return { rows, segments };
 };
 
+const applyStableWidgetOrder = (widgets: DashboardWidgetConfig[]) => {
+  const normalWidgets = widgets.filter((widget) => widget.chartType !== 'segment_compare');
+  const compareWidgets = widgets.filter((widget) => widget.chartType === 'segment_compare');
+  return [...normalWidgets, ...compareWidgets];
+};
+
 const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = false, onOpenAdmin }) => {
   const [configs, setConfigs] = useState<DashboardConfig[]>([]);
   const [fieldOptions, setFieldOptions] = useState<DashboardFieldOption[]>(DASHBOARD_ALLOWED_CORE_FIELDS);
@@ -387,6 +393,11 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
     [configs, selectedConfigId]
   );
 
+  const orderedWidgets = useMemo(
+    () => (selectedConfig ? applyStableWidgetOrder(selectedConfig.widgets || []) : []),
+    [selectedConfig]
+  );
+
   const formatNumber = (val: number) => {
     if (val >= 1000000) return (val / 1000000).toFixed(2) + 'M';
     if (val >= 1000) return (val / 1000).toFixed(2) + 'K';
@@ -405,6 +416,9 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
 
   const renderWidget = (widget: DashboardWidgetConfig) => {
     const groupByField = widget.groupBy || 'machine';
+    const effectiveLimit = widget.limit && widget.limit > 0
+      ? Math.min(widget.limit, widget.limitMax || 100)
+      : undefined;
 
     if (widget.chartType === 'kpi') {
       const val = buildKpiData(filteredRecords, widget.valueField, widget.aggregation);
@@ -478,11 +492,12 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
         selectedComparisonValues,
         widget.valueField,
         widget.aggregation,
-        widget.limit
+        effectiveLimit
       );
 
       const totalVisible = rows.reduce((acc, row) => acc + Number(row.total || 0), 0);
       const bestRow = rows[0];
+      const detailRows = rows.slice(0, 8);
       const segmentTotals = segments
         .map((segment) => ({
           segment,
@@ -500,94 +515,126 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
       }
 
       return (
-        <div className="space-y-3">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
-            <div>
-              <label className="block text-[11px] font-bold text-slate-500 mb-1">
-                Seleccionar {metricLabel(groupByField, fieldMap)} (multi)
-              </label>
-              <select
-                multiple
-                value={selectedGroupValues}
-                onChange={(e) => {
-                  const values = Array.from(
-                    e.target.selectedOptions,
-                    (option) => (option as HTMLOptionElement).value
-                  );
-                  updateWidgetSelection(widget.id, { groupValues: values });
-                }}
-                className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs min-h-[86px]"
+        <div className="space-y-4">
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <p className="text-xs font-bold text-slate-700 uppercase tracking-wide">Controles del panel</p>
+              <button
+                type="button"
+                onClick={() => updateWidgetSelection(widget.id, { groupValues: [], comparisonValues: [] })}
+                className="px-2 py-1 text-xs rounded-md border border-slate-300 text-slate-700 hover:bg-white"
               >
-                {availableGroupValues.map((value) => (
-                  <option key={value} value={value}>{value}</option>
-                ))}
-              </select>
+                Limpiar filtros
+              </button>
             </div>
-            <div>
-              <label className="block text-[11px] font-bold text-slate-500 mb-1">
-                Series ({metricLabel(comparisonField, fieldMap)})
-              </label>
-              <select
-                multiple
-                value={selectedComparisonValues}
-                onChange={(e) => {
-                  const values = Array.from(
-                    e.target.selectedOptions,
-                    (option) => (option as HTMLOptionElement).value
-                  );
-                  updateWidgetSelection(widget.id, { comparisonValues: values });
-                }}
-                className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs min-h-[86px]"
-              >
-                {availableComparisonValues.map((value) => (
-                  <option key={value} value={value}>{value}</option>
-                ))}
-              </select>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-500 mb-1">
+                  Seleccionar {metricLabel(groupByField, fieldMap)} (multi)
+                </label>
+                <select
+                  multiple
+                  value={selectedGroupValues}
+                  onChange={(e) => {
+                    const values = Array.from(
+                      e.target.selectedOptions,
+                      (option) => (option as HTMLOptionElement).value
+                    );
+                    updateWidgetSelection(widget.id, { groupValues: values });
+                  }}
+                  className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs min-h-[96px]"
+                >
+                  {availableGroupValues.map((value) => (
+                    <option key={value} value={value}>{value}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-500 mb-1">
+                  Series ({metricLabel(comparisonField, fieldMap)})
+                </label>
+                <select
+                  multiple
+                  value={selectedComparisonValues}
+                  onChange={(e) => {
+                    const values = Array.from(
+                      e.target.selectedOptions,
+                      (option) => (option as HTMLOptionElement).value
+                    );
+                    updateWidgetSelection(widget.id, { comparisonValues: values });
+                  }}
+                  className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs min-h-[96px]"
+                >
+                  {availableComparisonValues.map((value) => (
+                    <option key={value} value={value}>{value}</option>
+                  ))}
+                </select>
+              </div>
             </div>
           </div>
 
-          <div className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={rows} margin={{ top: 8, right: 12, left: 0, bottom: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748b' }} />
-                <YAxis tick={{ fontSize: 11, fill: '#64748b' }} />
-                <Tooltip formatter={(value) => Number(value).toLocaleString()} />
-                <Legend wrapperStyle={{ fontSize: '12px' }} />
-                {segments.map((segment, index) => (
-                  <Bar
-                    key={segment}
-                    dataKey={segment}
-                    name={`${metricLabel(comparisonField, fieldMap)}: ${segment}`}
-                    fill={COLORS[index % COLORS.length]}
-                    radius={[4, 4, 0, 0]}
-                  >
-                    <LabelList
+          <div className="grid grid-cols-1 xl:grid-cols-5 gap-3">
+            <div className="xl:col-span-3 h-[360px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={rows} margin={{ top: 14, right: 16, left: 0, bottom: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748b' }} />
+                  <YAxis tick={{ fontSize: 11, fill: '#64748b' }} />
+                  <Tooltip formatter={(value) => Number(value).toLocaleString()} />
+                  <Legend wrapperStyle={{ fontSize: '12px' }} />
+                  {segments.map((segment, index) => (
+                    <Bar
+                      key={segment}
                       dataKey={segment}
-                      position="top"
-                      formatter={(value: any) => formatNumber(Number(value || 0))}
-                      style={{ fill: '#334155', fontSize: 10, fontWeight: 700 }}
-                    />
-                  </Bar>
-                ))}
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+                      name={`${metricLabel(comparisonField, fieldMap)}: ${segment}`}
+                      fill={COLORS[index % COLORS.length]}
+                      radius={[4, 4, 0, 0]}
+                    >
+                      <LabelList
+                        dataKey={segment}
+                        position="top"
+                        formatter={(value: any) => formatNumber(Number(value || 0))}
+                        style={{ fill: '#334155', fontSize: 10, fontWeight: 700 }}
+                      />
+                    </Bar>
+                  ))}
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
 
-          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div>
-              <p className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Total Visible</p>
-              <p className="text-lg font-black text-slate-800">{formatNumber(totalVisible)}</p>
-            </div>
-            <div>
-              <p className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Mayor {metricLabel(groupByField, fieldMap)}</p>
-              <p className="text-sm font-bold text-slate-800">{bestRow ? String(bestRow.label) : 'Sin dato'}</p>
-              <p className="text-xs text-slate-500">{bestRow ? formatNumber(Number(bestRow.total || 0)) : '0'}</p>
-            </div>
-            <div>
-              <p className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Serie Principal</p>
-              <p className="text-sm font-bold text-slate-800">{topSegment ? topSegment.segment : 'Sin dato'}</p>
-              <p className="text-xs text-slate-500">{topSegment ? formatNumber(topSegment.total) : '0'}</p>
+            <div className="xl:col-span-2 bg-slate-50 border border-slate-200 rounded-xl p-3">
+              <h5 className="text-sm font-extrabold text-slate-900 mb-2">Resumen de datos</h5>
+              <div className="grid grid-cols-1 gap-2 mb-3">
+                <div className="bg-white border border-slate-200 rounded-lg p-2">
+                  <p className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Total Visible</p>
+                  <p className="text-lg font-black text-slate-800">{formatNumber(totalVisible)}</p>
+                </div>
+                <div className="bg-white border border-slate-200 rounded-lg p-2">
+                  <p className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Mayor {metricLabel(groupByField, fieldMap)}</p>
+                  <p className="text-sm font-bold text-slate-800 truncate">{bestRow ? String(bestRow.label) : 'Sin dato'}</p>
+                  <p className="text-xs text-slate-500">{bestRow ? formatNumber(Number(bestRow.total || 0)) : '0'}</p>
+                </div>
+                <div className="bg-white border border-slate-200 rounded-lg p-2">
+                  <p className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Serie Principal</p>
+                  <p className="text-sm font-bold text-slate-800 truncate">{topSegment ? topSegment.segment : 'Sin dato'}</p>
+                  <p className="text-xs text-slate-500">{topSegment ? formatNumber(topSegment.total) : '0'}</p>
+                </div>
+              </div>
+
+              <div className="border border-slate-200 rounded-lg overflow-hidden bg-white">
+                <div className="grid grid-cols-12 gap-2 bg-slate-100 px-2 py-1.5 text-[11px] font-bold text-slate-700">
+                  <span className="col-span-7">{metricLabel(groupByField, fieldMap)}</span>
+                  <span className="col-span-5 text-right">Total</span>
+                </div>
+                <div className="max-h-[180px] overflow-auto">
+                  {detailRows.map((row) => (
+                    <div key={String(row.label)} className="grid grid-cols-12 gap-2 px-2 py-1.5 text-xs border-t border-slate-100">
+                      <span className="col-span-7 text-slate-800 truncate">{String(row.label)}</span>
+                      <span className="col-span-5 text-right font-semibold text-slate-900">{formatNumber(Number(row.total || 0))}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -599,7 +646,7 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
       groupByField,
       widget.valueField,
       widget.aggregation,
-      widget.chartType === 'bar_horizontal' ? undefined : widget.limit
+      effectiveLimit
     );
 
     if (widget.chartType === 'pie') {
@@ -699,7 +746,7 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
         </ResponsiveContainer>
       </div>
     );
-  };
+  } 
 
   if (loading) {
     return (
@@ -849,11 +896,15 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-        {selectedConfig.widgets.map((widget) => (
+        {orderedWidgets.map((widget) => (
           <div
             key={widget.id}
             className={`bg-white border border-slate-200 rounded-2xl p-5 ${
-              widget.chartType === 'kpi' ? 'col-span-1' : 'col-span-1 md:col-span-2'
+              widget.chartType === 'kpi'
+                ? 'col-span-1'
+                : widget.chartType === 'segment_compare'
+                  ? 'col-span-1 md:col-span-2 xl:col-span-2'
+                  : 'col-span-1 md:col-span-2'
             }`}
           >
             <div className="mb-3">
@@ -866,7 +917,7 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
             {renderWidget(widget)}
           </div>
         ))}
-        {selectedConfig.widgets.length === 0 && (
+        {orderedWidgets.length === 0 && (
           <div className="col-span-full py-10 text-center text-slate-500">
             Este dashboard no tiene widgets configurados.
           </div>

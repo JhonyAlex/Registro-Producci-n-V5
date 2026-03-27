@@ -469,7 +469,7 @@ const ensureCatalogFieldKeyIsUniqueCaseInsensitive = async (key: string, excludi
   }
 };
 
-const DASHBOARD_CHART_TYPES = ['bar', 'bar_horizontal', 'line', 'area', 'pie', 'combined_trend', 'kpi'] as const;
+const DASHBOARD_CHART_TYPES = ['bar', 'bar_horizontal', 'line', 'area', 'pie', 'combined_trend', 'segment_compare', 'kpi'] as const;
 const DASHBOARD_AGGREGATIONS = ['count', 'sum', 'avg'] as const;
 
 type DashboardChartType = typeof DASHBOARD_CHART_TYPES[number];
@@ -480,6 +480,8 @@ type DashboardWidgetConfig = {
   title: string;
   chartType: DashboardChartType;
   groupBy?: string;
+  comparisonField?: string;
+  comparisonValues?: string[];
   valueField: string;
   secondaryValueField?: string;
   aggregation: DashboardAggregation;
@@ -808,6 +810,16 @@ const sanitizeDashboardConfigPayload = (incoming: any): DashboardConfigPayload =
     const title = String(widget?.title || '').trim() || `Widget ${index + 1}`;
     const chartType = String(widget?.chartType || '').trim() as DashboardChartType;
     const groupBy = String(widget?.groupBy || '').trim() || undefined;
+    const comparisonField = normalizeOptionalString(widget?.comparisonField) || undefined;
+    const comparisonValues = Array.isArray(widget?.comparisonValues)
+      ? Array.from(
+          new Set(
+            widget.comparisonValues
+              .map((value: any) => String(value || '').trim())
+              .filter((value: string) => value.length > 0)
+          )
+        ).slice(0, 30)
+      : undefined;
     const valueField = String(widget?.valueField || '').trim();
     const secondaryValueField = normalizeOptionalString(widget?.secondaryValueField) || undefined;
     const aggregation = String(widget?.aggregation || 'count').trim() as DashboardAggregation;
@@ -829,11 +841,17 @@ const sanitizeDashboardConfigPayload = (incoming: any): DashboardConfigPayload =
       throw new Error(`El widget ${title} requiere un segundo campo para tendencia combinada.`);
     }
 
+    if (chartType === 'segment_compare' && !comparisonField) {
+      throw new Error(`El widget ${title} requiere un campo de serie/comparación.`);
+    }
+
     return {
       id,
       title,
       chartType,
       groupBy,
+      comparisonField,
+      comparisonValues,
       valueField,
       secondaryValueField,
       aggregation,
