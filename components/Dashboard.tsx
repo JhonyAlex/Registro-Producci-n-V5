@@ -16,6 +16,7 @@ import {
   Pie,
   Cell,
   ComposedChart,
+  LabelList,
 } from 'recharts';
 import {
   LayoutDashboard,
@@ -28,7 +29,6 @@ import {
 import { DashboardConfig, DashboardFieldOption, DashboardWidgetConfig, ProductionRecord, MachineType, ShiftType } from '../types';
 import { exportToExcel, getDashboardConfigs, getFieldCatalog } from '../services/storageService';
 import { buildDynamicFieldOptionsFromCatalog, DASHBOARD_ALLOWED_CORE_FIELDS } from '../utils/dashboardFieldPolicy';
-import ComparativeReportsWidget from './ComparativeReportsWidget';
 
 interface DashboardProps {
   records: ProductionRecord[];
@@ -50,9 +50,8 @@ const CHART_LABELS: Record<string, string> = {
   area: 'Area',
   pie: 'Torta',
   combined_trend: 'Tendencia Combinada',
+  segment_compare: 'Comparativo Operativo (2D)',
 };
-
-const VALID_CHART_TYPES = new Set(Object.keys(CHART_LABELS));
 
 const AGGREGATION_LABELS: Record<string, string> = {
   count: 'Conteo',
@@ -258,6 +257,115 @@ const buildKpiData = (
   return totalSum;
 };
 
+const buildSegmentCompareData = (
+  records: ProductionRecord[],
+  baseField: string,
+  selectedGroupValues: string[],
+  comparisonField: string,
+  selectedComparisonValues: string[],
+  valueField: string,
+  aggregation: DashboardWidgetConfig['aggregation']
+) => {
+  const groups = new Map<string, { label: string; totals: Record<string, GroupAccumulator> }>();
+  let globalSum = 0;
+  let globalCount = 0;
+  const explicitSegments = selectedComparisonValues
+    .map((value) => String(value || '').trim())
+    .filter((value) => value.length > 0);
+
+  records.forEach((record) => {
+    const groupKey = toDisplayString(getRecordFieldValue(record, baseField));
+    const segmentKey = toDisplayString(getRecordFieldValue(record, comparisonField));
+
+    if (selectedGroupValues.length > 0 && !selectedGroupValues.includes(groupKey)) {
+      return;
+    }
+
+    if (explicitSegments.length > 0 && !explicitSegments.includes(segmentKey)) {
+      return;
+    }
+
+    const current = groups.get(groupKey) || { label: groupKey, totals: {} };
+    const segment = current.totals[segmentKey] || { label: segmentKey, sum: 0, count: 0 };
+
+    if (aggregation === 'count') {
+      segment.sum += 1;
+      segment.count += 1;
+      globalSum += 1;
+      globalCount += 1;
+    } else {
+      const numeric = toNumeric(getRecordFieldValue(record, valueField));
+      segment.sum += numeric;
+      segment.count += 1;
+      globalSum += numeric;
+      globalCount += 1;
+    }
+
+    current.totals[segmentKey] = segment;
+    groups.set(groupKey, current);
+  });
+
+  const inferredSegments = Array.from(
+    new Set(Array.from(groups.values()).flatMap((group) => Object.keys(group.totals)))
+  ).sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+
+  const segments = explicitSegments.length > 0 ? explicitSegments : inferredSegments.slice(0, 6);
+
+  let rows = Array.from(groups.values()).map((group) => {
+    const row: Record<string, string | number> = { label: group.label, total: 0 };
+    let rowSum = 0;
+    let rowCount = 0;
+
+    segments.forEach((segment) => {
+      const bucket = group.totals[segment];
+      const value = !bucket
+        ? 0
+        : aggregation === 'avg'
+          ? (bucket.count > 0 ? bucket.sum / bucket.count : 0)
+          : bucket.sum;
+      row[segment] = value;
+
+      if (bucket) {
+        rowSum += bucket.sum;
+        rowCount += bucket.count;
+      }
+    });
+
+    row.total = aggregation === 'avg' ? (rowCount > 0 ? rowSum / rowCount : 0) : rowSum;
+
+    return row;
+  });
+
+  if (baseField === 'date') {
+    rows = rows.sort((a, b) => String(a.label).localeCompare(String(b.label)));
+  } else {
+    rows = rows.sort((a, b) => Number(b.total || 0) - Number(a.total || 0));
+  }
+
+  const segmentMetrics = segments
+    .map((segment) => {
+      let sum = 0;
+      let count = 0;
+
+      Array.from(groups.values()).forEach((group) => {
+        const bucket = group.totals[segment];
+        if (!bucket) return;
+        sum += bucket.sum;
+        count += bucket.count;
+      });
+
+      return {
+        segment,
+        total: aggregation === 'avg' ? (count > 0 ? sum / count : 0) : sum,
+      };
+    })
+    .sort((a, b) => b.total - a.total);
+
+  const grandTotal = aggregation === 'avg' ? (globalCount > 0 ? globalSum / globalCount : 0) : globalSum;
+
+  return { rows, segments, segmentMetrics, grandTotal, recordCount: globalCount };
+};
+
 const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = false, onOpenAdmin }) => {
   const [configs, setConfigs] = useState<DashboardConfig[]>([]);
   const [fieldOptions, setFieldOptions] = useState<DashboardFieldOption[]>(DASHBOARD_ALLOWED_CORE_FIELDS);
@@ -287,8 +395,6 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
 
       const normalizedConfigs = dashboardConfigs.map((config) => {
         const safeWidgets = (config.widgets || []).map((widget, index) => {
-          const rawChartType = String((widget as any).chartType || 'bar');
-          const safeChartType = VALID_CHART_TYPES.has(rawChartType) ? rawChartType : 'bar';
           const safeValueField = optionMap.has(widget.valueField)
             ? widget.valueField
             : (defaultNumericField || 'operator');
@@ -301,11 +407,19 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
           return {
             ...widget,
             id: widget.id || `widget_${index + 1}`,
-            chartType: safeChartType,
             groupBy:
               widget.groupBy && optionMap.has(widget.groupBy)
                 ? widget.groupBy
                 : (config.baseField && optionMap.has(config.baseField) ? config.baseField : 'machine'),
+            comparisonField:
+              widget.comparisonField && optionMap.has(widget.comparisonField)
+                ? widget.comparisonField
+                : undefined,
+            comparisonValues: Array.isArray(widget.comparisonValues)
+              ? widget.comparisonValues
+                  .map((value) => String(value || '').trim())
+                  .filter((value) => value.length > 0)
+              : undefined,
             valueField: safeValueField,
             secondaryValueField: secondary,
             aggregation: safeAggregation,
@@ -416,6 +530,127 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
               />
             </ComposedChart>
           </ResponsiveContainer>
+        </div>
+      );
+    }
+
+    if (widget.chartType === 'segment_compare') {
+      const comparisonField = widget.comparisonField || 'shift';
+
+      const availableComparisonValues = Array.from(
+        new Set(filteredRecords.map((record) => toDisplayString(getRecordFieldValue(record, comparisonField))))
+      ) as string[];
+      availableComparisonValues.sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+
+      const selectedGroupValues: string[] = [];
+      const selectedComparisonValues = (widget.comparisonValues || []).filter((value) =>
+        availableComparisonValues.includes(value)
+      );
+
+      const { rows, segments, segmentMetrics, grandTotal, recordCount } = buildSegmentCompareData(
+        filteredRecords,
+        groupByField,
+        selectedGroupValues,
+        comparisonField,
+        selectedComparisonValues,
+        widget.valueField,
+        widget.aggregation
+      );
+
+      const bestRow = rows[0];
+      const detailRows = rows.slice(0, 8);
+      const topSegment = segmentMetrics[0];
+
+      if (segments.length === 0) {
+        return (
+          <div className="h-72 flex items-center justify-center text-sm text-slate-500">
+            Sin segmentos para mostrar con la configuracion actual.
+          </div>
+        );
+      }
+
+      return (
+        <div className="space-y-4">
+          <div className="bg-gradient-to-r from-slate-50 to-blue-50 border border-slate-200 rounded-xl p-3">
+            <p className="text-xs font-black text-slate-800 uppercase tracking-wide mb-1">Comparativo Operativo (2D)</p>
+            <p className="text-[11px] text-slate-600">
+              Este grafico usa solo los <span className="font-bold">Filtros de Datos</span> de la parte superior.
+              {selectedComparisonValues.length > 0
+                ? ` Series configuradas: ${selectedComparisonValues.join(', ')}`
+                : ' Series: automaticas segun los datos visibles.'}
+            </p>
+            <div className="mt-2 text-[11px] text-slate-500">
+              Eje X: {metricLabel(groupByField, fieldMap)} · Serie: {metricLabel(comparisonField, fieldMap)}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-5 gap-3">
+            <div className="xl:col-span-3 h-[380px] bg-white border border-slate-200 rounded-xl p-2">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={rows} margin={{ top: 14, right: 16, left: 0, bottom: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748b' }} />
+                  <YAxis tick={{ fontSize: 11, fill: '#64748b' }} />
+                  <Tooltip formatter={(value) => Number(value).toLocaleString()} />
+                  <Legend wrapperStyle={{ fontSize: '12px' }} />
+                  {segments.map((segment, index) => (
+                    <Bar
+                      key={segment}
+                      dataKey={segment}
+                      name={`${metricLabel(comparisonField, fieldMap)}: ${segment}`}
+                      fill={COLORS[index % COLORS.length]}
+                      radius={[4, 4, 0, 0]}
+                    >
+                      <LabelList
+                        dataKey={segment}
+                        position="top"
+                        formatter={(value: any) => formatNumber(Number(value || 0))}
+                        style={{ fill: '#334155', fontSize: 10, fontWeight: 700 }}
+                      />
+                    </Bar>
+                  ))}
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="xl:col-span-2 bg-slate-50 border border-slate-200 rounded-xl p-3">
+              <h5 className="text-sm font-extrabold text-slate-900 mb-2">Resumen de datos</h5>
+              <div className="grid grid-cols-1 gap-2 mb-3">
+                <div className="bg-white border border-slate-200 rounded-lg p-2">
+                  <p className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">
+                    {widget.aggregation === 'avg' ? 'Promedio Global' : 'Total Visible'}
+                  </p>
+                  <p className="text-lg font-black text-slate-800">{formatNumber(grandTotal)}</p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">Registros considerados: {recordCount}</p>
+                </div>
+                <div className="bg-white border border-slate-200 rounded-lg p-2">
+                  <p className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Mayor {metricLabel(groupByField, fieldMap)}</p>
+                  <p className="text-sm font-bold text-slate-800 truncate">{bestRow ? String(bestRow.label) : 'Sin dato'}</p>
+                  <p className="text-xs text-slate-500">{bestRow ? formatNumber(Number(bestRow.total || 0)) : '0'}</p>
+                </div>
+                <div className="bg-white border border-slate-200 rounded-lg p-2">
+                  <p className="text-[11px] uppercase tracking-wide text-slate-500 font-bold">Serie Principal</p>
+                  <p className="text-sm font-bold text-slate-800 truncate">{topSegment ? topSegment.segment : 'Sin dato'}</p>
+                  <p className="text-xs text-slate-500">{topSegment ? formatNumber(topSegment.total) : '0'}</p>
+                </div>
+              </div>
+
+              <div className="border border-slate-200 rounded-lg overflow-hidden bg-white">
+                <div className="grid grid-cols-12 gap-2 bg-slate-100 px-2 py-1.5 text-[11px] font-bold text-slate-700">
+                  <span className="col-span-7">{metricLabel(groupByField, fieldMap)}</span>
+                  <span className="col-span-5 text-right">Total</span>
+                </div>
+                <div className="max-h-[180px] overflow-auto">
+                  {detailRows.map((row) => (
+                    <div key={String(row.label)} className="grid grid-cols-12 gap-2 px-2 py-1.5 text-xs border-t border-slate-100">
+                      <span className="col-span-7 text-slate-800 truncate">{String(row.label)}</span>
+                      <span className="col-span-5 text-right font-semibold text-slate-900">{formatNumber(Number(row.total || 0))}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       );
     }
@@ -681,8 +916,6 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
           Mostrando {filteredRecords.length.toLocaleString()} de {records.length.toLocaleString()} registros totales
         </div>
       </div>
-
-      <ComparativeReportsWidget records={filteredRecords} />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 grid-flow-row-dense">
         {orderedWidgets.map((widget) => (
