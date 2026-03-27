@@ -66,6 +66,8 @@ const AGGREGATION_LABELS: Record<string, string> = {
 
 const COLORS = ['#0ea5e9', '#16a34a', '#f97316', '#ef4444', '#a855f7', '#f43f5e', '#14b8a6', '#6366f1'];
 
+const RADIAN = Math.PI / 180;
+
 const normalizeDynamicKey = (field: string) => (field.startsWith('dynamic.') ? field.slice(8) : field);
 
 const getRecordFieldValue = (record: ProductionRecord, field: string): unknown => {
@@ -90,6 +92,57 @@ const toNumeric = (value: unknown): number => {
 
 const metricLabel = (valueField: string, fieldMap: Record<string, DashboardFieldOption>) => {
   return fieldMap[valueField]?.label || valueField;
+};
+
+const getWidgetSpanClass = (widget: DashboardWidgetConfig) => {
+  return widget.spanColumns === 1
+    ? 'col-span-1'
+    : 'col-span-1 md:col-span-2 lg:col-span-2 xl:col-span-2';
+};
+
+const renderPieValueLabel = ({
+  cx,
+  cy,
+  midAngle,
+  innerRadius,
+  outerRadius,
+  value,
+}: {
+  cx?: number;
+  cy?: number;
+  midAngle?: number;
+  innerRadius?: number;
+  outerRadius?: number;
+  value?: number;
+}) => {
+  if (
+    typeof cx !== 'number' ||
+    typeof cy !== 'number' ||
+    typeof midAngle !== 'number' ||
+    typeof innerRadius !== 'number' ||
+    typeof outerRadius !== 'number' ||
+    typeof value !== 'number'
+  ) {
+    return null;
+  }
+
+  const radius = innerRadius + (outerRadius - innerRadius) * 0.52;
+  const x = cx + radius * Math.cos(-midAngle * RADIAN);
+  const y = cy + radius * Math.sin(-midAngle * RADIAN);
+
+  return (
+    <text
+      x={x}
+      y={y}
+      fill="#0f172a"
+      textAnchor={x > cx ? 'start' : 'end'}
+      dominantBaseline="central"
+      fontSize={11}
+      fontWeight={700}
+    >
+      {Number(value).toLocaleString()}
+    </text>
+  );
 };
 
 const buildGroupedData = (
@@ -640,7 +693,16 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
         <div className="h-72">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
-              <Pie data={data} dataKey="value" nameKey="label" innerRadius={58} outerRadius={98} paddingAngle={3}>
+              <Pie
+                data={data}
+                dataKey="value"
+                nameKey="label"
+                innerRadius={58}
+                outerRadius={98}
+                paddingAngle={3}
+                label={renderPieValueLabel}
+                labelLine={false}
+              >
                 {data.map((entry, index) => (
                   <Cell key={`${entry.label}-${index}`} fill={COLORS[index % COLORS.length]} />
                 ))}
@@ -881,11 +943,11 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 grid-flow-row-dense">
         {orderedWidgets.map((widget) => (
           <div
             key={widget.id}
-            className={`bg-white border border-slate-200 rounded-2xl p-5 ${widget.spanColumns === 1 ? 'col-span-1' : 'col-span-1 md:col-span-2'}`}
+            className={`bg-white border border-slate-200 rounded-2xl p-5 min-w-0 ${getWidgetSpanClass(widget)}`}
           >
             <div className="mb-3">
               <h4 className="font-bold text-slate-900">{widget.title}</h4>
