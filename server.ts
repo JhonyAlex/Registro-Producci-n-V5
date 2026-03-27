@@ -469,7 +469,7 @@ const ensureCatalogFieldKeyIsUniqueCaseInsensitive = async (key: string, excludi
   }
 };
 
-const DASHBOARD_CHART_TYPES = ['bar', 'line', 'area', 'pie', 'combined_trend', 'kpi'] as const;
+const DASHBOARD_CHART_TYPES = ['bar', 'bar_horizontal', 'line', 'area', 'pie', 'combined_trend', 'kpi'] as const;
 const DASHBOARD_AGGREGATIONS = ['count', 'sum', 'avg'] as const;
 
 type DashboardChartType = typeof DASHBOARD_CHART_TYPES[number];

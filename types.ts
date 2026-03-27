@@ -117,7 +117,7 @@ export interface FilterState {
 
 export type DashboardFieldType = 'number' | 'text' | 'date';
 
-export type DashboardChartType = 'bar' | 'line' | 'area' | 'pie' | 'combined_trend' | 'kpi';
+export type DashboardChartType = 'bar' | 'bar_horizontal' | 'line' | 'area' | 'pie' | 'combined_trend' | 'kpi';
 
 export type DashboardAggregationType = 'count' | 'sum' | 'avg';
 

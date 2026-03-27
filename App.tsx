@@ -13,16 +13,83 @@ import MachineFieldManager from './components/MachineFieldManager';
 import DashboardManager from './components/DashboardManager';
 import GlobalLockScreenGuard from './components/GlobalLockScreenGuard';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import { subscribeToRecords, subscribeToSettings, clearAllRecords, deleteRecord, exportToExcel, exportAllData, importAllData, reconnectDatabase } from './services/storageService';
+import { subscribeToRecords, subscribeToSettings, clearAllRecords, deleteRecord, exportToExcel, exportAllData, importAllData, reconnectDatabase, getMachineFieldSchema } from './services/storageService';
 import { getQueueCount, flushQueue, onQueueChanged } from './services/offlineQueue';
 import { socket } from './services/socket';
-import { ProductionRecord, FilterState } from './types';
+import { ProductionRecord, FilterState, MachineFieldDefinition } from './types';
 import { MACHINES } from './constants';
 
 type View = 'dashboard' | 'entry' | 'list' | 'profile' | 'admin' | 'audit' | 'permissions' | 'fieldSchemas' | 'dashboardAdmin';
 type DeleteMode = 'all' | 'single';
+type SortDirection = 'asc' | 'desc';
+type SortableColumn = 'recordedAt' | 'shift' | 'machine' | 'operator' | 'meters' | 'changesCount' | 'changesComment' | `dynamic:${string}`;
+
+interface DynamicHistoryColumn {
+  key: string;
+  label: string;
+  order: number;
+}
 
 const ITEMS_PER_PAGE = 15;
+const METER_FIELD_ALIASES = ['metros', 'metro', 'meters'];
+const CHANGE_FIELD_ALIASES = ['cambiopedido', 'cambio_pedido', 'cambios', 'changescount', 'changes'];
+const HISTORY_SORT_STORAGE_KEY_PREFIX = 'pigmea_history_sort_v1_';
+
+const normalizeFieldKey = (value: string): string =>
+  String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+
+const formatCellValue = (value: unknown): string => {
+  if (value === null || value === undefined || value === '') return '—';
+  if (typeof value === 'boolean') return value ? 'Si' : 'No';
+  if (Array.isArray(value)) return value.length ? value.join(', ') : '—';
+  if (typeof value === 'number') return Number.isFinite(value) ? value.toLocaleString('es-ES') : '—';
+  return String(value);
+};
+
+const toComparableValue = (value: unknown): string | number => {
+  if (value === null || value === undefined || value === '') return '';
+  if (typeof value === 'boolean') return value ? 1 : 0;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  if (Array.isArray(value)) return value.join(', ');
+
+  const textValue = String(value).trim();
+  const numericValue = Number(textValue.replace(',', '.'));
+  if (textValue !== '' && Number.isFinite(numericValue) && !Number.isNaN(numericValue)) {
+    return numericValue;
+  }
+
+  return textValue;
+};
+
+const compareValues = (a: string | number, b: string | number): number => {
+  if (typeof a === 'number' && typeof b === 'number') {
+    return a - b;
+  }
+  return String(a).localeCompare(String(b), 'es', { numeric: true, sensitivity: 'base' });
+};
+
+const isSortableColumn = (value: unknown): value is SortableColumn => {
+  if (typeof value !== 'string') return false;
+  const staticColumns: SortableColumn[] = [
+    'recordedAt',
+    'shift',
+    'machine',
+    'operator',
+    'meters',
+    'changesCount',
+    'changesComment',
+  ];
+  return staticColumns.includes(value as SortableColumn) || value.startsWith('dynamic:');
+};
+
+const isSortDirection = (value: unknown): value is SortDirection => value === 'asc' || value === 'desc';
+
+const getHistorySortStorageKey = (userId?: string | null): string =>
+  `${HISTORY_SORT_STORAGE_KEY_PREFIX}${userId || 'guest'}`;
 
 const AppContent: React.FC = () => {
   const { user, logout } = useAuth();
@@ -92,6 +159,11 @@ const AppContent: React.FC = () => {
   const [deleteMode, setDeleteMode] = useState<DeleteMode>('all');
   const [deleteAllStep, setDeleteAllStep] = useState<1 | 2>(1); // 1: Export Warning, 2: Final Confirmation
   const [recordToDelete, setRecordToDelete] = useState<string | null>(null);
+  const [sortConfig, setSortConfig] = useState<{ column: SortableColumn; direction: SortDirection }>({
+    column: 'recordedAt',
+    direction: 'desc',
+  });
+  const [machineSchemasByMachine, setMachineSchemasByMachine] = useState<Record<string, MachineFieldDefinition[]>>({});
   
   // Real-time synchronization
   useEffect(() => {
@@ -162,11 +234,135 @@ const AppContent: React.FC = () => {
     return () => unsubscribe();
   }, [user?.id]);
 
+  useEffect(() => {
+    if (!user) {
+      setMachineSchemasByMachine({});
+      return;
+    }
+
+    let isMounted = true;
+
+    const loadMachineSchemas = async () => {
+      const schemaResults = await Promise.allSettled(
+        MACHINES.map(async (machine) => {
+          const schema = await getMachineFieldSchema(machine);
+          const enabledFields = (schema.fields || []).filter((field) => field.enabled !== false);
+          return { machine, fields: enabledFields };
+        })
+      );
+
+      if (!isMounted) return;
+
+      const nextSchemas: Record<string, MachineFieldDefinition[]> = {};
+      schemaResults.forEach((result) => {
+        if (result.status === 'fulfilled') {
+          nextSchemas[result.value.machine] = result.value.fields;
+        }
+      });
+      setMachineSchemasByMachine(nextSchemas);
+    };
+
+    void loadMachineSchemas();
+
+    const onSchemaChanged = () => {
+      void loadMachineSchemas();
+    };
+
+    socket.on('machine_schema_changed', onSchemaChanged);
+
+    return () => {
+      isMounted = false;
+      socket.off('machine_schema_changed', onSchemaChanged);
+    };
+  }, [user?.id]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(getHistorySortStorageKey(user?.id));
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as { column?: unknown; direction?: unknown };
+      if (!isSortableColumn(parsed.column) || !isSortDirection(parsed.direction)) {
+        return;
+      }
+      setSortConfig({ column: parsed.column, direction: parsed.direction });
+    } catch {
+      // Ignore corrupted localStorage payloads.
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(getHistorySortStorageKey(user?.id), JSON.stringify(sortConfig));
+    } catch {
+      // Ignore storage quota/privacy errors.
+    }
+  }, [sortConfig, user?.id]);
+
   // Calculate unique operators from existing records for the filter dropdown
   const uniqueOperators = useMemo(() => {
     const ops = new Set(records.map(r => r.operator).filter(Boolean));
     return Array.from(ops).sort();
   }, [records]);
+
+  const getDynamicValueByAliases = (record: ProductionRecord, aliases: string[]): unknown => {
+    const entries = Object.entries(record.dynamicFieldsValues || {});
+    for (const [key, value] of entries) {
+      const normalized = normalizeFieldKey(key);
+      if (aliases.some((alias) => normalizeFieldKey(alias) === normalized)) {
+        return value;
+      }
+    }
+    return undefined;
+  };
+
+  const getMetersValue = (record: ProductionRecord): unknown => {
+    const dynamicMeters = getDynamicValueByAliases(record, METER_FIELD_ALIASES);
+    return dynamicMeters !== undefined ? dynamicMeters : record.meters;
+  };
+
+  const getChangesValue = (record: ProductionRecord): unknown => {
+    const dynamicChanges = getDynamicValueByAliases(record, CHANGE_FIELD_ALIASES);
+    return dynamicChanges !== undefined ? dynamicChanges : record.changesCount;
+  };
+
+  const dynamicHistoryColumns = useMemo<DynamicHistoryColumn[]>(() => {
+    const map = new Map<string, DynamicHistoryColumn>();
+    const excludedAliases = new Set([...METER_FIELD_ALIASES, ...CHANGE_FIELD_ALIASES].map(normalizeFieldKey));
+
+    Object.values(machineSchemasByMachine).forEach((fields) => {
+      fields
+        .filter((field) => field.enabled !== false)
+        .forEach((field) => {
+          if (excludedAliases.has(normalizeFieldKey(field.key))) return;
+          const existing = map.get(field.key);
+          if (!existing || field.order < existing.order) {
+            map.set(field.key, {
+              key: field.key,
+              label: field.label || field.key,
+              order: field.order ?? Number.MAX_SAFE_INTEGER,
+            });
+          }
+        });
+    });
+
+    records.forEach((record) => {
+      Object.keys(record.dynamicFieldsValues || {}).forEach((fieldKey) => {
+        if (excludedAliases.has(normalizeFieldKey(fieldKey))) return;
+        if (!map.has(fieldKey)) {
+          map.set(fieldKey, {
+            key: fieldKey,
+            label: fieldKey,
+            order: Number.MAX_SAFE_INTEGER,
+          });
+        }
+      });
+    });
+
+    return Array.from(map.values()).sort((a, b) => {
+      if (a.order !== b.order) return a.order - b.order;
+      return a.label.localeCompare(b.label, 'es', { sensitivity: 'base' });
+    });
+  }, [machineSchemasByMachine, records]);
 
   // Filter Logic
   const filteredRecords = useMemo(() => {
@@ -180,6 +376,45 @@ const AppContent: React.FC = () => {
     });
   }, [records, filters]);
 
+  const sortedRecords = useMemo(() => {
+    const sorted = [...filteredRecords];
+
+    const getSortValue = (record: ProductionRecord): string | number => {
+      switch (sortConfig.column) {
+        case 'recordedAt':
+          return Number(new Date(record.recordedAt || record.timestamp).getTime()) || 0;
+        case 'shift':
+          return record.shift || '';
+        case 'machine':
+          return record.machine || '';
+        case 'operator':
+          return record.operator || '';
+        case 'meters':
+          return toComparableValue(getMetersValue(record));
+        case 'changesCount':
+          return toComparableValue(getChangesValue(record));
+        case 'changesComment':
+          return record.changesComment || '';
+        default:
+          if (sortConfig.column.startsWith('dynamic:')) {
+            const fieldKey = sortConfig.column.replace('dynamic:', '');
+            return toComparableValue(record.dynamicFieldsValues?.[fieldKey]);
+          }
+          return '';
+      }
+    };
+
+    sorted.sort((a, b) => {
+      const compared = compareValues(getSortValue(a), getSortValue(b));
+      if (compared !== 0) {
+        return sortConfig.direction === 'asc' ? compared : -compared;
+      }
+      return (b.timestamp || 0) - (a.timestamp || 0);
+    });
+
+    return sorted;
+  }, [filteredRecords, sortConfig]);
+
   // Reset pagination when filters change
   useEffect(() => {
     setCurrentPage(1);
@@ -189,8 +424,40 @@ const AppContent: React.FC = () => {
   const totalPages = Math.ceil(filteredRecords.length / ITEMS_PER_PAGE);
   const paginatedRecords = useMemo(() => {
     const start = (currentPage - 1) * ITEMS_PER_PAGE;
-    return filteredRecords.slice(start, start + ITEMS_PER_PAGE);
-  }, [filteredRecords, currentPage]);
+    return sortedRecords.slice(start, start + ITEMS_PER_PAGE);
+  }, [sortedRecords, currentPage]);
+
+  const toggleSort = (column: SortableColumn) => {
+    setSortConfig((prev) => {
+      if (prev.column === column) {
+        return { column, direction: prev.direction === 'asc' ? 'desc' : 'asc' };
+      }
+      return { column, direction: column === 'recordedAt' ? 'desc' : 'asc' };
+    });
+    setCurrentPage(1);
+  };
+
+  const renderSortIndicator = (column: SortableColumn) => {
+    if (sortConfig.column !== column) {
+      return <ChevronDown className="w-4 h-4 text-slate-300" />;
+    }
+    return sortConfig.direction === 'asc'
+      ? <ChevronUp className="w-4 h-4 text-blue-600" />
+      : <ChevronDown className="w-4 h-4 text-blue-600" />;
+  };
+
+  const renderSortableHeader = (label: string, column: SortableColumn, className: string = '') => (
+    <th className={`px-6 py-4 ${className}`}>
+      <button
+        type="button"
+        onClick={() => toggleSort(column)}
+        className="inline-flex items-center gap-1.5 font-medium hover:text-blue-600 transition-colors"
+      >
+        <span>{label}</span>
+        {renderSortIndicator(column)}
+      </button>
+    </th>
+  );
 
   const goToPage = (page: number) => {
     if (page >= 1 && page <= totalPages) {
@@ -782,13 +1049,18 @@ const AppContent: React.FC = () => {
                   <table className="w-full text-sm text-left">
                     <thead className="bg-slate-50 text-slate-500 font-medium border-b border-slate-200">
                       <tr>
-                        <th className="px-6 py-4">Fecha y Hora</th>
-                        <th className="px-6 py-4">Turno</th>
-                        <th className="px-6 py-4">Máq.</th>
-                        <th className="px-6 py-4">Operario</th>
-                        <th className="px-6 py-4 text-right">Metros</th>
-                        <th className="px-6 py-4 text-center hidden sm:table-cell">Cambios</th>
-                        <th className="px-6 py-4 hidden sm:table-cell">Comentarios</th>
+                        {renderSortableHeader('Fecha y Hora', 'recordedAt')}
+                        {renderSortableHeader('Turno', 'shift')}
+                        {renderSortableHeader('Máq.', 'machine')}
+                        {renderSortableHeader('Operario', 'operator')}
+                        {renderSortableHeader('Metros', 'meters', 'text-right')}
+                        {renderSortableHeader('Cambios', 'changesCount', 'text-center hidden sm:table-cell')}
+                        {dynamicHistoryColumns.map((column) => (
+                          <React.Fragment key={column.key}>
+                            {renderSortableHeader(column.label, `dynamic:${column.key}`, 'text-right')}
+                          </React.Fragment>
+                        ))}
+                        {renderSortableHeader('Comentarios', 'changesComment', 'hidden sm:table-cell')}
                         <th className="px-6 py-4 text-center">Acciones</th>
                       </tr>
                     </thead>
@@ -818,22 +1090,17 @@ const AppContent: React.FC = () => {
                           <td className="px-6 py-4 text-slate-600 font-medium">
                             {r.operator || '-'}
                           </td>
-                          <td className="px-6 py-4 text-right font-mono text-slate-700">
-                            {Object.keys(r.dynamicFieldsValues || {}).length > 0
-                              ? <div className="text-left space-y-0.5">
-                                  {Object.entries(r.dynamicFieldsValues || {}).map(([k, v]) => (
-                                    <div key={k} className="text-xs whitespace-nowrap">
-                                      <span className="text-slate-400">{k}:</span>{' '}
-                                      <span className="font-medium">{Array.isArray(v) ? v.join(', ') : String(v)}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                              : r.meters.toLocaleString()
-                            }
+                          <td className="px-6 py-4 text-right font-mono text-slate-700 whitespace-nowrap">
+                            {formatCellValue(getMetersValue(r))}
                           </td>
                           <td className="px-6 py-4 text-center text-slate-600 hidden sm:table-cell">
-                            {Object.keys(r.dynamicFieldsValues || {}).length > 0 ? '—' : r.changesCount}
+                            {formatCellValue(getChangesValue(r))}
                           </td>
+                          {dynamicHistoryColumns.map((column) => (
+                            <td key={column.key} className="px-6 py-4 text-right font-mono text-slate-700 whitespace-nowrap">
+                              {formatCellValue(r.dynamicFieldsValues?.[column.key])}
+                            </td>
+                          ))}
                           <td className="px-6 py-4 text-slate-500 max-w-xs truncate hidden sm:table-cell" title={r.changesComment}>
                             {r.changesComment}
                           </td>

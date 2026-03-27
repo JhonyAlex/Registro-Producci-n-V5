@@ -44,6 +44,7 @@ type GroupAccumulator = {
 const CHART_LABELS: Record<string, string> = {
   kpi: 'Tarjeta KPI',
   bar: 'Barras',
+  bar_horizontal: 'Barras Horizontales',
   line: 'Linea',
   area: 'Area',
   pie: 'Torta',
@@ -343,11 +344,25 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
     const data = buildGroupedData(filteredRecords, groupByField, widget.valueField, widget.aggregation, widget.limit);
 
     if (widget.chartType === 'pie') {
+      const total = data.reduce((acc, item) => acc + Number(item.value || 0), 0);
+
       return (
         <div className="h-72">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
-              <Pie data={data} dataKey="value" nameKey="label" innerRadius={58} outerRadius={98} paddingAngle={3}>
+              <Pie
+                data={data}
+                dataKey="value"
+                nameKey="label"
+                innerRadius={58}
+                outerRadius={98}
+                paddingAngle={3}
+                label={({ value }) => {
+                  const numericValue = Number(value || 0);
+                  const percentage = total > 0 ? (numericValue / total) * 100 : 0;
+                  return `${numericValue.toLocaleString(undefined, { maximumFractionDigits: 2 })} (${percentage.toFixed(1)}%)`;
+                }}
+              >
                 {data.map((entry, index) => (
                   <Cell key={`${entry.label}-${index}`} fill={COLORS[index % COLORS.length]} />
                 ))}
@@ -393,6 +408,22 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
               <Tooltip formatter={(value) => Number(value).toLocaleString()} />
               <Area type="monotone" dataKey="value" stroke="#16a34a" fill={`url(#gradient-${widget.id})`} />
             </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      );
+    }
+
+    if (widget.chartType === 'bar_horizontal') {
+      return (
+        <div className="h-72">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={data} layout="vertical" margin={{ top: 8, right: 12, left: 28, bottom: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+              <XAxis type="number" tick={{ fontSize: 11, fill: '#64748b' }} />
+              <YAxis type="category" dataKey="label" width={120} tick={{ fontSize: 11, fill: '#64748b' }} />
+              <Tooltip formatter={(value) => Number(value).toLocaleString()} />
+              <Bar dataKey="value" fill="#0ea5e9" radius={[0, 6, 6, 0]} />
+            </BarChart>
           </ResponsiveContainer>
         </div>
       );

@@ -98,7 +98,12 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
   }, [user?.id]); // Run when the logged-in user is identified
 
   useEffect(() => {
-    if (!formData.bossUserId && availableBossOptions.length > 0) {
+    if (availableBossOptions.length === 0) {
+      return;
+    }
+
+    const selectedBossStillAvailable = availableBossOptions.some((boss) => boss.id === formData.bossUserId);
+    if (!formData.bossUserId || !selectedBossStillAvailable) {
       setFormData((prev) => ({ ...prev, bossUserId: availableBossOptions[0].id }));
     }
   }, [availableBossOptions, formData.bossUserId]);
@@ -161,10 +166,24 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
     const unsubscribe = subscribeToSettings((comments, _operators, _bosses, operatorOptions, bossOptions) => {
       setAvailableComments(comments);
       setAvailableOperatorOptions(operatorOptions);
-      setAvailableBossOptions(bossOptions);
+      const isShiftBoss = user?.role === 'jefe_turno';
+      const filteredBossOptions = isShiftBoss
+        ? (() => {
+            const ownBossOption = bossOptions.find((option) => option.id === user?.id);
+            if (ownBossOption) {
+              return [ownBossOption];
+            }
+            if (user?.id && user?.name) {
+              return [{ id: user.id, name: user.name, role: user.role }];
+            }
+            return [];
+          })()
+        : bossOptions;
 
-      if (!editingRecord && !formData.bossUserId && !defaultsLoadedRef.current && bossOptions.length > 0) {
-        setFormData((prev) => ({ ...prev, bossUserId: bossOptions[0].id }));
+      setAvailableBossOptions(filteredBossOptions);
+
+      if (!editingRecord && !formData.bossUserId && !defaultsLoadedRef.current && filteredBossOptions.length > 0) {
+        setFormData((prev) => ({ ...prev, bossUserId: filteredBossOptions[0].id }));
       }
 
       if (!editingRecord) {
@@ -182,7 +201,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
       }
 
       if (editingRecord && editingRecord.boss && !formData.bossUserId) {
-        const matchedBoss = bossOptions.find((option) => option.name === editingRecord.boss);
+        const matchedBoss = filteredBossOptions.find((option) => option.name === editingRecord.boss);
         if (matchedBoss) {
           setFormData((prev) => ({ ...prev, bossUserId: matchedBoss.id }));
         }
@@ -196,7 +215,7 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
       }
     });
     return () => unsubscribe();
-  }, [editingRecord, formData.bossUserId, operatorInput, operatorUserId]);
+    }, [editingRecord, formData.bossUserId, operatorInput, operatorUserId, user?.id, user?.name, user?.role]);
 
   useEffect(() => {
     setIsMachineSchemaReady(false);

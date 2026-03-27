@@ -25,6 +25,7 @@ type EditableDashboard = {
 const CHART_TYPES = [
   { value: 'kpi', label: 'KPI (Numero Grande)' },
   { value: 'bar', label: 'Barras' },
+  { value: 'bar_horizontal', label: 'Barras Horizontales' },
   { value: 'line', label: 'Linea' },
   { value: 'area', label: 'Area' },
   { value: 'pie', label: 'Torta' },

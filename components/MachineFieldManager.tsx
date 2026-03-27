@@ -703,6 +703,108 @@ const MachineFieldManager: React.FC = () => {
           </div>
         )}
 
+        {loading ? (
+          <div className="p-6 text-slate-500 text-sm bg-slate-50 rounded-lg border border-slate-200">
+            Cargando catalogo...
+          </div>
+        ) : catalogFields.length === 0 ? (
+          <div className="p-10 text-center">
+            <p className="text-slate-500 text-sm mb-3">No hay campos definidos todavia.</p>
+            <button
+              type="button"
+              onClick={() => {
+                setForm(makeEmpty());
+                setError('');
+              }}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-700"
+            >
+              <Plus className="w-4 h-4" /> Crear primer campo
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {sortCatalogByDisplayOrder(catalogFields).map((entry, index, orderedEntries) => (
+              <div
+                key={entry.id}
+                className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_auto] gap-3 px-4 py-3 rounded-lg border border-slate-200 bg-white hover:border-slate-300"
+              >
+                <div className="min-w-0 space-y-2">
+                  <div className="flex flex-wrap items-center gap-2 min-w-0">
+                    <span className="font-semibold text-slate-800 text-sm break-words">{entry.label}</span>
+                    <span className="max-w-full break-all text-xs font-mono text-slate-400 bg-slate-100 px-2 py-0.5 rounded">{entry.key}</span>
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded ${FIELD_TYPE_BADGE[entry.type]}`}>
+                      {FIELD_TYPE_LABELS[entry.type]}
+                    </span>
+                    {entry.required && (
+                      <span className="text-xs font-semibold px-2 py-0.5 rounded bg-red-50 text-red-600">Obligatorio</span>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap gap-1 min-w-0">
+                    {entry.assignments.length === 0 ? (
+                      <span className="text-xs text-slate-400 italic">Sin maquinas asignadas</span>
+                    ) : (
+                      [...entry.assignments]
+                        .sort((a, b) => a.sortOrder - b.sortOrder)
+                        .map((assignment) => (
+                          <span
+                            key={`${entry.id}-${assignment.machine}`}
+                            className="text-xs font-medium px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200"
+                          >
+                            {assignment.machine}
+                          </span>
+                        ))
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 w-full lg:w-auto">
+                  <button
+                    type="button"
+                    onClick={() => void handleMoveField(entry.id, 'up')}
+                    disabled={Boolean(reorderingId) || index === 0}
+                    className="inline-flex flex-1 lg:flex-none items-center justify-center gap-1 px-3 py-2 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:opacity-40"
+                    title="Subir campo"
+                  >
+                    <ArrowUp className="w-3 h-3" /> Subir
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => void handleMoveField(entry.id, 'down')}
+                    disabled={Boolean(reorderingId) || index === orderedEntries.length - 1}
+                    className="inline-flex flex-1 lg:flex-none items-center justify-center gap-1 px-3 py-2 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:opacity-40"
+                    title="Bajar campo"
+                  >
+                    <ArrowDown className="w-3 h-3" /> Bajar
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setForm(fromCatalog(entry));
+                      setError('');
+                    }}
+                    disabled={Boolean(form)}
+                    className="inline-flex flex-1 lg:flex-none items-center justify-center gap-1 px-3 py-2 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:opacity-40"
+                  >
+                    <Edit2 className="w-3 h-3" /> Editar
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => void handleDelete(entry)}
+                    disabled={deletingId === entry.id}
+                    className="inline-flex flex-1 lg:flex-none items-center justify-center gap-1 px-3 py-2 text-xs font-semibold rounded-lg bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 disabled:opacity-50"
+                  >
+                    <Trash2 className="w-3 h-3" /> {deletingId === entry.id ? '...' : 'Eliminar'}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 sm:p-5 space-y-4">
           <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
             <div>
@@ -827,108 +929,6 @@ const MachineFieldManager: React.FC = () => {
             </div>
           )}
         </div>
-
-        {loading ? (
-          <div className="p-6 text-slate-500 text-sm bg-slate-50 rounded-lg border border-slate-200">
-            Cargando catalogo...
-          </div>
-        ) : catalogFields.length === 0 ? (
-          <div className="p-10 text-center">
-            <p className="text-slate-500 text-sm mb-3">No hay campos definidos todavia.</p>
-            <button
-              type="button"
-              onClick={() => {
-                setForm(makeEmpty());
-                setError('');
-              }}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-700"
-            >
-              <Plus className="w-4 h-4" /> Crear primer campo
-            </button>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {sortCatalogByDisplayOrder(catalogFields).map((entry, index, orderedEntries) => (
-              <div
-                key={entry.id}
-                className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_auto] gap-3 px-4 py-3 rounded-lg border border-slate-200 bg-white hover:border-slate-300"
-              >
-                <div className="min-w-0 space-y-2">
-                  <div className="flex flex-wrap items-center gap-2 min-w-0">
-                    <span className="font-semibold text-slate-800 text-sm break-words">{entry.label}</span>
-                    <span className="max-w-full break-all text-xs font-mono text-slate-400 bg-slate-100 px-2 py-0.5 rounded">{entry.key}</span>
-                    <span className={`text-xs font-semibold px-2 py-0.5 rounded ${FIELD_TYPE_BADGE[entry.type]}`}>
-                      {FIELD_TYPE_LABELS[entry.type]}
-                    </span>
-                    {entry.required && (
-                      <span className="text-xs font-semibold px-2 py-0.5 rounded bg-red-50 text-red-600">Obligatorio</span>
-                    )}
-                  </div>
-
-                  <div className="flex flex-wrap gap-1 min-w-0">
-                    {entry.assignments.length === 0 ? (
-                      <span className="text-xs text-slate-400 italic">Sin maquinas asignadas</span>
-                    ) : (
-                      [...entry.assignments]
-                        .sort((a, b) => a.sortOrder - b.sortOrder)
-                        .map((assignment) => (
-                          <span
-                            key={`${entry.id}-${assignment.machine}`}
-                            className="text-xs font-medium px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200"
-                          >
-                            {assignment.machine}
-                          </span>
-                        ))
-                    )}
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 w-full lg:w-auto">
-                  <button
-                    type="button"
-                    onClick={() => void handleMoveField(entry.id, 'up')}
-                    disabled={Boolean(reorderingId) || index === 0}
-                    className="inline-flex flex-1 lg:flex-none items-center justify-center gap-1 px-3 py-2 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:opacity-40"
-                    title="Subir campo"
-                  >
-                    <ArrowUp className="w-3 h-3" /> Subir
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => void handleMoveField(entry.id, 'down')}
-                    disabled={Boolean(reorderingId) || index === orderedEntries.length - 1}
-                    className="inline-flex flex-1 lg:flex-none items-center justify-center gap-1 px-3 py-2 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:opacity-40"
-                    title="Bajar campo"
-                  >
-                    <ArrowDown className="w-3 h-3" /> Bajar
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setForm(fromCatalog(entry));
-                      setError('');
-                    }}
-                    disabled={Boolean(form)}
-                    className="inline-flex flex-1 lg:flex-none items-center justify-center gap-1 px-3 py-2 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:opacity-40"
-                  >
-                    <Edit2 className="w-3 h-3" /> Editar
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => void handleDelete(entry)}
-                    disabled={deletingId === entry.id}
-                    className="inline-flex flex-1 lg:flex-none items-center justify-center gap-1 px-3 py-2 text-xs font-semibold rounded-lg bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 disabled:opacity-50"
-                  >
-                    <Trash2 className="w-3 h-3" /> {deletingId === entry.id ? '...' : 'Eliminar'}
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
     </div>
   );
