@@ -124,7 +124,6 @@ export type DashboardChartType =
   | 'area'
   | 'pie'
   | 'combined_trend'
-  | 'segment_compare'
   | 'kpi';
 
 export type DashboardAggregationType = 'count' | 'sum' | 'avg';
@@ -141,8 +140,6 @@ export interface DashboardWidgetConfig {
   title: string;
   chartType: DashboardChartType;
   groupBy?: string; // New field for V2
-  comparisonField?: string;
-  comparisonValues?: string[];
   valueField: string;
   secondaryValueField?: string;
   aggregation: DashboardAggregationType;
