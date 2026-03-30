@@ -761,12 +761,22 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
       const headerAndPadding = 44;
       const chartHeight = Math.max(280, data.length * rowHeight + headerAndPadding);
       const maxLabelLength = data.reduce((max, entry) => Math.max(max, String(entry.label || '').length), 0);
+      const maxValueLabelLength = data.reduce(
+        (max, entry) => Math.max(max, formatNumber(Number(entry.value || 0)).length),
+        0
+      );
       const yAxisWidth = Math.min(320, Math.max(120, maxLabelLength * 7 + 20));
+      const rightMargin = Math.min(120, Math.max(36, maxValueLabelLength * 8 + 16));
 
       return (
         <div style={{ height: `${chartHeight}px` }}>
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data} layout="vertical" margin={{ top: 8, right: 12, left: 8, bottom: 8 }} barSize={20}>
+            <BarChart
+              data={data}
+              layout="vertical"
+              margin={{ top: 8, right: rightMargin, left: 8, bottom: 8 }}
+              barSize={20}
+            >
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
               <XAxis type="number" tick={{ fontSize: 11, fill: '#64748b' }} />
               <YAxis
@@ -791,6 +801,7 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
                 <LabelList
                   dataKey="value"
                   position="right"
+                  offset={8}
                   formatter={(value: any) => formatNumber(Number(value || 0))}
                   style={{ fill: '#0f172a', fontSize: 10, fontWeight: 700 }}
                 />
