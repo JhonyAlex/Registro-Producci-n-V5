@@ -1939,7 +1939,9 @@ app.get('/api/records', authenticate, requirePermission('records.read'), require
     let query = 'SELECT id, timestamp, recorded_at as "recordedAt", created_by_user_id as "createdByUserId", last_modified_by_user_id as "lastModifiedByUserId", date, machine, meters, changescount as "changesCount", changescomment as "changesComment", shift, boss, boss_user_id as "bossUserId", operator, operator_user_id as "operatorUserId", dynamic_fields_values as "dynamicFieldsValues", schema_version_used as "schemaVersionUsed" FROM production_records';
     let params: any[] = [];
 
-    if (user.role !== 'admin') {
+    const canViewAllRecords = user.role === 'admin' || user.role === 'jefe_planta';
+
+    if (!canViewAllRecords) {
       const visResult = await pool.query('SELECT target_id FROM user_visibility WHERE observer_id = $1', [user.id]);
       const visibleUserIds = [user.id, ...visResult.rows.map((r: any) => r.target_id)];
       
