@@ -27,7 +27,7 @@
 
 ### Gestión de producción
 - Registro de turnos por máquina y turno (Mañana / Tarde / Noche)
-- Máquinas soportadas: `WH1`, `Giave`, `WH3`, `NEXUS`, `SL2`, `21`, `22`, `S2DT`, `PROSLIT`
+- Máquinas soportadas: `WH1`, `Giave`, `WH3`, `NEXUS`, `SL2`, `SL2 EVO`, `21`, `22`, `S2DT`, `PROSLIT`
 - Campos dinámicos por máquina configurables desde el panel de administración
 - Edición y eliminación de registros con trazabilidad completa
 

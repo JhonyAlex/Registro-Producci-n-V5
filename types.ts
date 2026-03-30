@@ -4,6 +4,7 @@ export enum MachineType {
   WH3 = 'WH3',
   NEXUS = 'NEXUS',
   SL2 = 'SL2',
+  SL2_EVO = 'SL2 EVO',
   M21 = '21',
   M22 = '22',
   S2DT = 'S2DT',

@@ -420,7 +420,7 @@ const normalizeOptionalString = (value: any): string | null => {
 const isNumericOnly = (value: string): boolean => /^\d+$/.test(value);
 const hasValidPinLength = (value: string): boolean => value.length === PIN_LENGTH;
 
-const MACHINE_VALUES = ['WH1', 'Giave', 'WH3', 'NEXUS', 'SL2', '21', '22', 'S2DT', 'PROSLIT'] as const;
+const MACHINE_VALUES = ['WH1', 'Giave', 'WH3', 'NEXUS', 'SL2', 'SL2 EVO', '21', '22', 'S2DT', 'PROSLIT'] as const;
 const SHIFT_VALUES = ['Mañana', 'Tarde', 'Noche'] as const;
 const FIELD_TYPES = ['number', 'short_text', 'select', 'multi_select'] as const;
 const CORE_FIELD_KEYS = new Set([
