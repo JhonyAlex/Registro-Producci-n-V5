@@ -75,6 +75,28 @@ const actionLabel = (action: string) => {
 const formatDetails = (details: Record<string, any> | null) => {
   if (!details || Object.keys(details).length === 0) return '-';
 
+  const changedFieldLabel = (field: string) => {
+    const labels: Record<string, string> = {
+      date: 'fecha',
+      machine: 'máquina',
+      shift: 'turno',
+      boss: 'jefe',
+      bossUserId: 'ID jefe',
+      operator: 'operario',
+      operatorUserId: 'ID operario',
+      meters: 'metros',
+      changesCount: 'cantidad de cambios',
+      changesComment: 'comentario de cambios',
+      schemaVersionUsed: 'versión de esquema'
+    };
+
+    if (field.startsWith('dynamicFieldsValues.')) {
+      return `campo dinámico ${field.replace('dynamicFieldsValues.', '')}`;
+    }
+
+    return labels[field] || field;
+  };
+
   const textIfAny = (value: any) => {
     if (value === null || value === undefined || value === '') return '-';
     if (Array.isArray(value)) {
@@ -131,7 +153,11 @@ const formatDetails = (details: Record<string, any> | null) => {
   }
 
   if (details.before && details.after) {
-    return `Antes: ${recordInfo(details.before)} | Después: ${recordInfo(details.after)}`;
+    const changedFields = Array.isArray(details.changed_fields)
+      ? details.changed_fields.map((field: string) => changedFieldLabel(field)).join(', ')
+      : '';
+    const changedFieldsSummary = changedFields ? ` | Cambios: ${changedFields}` : '';
+    return `Antes: ${recordInfo(details.before)} | Después: ${recordInfo(details.after)}${changedFieldsSummary}`;
   }
 
   if (details.deleted) {

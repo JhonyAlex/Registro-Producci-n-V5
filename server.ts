@@ -9,6 +9,7 @@ import { Server } from 'socket.io';
 import cookieParser from 'cookie-parser';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import { buildRecordAuditSnapshot, getRecordAuditChangedFields } from './utils/auditLog';
 import { isSessionTokenCurrent } from './utils/sessionAuth';
 
 type AuthTokenPayload = {
@@ -1071,6 +1072,20 @@ async function logAudit(userId: string | null, action: string, details: any, ipA
   }
 }
 
+const expireInactiveSessionOnce = async (userId: string, sessionVersion: number) => {
+  const result = await pool.query(
+    `UPDATE users
+     SET session_version = session_version + 1
+     WHERE id = $1
+       AND session_version = $2
+       AND last_activity < NOW() - ($3::int * INTERVAL '1 minute')
+     RETURNING session_version`,
+    [userId, sessionVersion, SESSION_TIMEOUT_MINUTES]
+  );
+
+  return result.rowCount > 0;
+};
+
 const getUserSocketRoom = (userId: string) => `user:${userId}`;
 
 const parseCookieHeader = (cookieHeader?: string) => {
@@ -1129,9 +1144,20 @@ export const authenticate = async (req, res, next) => {
     const lastActivity = new Date(user.last_activity).getTime();
     const now = Date.now();
     if (now - lastActivity > SESSION_TIMEOUT_MINUTES * 60 * 1000) {
+      const expiredNow = await expireInactiveSessionOnce(user.id, Number(user.session_version ?? 0));
       res.clearCookie('token');
-      await logAudit(user.id, 'session_timeout', { reason: 'inactivity' }, req.ip || '');
-      return res.status(401).json({ error: 'Sesión expirada por inactividad' });
+      if (expiredNow) {
+        await logAudit(
+          user.id,
+          'session_timeout',
+          {
+            reason: 'inactivity',
+            last_activity_at: new Date(user.last_activity).toISOString()
+          },
+          req.ip || ''
+        );
+      }
+      return res.status(401).json({ error: 'Sesión expirada por inactividad', reason: 'inactivity' });
     }
 
     // Update last activity
@@ -2052,6 +2078,46 @@ app.post('/api/records', authenticate, requirePermission('records.write'), requi
     const finalBossId = resolvedBoss?.id || null;
     const normalizedComment = normalizeOptionalString(changesComment) || '';
 
+    const currentSnapshot = buildRecordAuditSnapshot({
+      date,
+      machine,
+      shift,
+      boss: bossName,
+      bossUserId: finalBossId,
+      operator: operatorName,
+      operatorUserId: operatorId,
+      meters: Math.round(normalizedMeters),
+      changesCount: Math.round(normalizedChanges),
+      changesComment: normalizedComment,
+      dynamicFieldsValues: validatedDynamicFields,
+      schemaVersionUsed: currentSchemaVersion
+    });
+
+    const beforeSnapshot = existingRecord
+      ? buildRecordAuditSnapshot({
+          date: existingRecord.date,
+          machine: existingRecord.machine,
+          shift: existingRecord.shift,
+          boss: existingRecord.boss,
+          bossUserId: existingRecord.bossUserId,
+          operator: existingRecord.operator,
+          operatorUserId: existingRecord.operatorUserId,
+          meters: existingRecord.meters,
+          changesCount: existingRecord.changesCount,
+          changesComment: existingRecord.changesComment,
+          dynamicFieldsValues: existingRecord.dynamicFieldsValues,
+          schemaVersionUsed: existingRecord.schemaVersionUsed
+        })
+      : null;
+
+    const changedFields = beforeSnapshot
+      ? getRecordAuditChangedFields(beforeSnapshot, currentSnapshot)
+      : [];
+
+    if (beforeSnapshot && changedFields.length === 0) {
+      return res.json({ success: true, skipped: true });
+    }
+
     await pool.query(
       `INSERT INTO production_records (id, timestamp, recorded_at, created_by_user_id, last_modified_by_user_id, date, machine, meters, changesCount, changesComment, shift, boss, boss_user_id, operator, operator_user_id, dynamic_fields_values, schema_version_used)
        VALUES ($1, $2, TO_TIMESTAMP($3 / 1000.0), $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
@@ -2088,69 +2154,18 @@ app.post('/api/records', authenticate, requirePermission('records.write'), requi
       );
     }
 
-    const normalizeValue = (value: any) => {
-      if (value === null || value === undefined) return '';
-      return String(value).trim();
-    };
-
-    const toComparable = (source: any) => ({
-      date: normalizeValue(source?.date),
-      machine: normalizeValue(source?.machine),
-      shift: normalizeValue(source?.shift),
-      boss: normalizeValue(source?.boss),
-      bossUserId: normalizeValue(source?.bossUserId),
-      operator: normalizeValue(source?.operator),
-      operatorUserId: normalizeValue(source?.operatorUserId),
-      meters: Number(source?.meters || 0),
-      changesCount: Number(source?.changesCount || 0),
-      changesComment: normalizeValue(source?.changesComment),
-      dynamicFieldsValues: source?.dynamicFieldsValues || {},
-      schemaVersionUsed: Number(source?.schemaVersionUsed || 0)
-    });
-
-    const currentSnapshot = {
-      date,
-      machine,
-      shift,
-      boss: bossName,
-      bossUserId: finalBossId,
-      operator: operatorName,
-      operatorUserId: operatorId,
-      meters: Math.round(normalizedMeters),
-      changesCount: Math.round(normalizedChanges),
-      changesComment: normalizedComment,
-      dynamicFieldsValues: validatedDynamicFields,
-      schemaVersionUsed: currentSchemaVersion
-    };
-    const currentComparable = toComparable(currentSnapshot);
-
-    if (existingRecord) {
-      const beforeSnapshot = {
-        date: existingRecord.date,
-        machine: existingRecord.machine,
-        shift: existingRecord.shift,
-        boss: existingRecord.boss,
-        bossUserId: existingRecord.bossUserId,
-        operator: existingRecord.operator,
-        operatorUserId: existingRecord.operatorUserId,
-        meters: existingRecord.meters,
-        changesCount: existingRecord.changesCount,
-        changesComment: existingRecord.changesComment
-      };
-      const beforeComparable = toComparable(beforeSnapshot);
-
-      if (JSON.stringify(beforeComparable) !== JSON.stringify(currentComparable)) {
-        await logAudit(
-          user.id,
-          'record_updated',
-          {
-            record_id: id,
-            before: beforeSnapshot,
-            after: currentSnapshot
-          },
-          req.ip || ''
-        );
-      }
+    if (beforeSnapshot) {
+      await logAudit(
+        user.id,
+        'record_updated',
+        {
+          record_id: id,
+          before: beforeSnapshot,
+          after: currentSnapshot,
+          changed_fields: changedFields
+        },
+        req.ip || ''
+      );
     } else {
       await logAudit(
         user.id,

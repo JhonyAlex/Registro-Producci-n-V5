@@ -682,7 +682,12 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
                   <Cell key={`${entry.label}-${index}`} fill={COLORS[index % COLORS.length]} />
                 ))}
               </Pie>
-              <Tooltip formatter={(value) => Number(value).toLocaleString()} />
+              <Tooltip
+                formatter={(value: any, name: string) => [
+                  Number(value).toLocaleString(),
+                  name === 'value' ? metricLabel(widget.valueField, fieldMap) : name,
+                ]}
+              />
               <Legend wrapperStyle={{ fontSize: '12px' }} />
             </PieChart>
           </ResponsiveContainer>
@@ -698,8 +703,20 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
               <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748b' }} />
               <YAxis tick={{ fontSize: 11, fill: '#64748b' }} />
-              <Tooltip formatter={(value) => Number(value).toLocaleString()} />
-              <Line type="monotone" dataKey="value" stroke="#0ea5e9" strokeWidth={2.5} dot={{ r: 3 }} />
+              <Tooltip
+                formatter={(value: any, name: string) => [
+                  Number(value).toLocaleString(),
+                  name === 'value' ? metricLabel(widget.valueField, fieldMap) : name,
+                ]}
+              />
+              <Line
+                type="monotone"
+                dataKey="value"
+                name={metricLabel(widget.valueField, fieldMap)}
+                stroke="#0ea5e9"
+                strokeWidth={2.5}
+                dot={{ r: 3 }}
+              />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -720,8 +737,19 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
               <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748b' }} />
               <YAxis tick={{ fontSize: 11, fill: '#64748b' }} />
-              <Tooltip formatter={(value) => Number(value).toLocaleString()} />
-              <Area type="monotone" dataKey="value" stroke="#16a34a" fill={`url(#gradient-${widget.id})`} />
+              <Tooltip
+                formatter={(value: any, name: string) => [
+                  Number(value).toLocaleString(),
+                  name === 'value' ? metricLabel(widget.valueField, fieldMap) : name,
+                ]}
+              />
+              <Area
+                type="monotone"
+                dataKey="value"
+                name={metricLabel(widget.valueField, fieldMap)}
+                stroke="#16a34a"
+                fill={`url(#gradient-${widget.id})`}
+              />
             </AreaChart>
           </ResponsiveContainer>
         </div>
@@ -748,8 +776,25 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
                 interval={0}
                 tick={{ fontSize: 11, fill: '#64748b' }}
               />
-              <Tooltip formatter={(value) => Number(value).toLocaleString()} />
-              <Bar dataKey="value" fill="#0ea5e9" radius={[0, 6, 6, 0]} />
+              <Tooltip
+                formatter={(value: any, name: string) => [
+                  Number(value).toLocaleString(),
+                  name === 'value' ? metricLabel(widget.valueField, fieldMap) : name,
+                ]}
+              />
+              <Bar
+                dataKey="value"
+                name={metricLabel(widget.valueField, fieldMap)}
+                fill="#0ea5e9"
+                radius={[0, 6, 6, 0]}
+              >
+                <LabelList
+                  dataKey="value"
+                  position="right"
+                  formatter={(value: any) => formatNumber(Number(value || 0))}
+                  style={{ fill: '#0f172a', fontSize: 10, fontWeight: 700 }}
+                />
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -763,8 +808,18 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
             <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748b' }} />
             <YAxis tick={{ fontSize: 11, fill: '#64748b' }} />
-            <Tooltip formatter={(value) => Number(value).toLocaleString()} />
-            <Bar dataKey="value" fill="#0ea5e9" radius={[6, 6, 0, 0]} />
+            <Tooltip
+              formatter={(value: any, name: string) => [
+                Number(value).toLocaleString(),
+                name === 'value' ? metricLabel(widget.valueField, fieldMap) : name,
+              ]}
+            />
+            <Bar
+              dataKey="value"
+              name={metricLabel(widget.valueField, fieldMap)}
+              fill="#0ea5e9"
+              radius={[6, 6, 0, 0]}
+            />
           </BarChart>
         </ResponsiveContainer>
       </div>
