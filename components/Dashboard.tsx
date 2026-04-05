@@ -46,6 +46,12 @@ type GroupAccumulator = {
   count: number;
 };
 
+type WidgetDrilldownSelection = {
+  groupLabel: string;
+  comparisonField?: string;
+  comparisonValue?: string;
+};
+
 const CHART_LABELS: Record<string, string> = {
   kpi: 'Tarjeta KPI',
   bar: 'Barras',
@@ -371,6 +377,9 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
   const [configs, setConfigs] = useState<DashboardConfig[]>([]);
   const [fieldOptions, setFieldOptions] = useState<DashboardFieldOption[]>(DASHBOARD_ALLOWED_CORE_FIELDS);
   const [selectedConfigId, setSelectedConfigId] = useState('');
+  const [widgetSelections, setWidgetSelections] = useState<Record<string, WidgetDrilldownSelection | undefined>>({});
+  const [widgetPages, setWidgetPages] = useState<Record<string, number>>({});
+  const [widgetPageSizes, setWidgetPageSizes] = useState<Record<string, number>>({});
   
   // Global Filters
   const [startDate, setStartDate] = useState('');
@@ -490,6 +499,195 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
     return val.toLocaleString(undefined, { maximumFractionDigits: 2 });
   };
 
+  const setWidgetSelection = (widgetId: string, selection: WidgetDrilldownSelection) => {
+    setWidgetSelections((prev) => ({
+      ...prev,
+      [widgetId]: selection,
+    }));
+
+    setWidgetPages((prev) => ({
+      ...prev,
+      [widgetId]: 1,
+    }));
+
+    setWidgetPageSizes((prev) => ({
+      ...prev,
+      [widgetId]: prev[widgetId] || 10,
+    }));
+  };
+
+  const clearWidgetSelection = (widgetId: string) => {
+    setWidgetSelections((prev) => ({
+      ...prev,
+      [widgetId]: undefined,
+    }));
+
+    setWidgetPages((prev) => ({
+      ...prev,
+      [widgetId]: 1,
+    }));
+
+    setWidgetPageSizes((prev) => ({
+      ...prev,
+      [widgetId]: prev[widgetId] || 10,
+    }));
+  };
+
+  const extractGroupLabel = (payload: any): string | null => {
+    const fromPayload = payload?.label;
+    const fromNestedPayload = payload?.payload?.label;
+    const candidate = fromPayload ?? fromNestedPayload;
+
+    if (candidate === null || candidate === undefined || candidate === '') return null;
+    return String(candidate);
+  };
+
+  const getWidgetDetailRecords = (widget: DashboardWidgetConfig) => {
+    const selection = widgetSelections[widget.id];
+    if (!selection) return [] as ProductionRecord[];
+
+    const groupByField = widget.groupBy || 'machine';
+
+    return filteredRecords.filter((record) => {
+      const groupValue = toDisplayString(getRecordFieldValue(record, groupByField));
+      if (groupValue !== selection.groupLabel) {
+        return false;
+      }
+
+      if (selection.comparisonField && selection.comparisonValue) {
+        const comparisonValue = toDisplayString(getRecordFieldValue(record, selection.comparisonField));
+        return comparisonValue === selection.comparisonValue;
+      }
+
+      return true;
+    });
+  };
+
+  const renderDetailTable = (widget: DashboardWidgetConfig) => {
+    const selection = widgetSelections[widget.id];
+    if (!selection) return null;
+
+    const rows = getWidgetDetailRecords(widget);
+    const pageSize = widgetPageSizes[widget.id] || 10;
+    const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+    const currentPage = Math.min(widgetPages[widget.id] || 1, totalPages);
+    const pageStart = (currentPage - 1) * pageSize;
+    const pageRows = rows.slice(pageStart, pageStart + pageSize);
+    const comparisonLabel = selection.comparisonField
+      ? metricLabel(selection.comparisonField, fieldMap)
+      : '';
+
+    return (
+      <div className="mt-4 border border-slate-200 rounded-xl overflow-hidden">
+        <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-2">
+          <div className="text-xs sm:text-sm text-slate-700 font-semibold">
+            Detalle de <span className="font-black">{selection.groupLabel}</span>
+            {selection.comparisonValue && (
+              <span>
+                {' '}
+                · {comparisonLabel}: <span className="font-black">{selection.comparisonValue}</span>
+              </span>
+            )}
+            {' '}
+            ({rows.length.toLocaleString()} registros)
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => exportToExcel(rows)}
+              disabled={rows.length === 0}
+              className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-green-600 hover:bg-green-700 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Exportar detalle
+            </button>
+            <button
+              onClick={() => clearWidgetSelection(widget.id)}
+              className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-white border border-slate-300 hover:bg-slate-100"
+            >
+              Limpiar
+            </button>
+          </div>
+        </div>
+
+        {rows.length === 0 ? (
+          <div className="px-3 py-4 text-sm text-slate-500">No hay registros para esta seleccion.</div>
+        ) : (
+          <div className="overflow-auto">
+            <table className="min-w-full text-xs sm:text-sm">
+              <thead className="bg-slate-100 text-slate-700 sticky top-0">
+                <tr>
+                  <th className="text-left font-bold px-3 py-2">Fecha</th>
+                  <th className="text-left font-bold px-3 py-2">Maquina</th>
+                  <th className="text-left font-bold px-3 py-2">Turno</th>
+                  <th className="text-left font-bold px-3 py-2">Jefe</th>
+                  <th className="text-left font-bold px-3 py-2">Operador</th>
+                  <th className="text-right font-bold px-3 py-2">Metros</th>
+                  <th className="text-right font-bold px-3 py-2">Cambios</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pageRows.map((record) => (
+                  <tr key={record.id} className="border-t border-slate-100 hover:bg-slate-50">
+                    <td className="px-3 py-2">{record.date}</td>
+                    <td className="px-3 py-2">{record.machine}</td>
+                    <td className="px-3 py-2">{record.shift}</td>
+                    <td className="px-3 py-2">{record.boss || 'Sin dato'}</td>
+                    <td className="px-3 py-2">{record.operator || 'Sin dato'}</td>
+                    <td className="px-3 py-2 text-right font-semibold">{Number(record.meters || 0).toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right font-semibold">{Number(record.changesCount || 0).toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div className="px-3 py-2 border-t border-slate-200 bg-white flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-slate-600 font-semibold" htmlFor={`page-size-${widget.id}`}>
+                  Filas por pagina
+                </label>
+                <select
+                  id={`page-size-${widget.id}`}
+                  value={pageSize}
+                  onChange={(e) => {
+                    const nextSize = Number(e.target.value) || 10;
+                    setWidgetPageSizes((prev) => ({ ...prev, [widget.id]: nextSize }));
+                    setWidgetPages((prev) => ({ ...prev, [widget.id]: 1 }));
+                  }}
+                  className="px-2 py-1 text-xs font-semibold rounded-lg bg-white border border-slate-300"
+                >
+                  <option value={10}>10</option>
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                </select>
+              </div>
+              <div className="text-xs text-slate-600">
+                Mostrando {Math.min(rows.length, pageStart + 1).toLocaleString()}-{Math.min(rows.length, pageStart + pageRows.length).toLocaleString()} de {rows.length.toLocaleString()}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setWidgetPages((prev) => ({ ...prev, [widget.id]: Math.max(1, currentPage - 1) }))}
+                  disabled={currentPage <= 1}
+                  className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-white border border-slate-300 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Anterior
+                </button>
+                <span className="text-xs font-semibold text-slate-700">
+                  Pagina {currentPage} de {totalPages}
+                </span>
+                <button
+                  onClick={() => setWidgetPages((prev) => ({ ...prev, [widget.id]: Math.min(totalPages, currentPage + 1) }))}
+                  disabled={currentPage >= totalPages}
+                  className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-white border border-slate-300 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Siguiente
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const renderWidget = (widget: DashboardWidgetConfig) => {
     const groupByField = widget.groupBy || 'machine';
 
@@ -520,7 +718,18 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
               <YAxis tick={{ fontSize: 11, fill: '#64748b' }} />
               <Tooltip formatter={(value) => Number(value).toLocaleString()} />
               <Legend />
-              <Bar dataKey="primary" name={metricLabel(widget.valueField, fieldMap)} fill="#0ea5e9" radius={[6, 6, 0, 0]} />
+              <Bar
+                dataKey="primary"
+                name={metricLabel(widget.valueField, fieldMap)}
+                fill="#0ea5e9"
+                radius={[6, 6, 0, 0]}
+                cursor="pointer"
+                onClick={(payload: any) => {
+                  const label = extractGroupLabel(payload);
+                  if (!label) return;
+                  setWidgetSelection(widget.id, { groupLabel: label });
+                }}
+              />
               <Line
                 type="monotone"
                 dataKey="secondary"
@@ -528,9 +737,16 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
                 stroke="#f97316"
                 strokeWidth={2.5}
                 dot={{ r: 3 }}
+                onClick={(payload: any) => {
+                  const label = extractGroupLabel(payload);
+                  if (!label) return;
+                  setWidgetSelection(widget.id, { groupLabel: label });
+                }}
               />
             </ComposedChart>
           </ResponsiveContainer>
+          <div className="mt-2 text-[11px] text-slate-500">Haz clic en una barra o punto para ver el detalle en tabla.</div>
+          {renderDetailTable(widget)}
         </div>
       );
     }
@@ -601,6 +817,16 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
                       name={`${metricLabel(comparisonField, fieldMap)}: ${segment}`}
                       fill={COLORS[index % COLORS.length]}
                       radius={[4, 4, 0, 0]}
+                      cursor="pointer"
+                      onClick={(payload: any) => {
+                        const label = extractGroupLabel(payload);
+                        if (!label) return;
+                        setWidgetSelection(widget.id, {
+                          groupLabel: label,
+                          comparisonField,
+                          comparisonValue: segment,
+                        });
+                      }}
                     >
                       <LabelList
                         dataKey={segment}
@@ -652,6 +878,8 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
               </div>
             </div>
           </div>
+
+          {renderDetailTable(widget)}
         </div>
       );
     }
@@ -677,6 +905,11 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
                 paddingAngle={3}
                 label={renderPieExternalLabel}
                 labelLine={false}
+                onClick={(payload: any) => {
+                  const label = extractGroupLabel(payload);
+                  if (!label) return;
+                  setWidgetSelection(widget.id, { groupLabel: label });
+                }}
               >
                 {data.map((entry, index) => (
                   <Cell key={`${entry.label}-${index}`} fill={COLORS[index % COLORS.length]} />
@@ -691,6 +924,8 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
               <Legend wrapperStyle={{ fontSize: '12px' }} />
             </PieChart>
           </ResponsiveContainer>
+          <div className="mt-2 text-[11px] text-slate-500">Haz clic en una porcion para ver el detalle en tabla.</div>
+          {renderDetailTable(widget)}
         </div>
       );
     }
@@ -716,9 +951,16 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
                 stroke="#0ea5e9"
                 strokeWidth={2.5}
                 dot={{ r: 3 }}
+                onClick={(payload: any) => {
+                  const label = extractGroupLabel(payload);
+                  if (!label) return;
+                  setWidgetSelection(widget.id, { groupLabel: label });
+                }}
               />
             </LineChart>
           </ResponsiveContainer>
+          <div className="mt-2 text-[11px] text-slate-500">Haz clic en un punto para ver el detalle en tabla.</div>
+          {renderDetailTable(widget)}
         </div>
       );
     }
@@ -749,9 +991,16 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
                 name={metricLabel(widget.valueField, fieldMap)}
                 stroke="#16a34a"
                 fill={`url(#gradient-${widget.id})`}
+                onClick={(payload: any) => {
+                  const label = extractGroupLabel(payload);
+                  if (!label) return;
+                  setWidgetSelection(widget.id, { groupLabel: label });
+                }}
               />
             </AreaChart>
           </ResponsiveContainer>
+          <div className="mt-2 text-[11px] text-slate-500">Haz clic en un punto/area para ver el detalle en tabla.</div>
+          {renderDetailTable(widget)}
         </div>
       );
     }
@@ -797,6 +1046,12 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
                 name={metricLabel(widget.valueField, fieldMap)}
                 fill="#0ea5e9"
                 radius={[0, 6, 6, 0]}
+                cursor="pointer"
+                onClick={(payload: any) => {
+                  const label = extractGroupLabel(payload);
+                  if (!label) return;
+                  setWidgetSelection(widget.id, { groupLabel: label });
+                }}
               >
                 <LabelList
                   dataKey="value"
@@ -808,6 +1063,8 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
               </Bar>
             </BarChart>
           </ResponsiveContainer>
+          <div className="mt-2 text-[11px] text-slate-500">Haz clic en una barra para ver el detalle en tabla.</div>
+          {renderDetailTable(widget)}
         </div>
       );
     }
@@ -830,9 +1087,17 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
               name={metricLabel(widget.valueField, fieldMap)}
               fill="#0ea5e9"
               radius={[6, 6, 0, 0]}
+              cursor="pointer"
+              onClick={(payload: any) => {
+                const label = extractGroupLabel(payload);
+                if (!label) return;
+                setWidgetSelection(widget.id, { groupLabel: label });
+              }}
             />
           </BarChart>
         </ResponsiveContainer>
+        <div className="mt-2 text-[11px] text-slate-500">Haz clic en una barra para ver el detalle en tabla.</div>
+        {renderDetailTable(widget)}
       </div>
     );
   } 

@@ -23,6 +23,7 @@ type View = 'dashboard' | 'entry' | 'list' | 'profile' | 'admin' | 'audit' | 'pe
 type DeleteMode = 'all' | 'single';
 type SortDirection = 'asc' | 'desc';
 type SortableColumn = 'recordedAt' | 'shift' | 'machine' | 'operator' | 'meters' | 'changesCount' | 'changesComment' | `dynamic:${string}`;
+type EditSource = 'history' | 'entryPreview';
 
 interface DynamicHistoryColumn {
   key: string;
@@ -137,6 +138,7 @@ const AppContent: React.FC = () => {
   
   // Edit Mode State
   const [editingRecord, setEditingRecord] = useState<ProductionRecord | null>(null);
+  const [editSource, setEditSource] = useState<EditSource | null>(null);
   
   // Filtering State
   const [filters, setFilters] = useState<FilterState>({
@@ -480,15 +482,24 @@ const AppContent: React.FC = () => {
 
   const handleRecordSaved = () => {
     setEditingRecord(null);
+    setEditSource(null);
   };
 
-  const handleEdit = (record: ProductionRecord) => {
+  const handleEdit = (record: ProductionRecord, source: EditSource) => {
     setEditingRecord(record);
+    setEditSource(source);
     setCurrentView('entry');
   };
 
   const handleCancelEdit = () => {
     setEditingRecord(null);
+    setEditSource(null);
+  };
+
+  const handleBackToHistory = () => {
+    setEditingRecord(null);
+    setEditSource(null);
+    setCurrentView('list');
   };
 
   const initiateDeleteAll = () => {
@@ -951,6 +962,16 @@ const AppContent: React.FC = () => {
             <div className="animate-fade-in-up">
               <div className="mb-6 flex justify-between items-center">
                 <div>
+                  {editingRecord && editSource === 'history' && (
+                    <button
+                      type="button"
+                      onClick={handleBackToHistory}
+                      className="mb-3 inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-sm font-bold text-blue-700 transition-colors hover:bg-blue-100"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                      Volver al historial
+                    </button>
+                  )}
                   <h2 className="text-2xl font-bold text-slate-900">
                     {editingRecord ? 'Editar Registro' : 'Registro de Turno'}
                   </h2>
@@ -979,7 +1000,7 @@ const AppContent: React.FC = () => {
                   </div>
                   <div className="bg-white rounded-xl shadow-sm border border-slate-200 divide-y divide-slate-100">
                     {records.slice(0, 3).map(r => (
-                      <div key={r.id} className="p-4 flex justify-between items-center cursor-pointer hover:bg-slate-50 transition-colors" onClick={() => handleEdit(r)}>
+                      <div key={r.id} className="p-4 flex justify-between items-center cursor-pointer hover:bg-slate-50 transition-colors" onClick={() => handleEdit(r, 'entryPreview')}>
                         <div>
                           <span className="font-bold text-slate-800 block">{r.machine}</span>
                           <span className="text-xs text-slate-500">{r.shift} • {r.boss}</span>
@@ -1068,7 +1089,7 @@ const AppContent: React.FC = () => {
                       {paginatedRecords.map((r) => (
                         <tr 
                           key={r.id} 
-                          onClick={() => handleEdit(r)}
+                          onClick={() => handleEdit(r, 'history')}
                           className="hover:bg-blue-50 transition-colors group cursor-pointer active:bg-blue-100"
                         >
                           <td className="px-6 py-4 text-slate-600 whitespace-nowrap">
@@ -1107,7 +1128,7 @@ const AppContent: React.FC = () => {
                           <td className="px-6 py-4 text-center">
                             <div className="flex items-center justify-center gap-1">
                               <button 
-                                onClick={(e) => { e.stopPropagation(); handleEdit(r); }}
+                                onClick={(e) => { e.stopPropagation(); handleEdit(r, 'history'); }}
                                 className="p-2 text-slate-300 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-all"
                                 title="Editar registro"
                               >

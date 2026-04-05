@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Lock, User, AlertCircle } from 'lucide-react';
 
@@ -12,42 +12,15 @@ const Login: React.FC<{ onSwitchToRegister: () => void }> = ({ onSwitchToRegiste
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const pinInputRef = useRef<HTMLInputElement>(null);
-  const lastAutoLoginAttemptRef = useRef('');
 
   // Auto-advance to PIN field when operator code is complete
   const handleOperatorCodeChange = (value: string) => {
     const cleaned = value.replace(/\D/g, '').slice(0, OPERATOR_CODE_LENGTH);
     setOperatorCode(cleaned);
-    lastAutoLoginAttemptRef.current = '';
     if (cleaned.length === OPERATOR_CODE_LENGTH) {
       pinInputRef.current?.focus();
     }
   };
-
-  // Auto-submit una sola vez por combinación código+PIN cuando el PIN está completo
-  useEffect(() => {
-    const attemptKey = `${operatorCode}:${pin}`;
-    if (
-      pin.length === PIN_LENGTH
-      && operatorCode.length === OPERATOR_CODE_LENGTH
-      && !loading
-      && lastAutoLoginAttemptRef.current !== attemptKey
-    ) {
-      lastAutoLoginAttemptRef.current = attemptKey;
-      const autoLogin = async () => {
-        setError('');
-        setLoading(true);
-        pinInputRef.current?.blur();
-        try {
-          await login(operatorCode, pin);
-        } catch (err: any) {
-          setError(err.message || 'Error al iniciar sesión');
-          setLoading(false);
-        }
-      };
-      autoLogin();
-    }
-  }, [pin, operatorCode, loading, login]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -69,7 +42,6 @@ const Login: React.FC<{ onSwitchToRegister: () => void }> = ({ onSwitchToRegiste
     }
     setError('');
     setLoading(true);
-    lastAutoLoginAttemptRef.current = `${operatorCode}:${pin}`;
     try {
       await login(operatorCode, pin);
     } catch (err: any) {
@@ -127,11 +99,9 @@ const Login: React.FC<{ onSwitchToRegister: () => void }> = ({ onSwitchToRegiste
                 value={pin}
                 onFocus={() => {
                   setPin('');
-                  lastAutoLoginAttemptRef.current = '';
                 }}
                 onClick={() => {
                   setPin('');
-                  lastAutoLoginAttemptRef.current = '';
                 }}
                 inputMode="numeric"
                 pattern="[0-9]*"
@@ -140,9 +110,6 @@ const Login: React.FC<{ onSwitchToRegister: () => void }> = ({ onSwitchToRegiste
                 onChange={(e) => {
                   const cleanedPin = e.target.value.replace(/\D/g, '').slice(0, PIN_LENGTH);
                   setPin(cleanedPin);
-                  if (cleanedPin.length !== PIN_LENGTH) {
-                    lastAutoLoginAttemptRef.current = '';
-                  }
                 }}
                 className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all font-mono text-center tracking-[0.5em] text-xl"
                 placeholder="••••"
