@@ -527,6 +527,23 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
 
     const normalizedCommentInput = commentInput.trim();
 
+    // Sync dynamic meter/change aliases back to core fields so DB column, exports, and dashboards stay consistent
+    const METER_ALIASES = ['metros', 'metro', 'meters'];
+    const CHANGE_ALIASES = ['cambiopedido', 'cambio_pedido', 'cambios', 'changescount', 'changes'];
+    const normalizeKey = (v: string) => v.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const findDynamicAlias = (vals: Record<string, unknown>, aliases: string[]): number => {
+      const aliasSet = new Set(aliases.map(normalizeKey));
+      for (const [k, v] of Object.entries(vals)) {
+        if (aliasSet.has(normalizeKey(k))) {
+          const n = Number(v);
+          if (Number.isFinite(n)) return n;
+        }
+      }
+      return 0;
+    };
+    const resolvedMeters = findDynamicAlias(dynamicFieldValues, METER_ALIASES);
+    const resolvedChanges = findDynamicAlias(dynamicFieldValues, CHANGE_ALIASES);
+
     const newRecord: ProductionRecord = {
       id,
       timestamp,
@@ -535,8 +552,8 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
       boss: selectedBoss.name,
       bossUserId: selectedBoss.id,
       machine: formData.machine,
-      meters: 0,
-      changesCount: 0,
+      meters: resolvedMeters,
+      changesCount: resolvedChanges,
       changesComment: normalizedCommentInput,
       operator: selectedOperator?.name || normalizedOperatorInput,
       operatorUserId: selectedOperator?.id || null,

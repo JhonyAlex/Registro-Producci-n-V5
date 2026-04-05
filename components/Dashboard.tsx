@@ -70,12 +70,22 @@ const AGGREGATION_LABELS: Record<string, string> = {
 };
 
 const COLORS = ['#0ea5e9', '#16a34a', '#f97316', '#ef4444', '#a855f7', '#f43f5e', '#14b8a6', '#6366f1'];
+const METER_FIELD_ALIASES = ['metros', 'metro', 'meters'];
+const CHANGE_FIELD_ALIASES = ['cambiopedido', 'cambio_pedido', 'cambios', 'changescount', 'changes'];
 
 const RADIAN = Math.PI / 180;
 
 const getRecordFieldValue = (record: ProductionRecord, field: string): unknown => {
   if (field.startsWith('dynamic.')) {
     return getDynamicFieldValueByKey(record.dynamicFieldsValues, field);
+  }
+
+  if (field === 'meters') {
+    return getMetersValue(record);
+  }
+
+  if (field === 'changesCount') {
+    return getChangesValue(record);
   }
 
   return (record as any)[field];
@@ -88,12 +98,69 @@ const toDisplayString = (value: unknown): string => {
 };
 
 const toNumeric = (value: unknown): number => {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  if (typeof value === 'string') {
+    const raw = value.trim();
+    if (!raw) return 0;
+
+    // Normaliza formatos comunes: 1.234,56 | 1,234.56 | 1234,56 | 1234.56
+    let normalized = raw.replace(/\s+/g, '');
+    const hasComma = normalized.includes(',');
+    const hasDot = normalized.includes('.');
+
+    if (hasComma && hasDot) {
+      const lastComma = normalized.lastIndexOf(',');
+      const lastDot = normalized.lastIndexOf('.');
+      if (lastComma > lastDot) {
+        normalized = normalized.replace(/\./g, '').replace(',', '.');
+      } else {
+        normalized = normalized.replace(/,/g, '');
+      }
+    } else if (hasComma) {
+      normalized = normalized.replace(',', '.');
+    }
+
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
 };
 
+const normalizeFieldKey = (value: string): string =>
+  String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+
 const metricLabel = (valueField: string, fieldMap: Record<string, DashboardFieldOption>) => {
   return fieldMap[valueField]?.label || valueField;
+};
+
+const getDynamicValueByAliases = (record: ProductionRecord, aliases: string[]): unknown => {
+  const entries = Object.entries(record.dynamicFieldsValues || {});
+  for (const [key, value] of entries) {
+    const normalized = normalizeFieldKey(key);
+    if (aliases.some((alias) => normalizeFieldKey(alias) === normalized)) {
+      return value;
+    }
+  }
+  return undefined;
+};
+
+const getMetersValue = (record: ProductionRecord): unknown => {
+  const dynamicMeters = getDynamicValueByAliases(record, METER_FIELD_ALIASES);
+  return dynamicMeters !== undefined ? dynamicMeters : record.meters;
+};
+
+const getChangesValue = (record: ProductionRecord): unknown => {
+  const dynamicChanges = getDynamicValueByAliases(record, CHANGE_FIELD_ALIASES);
+  return dynamicChanges !== undefined ? dynamicChanges : record.changesCount;
 };
 
 const getWidgetSpanClass = (widget: DashboardWidgetConfig) => {
@@ -600,6 +667,16 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
     const comparisonLabel = selection.comparisonField
       ? metricLabel(selection.comparisonField, fieldMap)
       : '';
+    const selectedMetricLabel = metricLabel(widget.valueField, fieldMap);
+    const isNumericMetric = fieldMap[widget.valueField]?.type === 'number';
+
+    const formatMetricValueForRow = (record: ProductionRecord): string => {
+      const rawValue = widget.aggregation === 'count' ? 1 : getRecordFieldValue(record, widget.valueField);
+      if (isNumericMetric || typeof rawValue === 'number') {
+        return toNumeric(rawValue).toLocaleString(undefined, { maximumFractionDigits: 2 });
+      }
+      return toDisplayString(rawValue);
+    };
 
     return (
       <div className="border border-slate-200 rounded-xl overflow-hidden">
@@ -644,6 +721,7 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
                   <th className="text-left font-bold px-3 py-2">Turno</th>
                   <th className="text-left font-bold px-3 py-2">Jefe</th>
                   <th className="text-left font-bold px-3 py-2">Operador</th>
+                  <th className="text-right font-bold px-3 py-2">{selectedMetricLabel}</th>
                   <th className="text-right font-bold px-3 py-2">Metros</th>
                   <th className="text-right font-bold px-3 py-2">Cambios</th>
                 </tr>
@@ -656,8 +734,9 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
                     <td className="px-3 py-2">{record.shift}</td>
                     <td className="px-3 py-2">{record.boss || 'Sin dato'}</td>
                     <td className="px-3 py-2">{record.operator || 'Sin dato'}</td>
-                    <td className="px-3 py-2 text-right font-semibold">{Number(record.meters || 0).toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right font-semibold">{Number(record.changesCount || 0).toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right font-semibold">{formatMetricValueForRow(record)}</td>
+                    <td className="px-3 py-2 text-right font-semibold">{toNumeric(getMetersValue(record)).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+                    <td className="px-3 py-2 text-right font-semibold">{toNumeric(getChangesValue(record)).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
                   </tr>
                 ))}
               </tbody>

@@ -39,6 +39,18 @@ export const getDynamicFieldValueByKey = (
   return undefined;
 };
 
+const normalizeFieldKeyForAlias = (value: string): string =>
+  String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+
+const CORE_ALIAS_KEYS = new Set(
+  ['metros', 'metro', 'meters', 'cambiopedido', 'cambio_pedido', 'cambios', 'changescount', 'changes']
+    .map(normalizeFieldKeyForAlias)
+);
+
 export const buildDynamicFieldOptionsFromCatalog = (
   fieldCatalog: Array<Pick<FieldCatalogEntry, 'key' | 'label' | 'type'>>
 ): DashboardFieldOption[] => {
@@ -50,6 +62,8 @@ export const buildDynamicFieldOptionsFromCatalog = (
 
     const normalizedKey = normalizeDashboardDynamicFieldKey(rawKey);
     if (uniqueByNormalizedKey.has(normalizedKey)) return;
+
+    if (CORE_ALIAS_KEYS.has(normalizeFieldKeyForAlias(rawKey))) return;
 
     uniqueByNormalizedKey.set(normalizedKey, {
       key: `dynamic.${rawKey}`,

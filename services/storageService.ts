@@ -726,6 +726,20 @@ export const importAllData = async (file: File): Promise<void> => {
   });
 };
 
+const METER_EXPORT_ALIASES = ['metros', 'metro', 'meters'];
+const CHANGE_EXPORT_ALIASES = ['cambiopedido', 'cambio_pedido', 'cambios', 'changescount', 'changes'];
+const normalizeExportKey = (v: string) => v.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const resolveExportAlias = (record: ProductionRecord, aliases: string[], coreFallback: number): number => {
+  const aliasSet = new Set(aliases.map(normalizeExportKey));
+  for (const [k, v] of Object.entries(record.dynamicFieldsValues || {})) {
+    if (aliasSet.has(normalizeExportKey(k))) {
+      const n = Number(v);
+      if (Number.isFinite(n)) return n;
+    }
+  }
+  return coreFallback;
+};
+
 export const exportToExcel = (records: ProductionRecord[]) => {
   const data = records.map(r => ({
     'Fecha': r.date,
@@ -733,8 +747,8 @@ export const exportToExcel = (records: ProductionRecord[]) => {
     'Jefe de Turno': r.boss,
     'Máquina': r.machine,
     'Operario': r.operator || '',
-    'Metros': r.meters,
-    'Cambios': r.changesCount,
+    'Metros': resolveExportAlias(r, METER_EXPORT_ALIASES, r.meters),
+    'Cambios': resolveExportAlias(r, CHANGE_EXPORT_ALIASES, r.changesCount),
     'Comentarios/Incidencias': r.changesComment
   }));
 
@@ -767,8 +781,8 @@ export const exportToPDF = (records: ProductionRecord[]) => {
     r.boss,
     r.machine,
     r.operator || '-',
-    r.meters.toLocaleString(),
-    r.changesCount,
+    resolveExportAlias(r, METER_EXPORT_ALIASES, r.meters).toLocaleString(),
+    resolveExportAlias(r, CHANGE_EXPORT_ALIASES, r.changesCount),
     r.changesComment
   ]);
 

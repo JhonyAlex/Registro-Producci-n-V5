@@ -763,7 +763,7 @@ const AppContent: React.FC = () => {
         </nav>
       </aside>
 
-      <main className="flex-1 p-4 xl:p-8 overflow-y-auto h-screen pb-28 xl:pb-8">
+      <main className="flex-1 p-4 xl:p-8 overflow-y-auto h-screen pb-8">
         <div className="max-w-6xl mx-auto space-y-6">
             {dbError && !dbError.includes('Offline') && (
               <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-r shadow-sm animate-fade-in mb-4">
@@ -1186,20 +1186,7 @@ const AppContent: React.FC = () => {
         </div>
       </main>
 
-      {/* Bottom Nav — Mobile/Tablet */}
-      <nav className="xl:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 pb-safe z-40 flex justify-around items-center px-1 shadow-[0_-4px_10px_rgba(0,0,0,0.05)] h-[70px]">
-        <NavItem view="entry" icon={PlusCircle} label="Registro" mobileOnly />
-        <NavItem view="dashboard" icon={LayoutDashboard} label="Dashboard" mobileOnly />
-        <NavItem view="list" icon={List} label="Historial" mobileOnly />
-        <NavItem view="profile" icon={User} label="Mi Perfil" mobileOnly />
-        <button
-          onClick={() => setShowMorePanel(true)}
-          className="flex flex-col items-center gap-1 py-1 px-3 justify-center rounded-lg transition-all text-slate-500 hover:bg-slate-100 hover:text-slate-800"
-        >
-          <Menu className="w-6 h-6" />
-          <span className="text-[10px]">Más</span>
-        </button>
-      </nav>
+
 
       {/* Right Side Panel — opciones adicionales móvil/tablet */}
       {showMorePanel && (
