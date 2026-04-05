@@ -669,6 +669,8 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
       : '';
     const selectedMetricLabel = metricLabel(widget.valueField, fieldMap);
     const isNumericMetric = fieldMap[widget.valueField]?.type === 'number';
+    const metricIsMeters = widget.valueField === 'meters';
+    const metricIsChanges = widget.valueField === 'changesCount';
 
     const formatMetricValueForRow = (record: ProductionRecord): string => {
       const rawValue = widget.aggregation === 'count' ? 1 : getRecordFieldValue(record, widget.valueField);
@@ -722,8 +724,8 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
                   <th className="text-left font-bold px-3 py-2">Jefe</th>
                   <th className="text-left font-bold px-3 py-2">Operador</th>
                   <th className="text-right font-bold px-3 py-2">{selectedMetricLabel}</th>
-                  <th className="text-right font-bold px-3 py-2">Metros</th>
-                  <th className="text-right font-bold px-3 py-2">Cambios</th>
+                  {!metricIsMeters && <th className="text-right font-bold px-3 py-2">Metros</th>}
+                  {!metricIsChanges && <th className="text-right font-bold px-3 py-2">Cambios</th>}
                 </tr>
               </thead>
               <tbody>
@@ -735,8 +737,8 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
                     <td className="px-3 py-2">{record.boss || 'Sin dato'}</td>
                     <td className="px-3 py-2">{record.operator || 'Sin dato'}</td>
                     <td className="px-3 py-2 text-right font-semibold">{formatMetricValueForRow(record)}</td>
-                    <td className="px-3 py-2 text-right font-semibold">{toNumeric(getMetersValue(record)).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
-                    <td className="px-3 py-2 text-right font-semibold">{toNumeric(getChangesValue(record)).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+                    {!metricIsMeters && <td className="px-3 py-2 text-right font-semibold">{toNumeric(getMetersValue(record)).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>}
+                    {!metricIsChanges && <td className="px-3 py-2 text-right font-semibold">{toNumeric(getChangesValue(record)).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>}
                   </tr>
                 ))}
               </tbody>
