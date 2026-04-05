@@ -331,7 +331,7 @@ const AppContent: React.FC = () => {
     const map = new Map<string, DynamicHistoryColumn>();
     const excludedAliases = new Set([...METER_FIELD_ALIASES, ...CHANGE_FIELD_ALIASES].map(normalizeFieldKey));
 
-    Object.values(machineSchemasByMachine).forEach((fields) => {
+    (Object.values(machineSchemasByMachine) as MachineFieldDefinition[][]).forEach((fields) => {
       fields
         .filter((field) => field.enabled !== false)
         .forEach((field) => {
@@ -643,7 +643,7 @@ const AppContent: React.FC = () => {
   );
 
   return (
-    <div className="min-h-screen flex flex-col xl:flex-row bg-slate-50 relative">
+    <div className="min-h-screen xl:h-screen flex flex-col xl:flex-row bg-slate-50 relative xl:overflow-hidden">
       {/* ---- Offline / Sync Banner ---- */}
       {(!isOnline || isSyncing || syncMessage) && (
         <div
@@ -672,7 +672,7 @@ const AppContent: React.FC = () => {
         </div>
       )}
 
-      <aside className="hidden xl:flex bg-white border-r border-slate-200 w-64 flex-shrink-0 z-20 h-screen sticky top-0 flex-col">
+      <aside className="hidden xl:flex bg-white border-r border-slate-200 w-64 flex-shrink-0 z-20 h-screen flex-col overflow-hidden">
         <div className="p-6 border-b border-slate-100 flex items-center gap-3">
           <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold text-xl shadow-lg shadow-blue-900/50">
             R
@@ -692,7 +692,7 @@ const AppContent: React.FC = () => {
           </div>
         </div>
 
-        <nav className="p-4 flex flex-col gap-1 flex-1">
+        <nav className="p-4 flex flex-col gap-1 flex-1 overflow-y-auto">
           <NavItem view="entry" icon={PlusCircle} label="Registro" />
           <NavItem view="dashboard" icon={LayoutDashboard} label="Dashboard" />
           <NavItem view="list" icon={List} label="Historial" />
@@ -760,7 +760,7 @@ const AppContent: React.FC = () => {
         </nav>
       </aside>
 
-      <main className="flex-1 p-4 xl:p-8 overflow-y-auto h-screen pb-28 xl:pb-8">
+      <main className="flex-1 xl:min-h-0 p-4 xl:p-8 overflow-y-auto h-screen pb-28 xl:pb-8">
         <div className="max-w-6xl mx-auto space-y-6">
             {dbError && !dbError.includes('Offline') && (
               <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-r shadow-sm animate-fade-in mb-4">
