@@ -708,59 +708,59 @@ const AppContent: React.FC = () => {
               {canAccessFieldSchemas && <NavItem view="fieldSchemas" icon={Monitor} label="Campos" />}
               {canAccessDashboardManager && <NavItem view="dashboardAdmin" icon={LayoutDashboard} label="Dashboards" />}
               {canAccessPermissionsMatrix && <NavItem view="permissions" icon={ShieldCheck} label="Permisos" />}
+              
+              <div className="mt-6 pt-4 border-t border-slate-100 space-y-3">
+                <div>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 px-4">Sesión</p>
+                  <button
+                    onClick={logout}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-red-50 hover:bg-red-100 text-red-600 font-bold rounded-lg transition-colors border border-red-100 text-sm"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    Cerrar Sesión
+                  </button>
+                </div>
+                <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 mx-4">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Estado del Sistema</p>
+                  <div className={`mt-2 flex items-center gap-2 text-xs font-bold ${
+                    dbError ? 'text-red-500'
+                    : !isOnline ? 'text-amber-500'
+                    : pendingSyncCount > 0 ? 'text-blue-500'
+                    : 'text-green-600'
+                  }`}>
+                    {dbError ? (
+                      <><AlertCircle className="w-4 h-4" /><span>Error Config</span></>
+                    ) : !isOnline ? (
+                      <><WifiOff className="w-4 h-4" /><span>Sin Conexión</span></>
+                    ) : pendingSyncCount > 0 ? (
+                      <><RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} /><span>{pendingSyncCount} pendiente{pendingSyncCount > 1 ? 's' : ''}</span></>
+                    ) : (
+                      <><Cloud className="w-4 h-4" /><span>Nube Activa</span></>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-1 leading-tight">
+                    {dbError
+                      ? 'Requiere atención.'
+                      : !isOnline
+                      ? 'Guardando localmente.'
+                      : pendingSyncCount > 0
+                      ? 'Sincronizando al reconectar.'
+                      : 'Sincronización en tiempo real.'
+                    }
+                  </p>
+                  {dbError && (
+                    <button 
+                      onClick={() => reconnectDatabase()}
+                      className="mt-3 w-full py-1.5 bg-white border border-slate-200 rounded text-[10px] font-bold text-slate-600 hover:bg-slate-100 transition-colors"
+                    >
+                      Reconectar
+                    </button>
+                  )}
+                </div>
+              </div>
             </>
           )}
         </nav>
-        
-        <div className="mt-auto p-6 space-y-4 border-t border-slate-100">
-          <div>
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Sesion</p>
-          <button
-            onClick={logout}
-            className="w-full flex items-center justify-center gap-2 py-2.5 bg-red-50 hover:bg-red-100 text-red-600 font-bold rounded-lg transition-colors border border-red-100"
-          >
-            <LogOut className="w-4 h-4" />
-            Cerrar Sesión
-          </button>
-          </div>
-          <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Estado del Sistema</p>
-            <div className={`mt-2 flex items-center gap-2 text-xs font-bold ${
-              dbError ? 'text-red-500'
-              : !isOnline ? 'text-amber-500'
-              : pendingSyncCount > 0 ? 'text-blue-500'
-              : 'text-green-600'
-            }`}>
-              {dbError ? (
-                <><AlertCircle className="w-4 h-4" /><span>Error Config</span></>
-              ) : !isOnline ? (
-                <><WifiOff className="w-4 h-4" /><span>Sin Conexión</span></>
-              ) : pendingSyncCount > 0 ? (
-                <><RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} /><span>{pendingSyncCount} pendiente{pendingSyncCount > 1 ? 's' : ''}</span></>
-              ) : (
-                <><Cloud className="w-4 h-4" /><span>Nube Activa</span></>
-              )}
-            </div>
-            <p className="text-[10px] text-slate-400 mt-1 leading-tight">
-              {dbError
-                ? 'Requiere atención.'
-                : !isOnline
-                ? 'Guardando localmente.'
-                : pendingSyncCount > 0
-                ? 'Sincronizando al reconectar.'
-                : 'Sincronización en tiempo real.'
-              }
-            </p>
-            {dbError && (
-              <button 
-                onClick={() => reconnectDatabase()}
-                className="mt-3 w-full py-1.5 bg-white border border-slate-200 rounded text-[10px] font-bold text-slate-600 hover:bg-slate-100 transition-colors"
-              >
-                Reconectar
-              </button>
-            )}
-          </div>
-        </div>
       </aside>
 
       <main className="flex-1 p-4 xl:p-8 overflow-y-auto h-screen pb-28 xl:pb-8">
@@ -1259,35 +1259,6 @@ const AppContent: React.FC = () => {
                 </>
               )}
 
-            </div>
-
-            <div className="p-4 border-t border-slate-100 space-y-3">
-              <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Estado del Sistema</p>
-                <div className={`mt-1.5 flex items-center gap-2 text-xs font-bold ${
-                  dbError ? 'text-red-500'
-                  : !isOnline ? 'text-amber-500'
-                  : pendingSyncCount > 0 ? 'text-blue-500'
-                  : 'text-green-600'
-                }`}>
-                  {dbError ? (
-                    <><AlertCircle className="w-4 h-4" /><span>Error Config</span></>
-                  ) : !isOnline ? (
-                    <><WifiOff className="w-4 h-4" /><span>Sin Conexión</span></>
-                  ) : pendingSyncCount > 0 ? (
-                    <><RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} /><span>{pendingSyncCount} pendiente{pendingSyncCount > 1 ? 's' : ''}</span></>
-                  ) : (
-                    <><Cloud className="w-4 h-4" /><span>Nube Activa</span></>
-                  )}
-                </div>
-              </div>
-              <button
-                onClick={() => { setShowMorePanel(false); logout(); }}
-                className="w-full flex items-center justify-center gap-2 py-3 bg-red-50 hover:bg-red-100 text-red-600 font-bold rounded-lg transition-colors border border-red-100"
-              >
-                <LogOut className="w-4 h-4" />
-                Cerrar Sesión
-              </button>
             </div>
           </div>
         </>

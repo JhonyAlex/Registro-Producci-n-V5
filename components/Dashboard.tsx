@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ResponsiveContainer,
   CartesianGrid,
@@ -380,6 +380,8 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
   const [widgetSelections, setWidgetSelections] = useState<Record<string, WidgetDrilldownSelection | undefined>>({});
   const [widgetPages, setWidgetPages] = useState<Record<string, number>>({});
   const [widgetPageSizes, setWidgetPageSizes] = useState<Record<string, number>>({});
+  const [activeDrilldownWidgetId, setActiveDrilldownWidgetId] = useState<string | null>(null);
+  const detailSectionRef = useRef<HTMLDivElement | null>(null);
   
   // Global Filters
   const [startDate, setStartDate] = useState('');
@@ -493,6 +495,15 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
     [selectedConfig]
   );
 
+  const activeDrilldownWidget = useMemo(
+    () => orderedWidgets.find((widget) => widget.id === activeDrilldownWidgetId) || null,
+    [orderedWidgets, activeDrilldownWidgetId]
+  );
+
+  const activeDrilldownSelection = activeDrilldownWidget
+    ? widgetSelections[activeDrilldownWidget.id]
+    : undefined;
+
   const formatNumber = (val: number) => {
     if (val >= 1000000) return (val / 1000000).toFixed(2) + 'M';
     if (val >= 1000) return (val / 1000).toFixed(2) + 'K';
@@ -504,6 +515,7 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
       ...prev,
       [widgetId]: selection,
     }));
+    setActiveDrilldownWidgetId(widgetId);
 
     setWidgetPages((prev) => ({
       ...prev,
@@ -522,6 +534,8 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
       [widgetId]: undefined,
     }));
 
+    setActiveDrilldownWidgetId((prev) => (prev === widgetId ? null : prev));
+
     setWidgetPages((prev) => ({
       ...prev,
       [widgetId]: 1,
@@ -532,6 +546,16 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
       [widgetId]: prev[widgetId] || 10,
     }));
   };
+
+  useEffect(() => {
+    if (!activeDrilldownWidgetId) return;
+    const selection = widgetSelections[activeDrilldownWidgetId];
+    if (!selection) return;
+
+    window.requestAnimationFrame(() => {
+      detailSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }, [activeDrilldownWidgetId, widgetSelections]);
 
   const extractGroupLabel = (payload: any): string | null => {
     const fromPayload = payload?.label;
@@ -578,7 +602,7 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
       : '';
 
     return (
-      <div className="mt-4 border border-slate-200 rounded-xl overflow-hidden">
+      <div className="border border-slate-200 rounded-xl overflow-hidden">
         <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-2">
           <div className="text-xs sm:text-sm text-slate-700 font-semibold">
             Detalle de <span className="font-black">{selection.groupLabel}</span>
@@ -746,7 +770,6 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
             </ComposedChart>
           </ResponsiveContainer>
           <div className="mt-2 text-[11px] text-slate-500">Haz clic en una barra o punto para ver el detalle en tabla.</div>
-          {renderDetailTable(widget)}
         </div>
       );
     }
@@ -878,8 +901,6 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
               </div>
             </div>
           </div>
-
-          {renderDetailTable(widget)}
         </div>
       );
     }
@@ -925,7 +946,6 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
             </PieChart>
           </ResponsiveContainer>
           <div className="mt-2 text-[11px] text-slate-500">Haz clic en una porcion para ver el detalle en tabla.</div>
-          {renderDetailTable(widget)}
         </div>
       );
     }
@@ -960,7 +980,6 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
             </LineChart>
           </ResponsiveContainer>
           <div className="mt-2 text-[11px] text-slate-500">Haz clic en un punto para ver el detalle en tabla.</div>
-          {renderDetailTable(widget)}
         </div>
       );
     }
@@ -1000,7 +1019,6 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
             </AreaChart>
           </ResponsiveContainer>
           <div className="mt-2 text-[11px] text-slate-500">Haz clic en un punto/area para ver el detalle en tabla.</div>
-          {renderDetailTable(widget)}
         </div>
       );
     }
@@ -1064,7 +1082,6 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
             </BarChart>
           </ResponsiveContainer>
           <div className="mt-2 text-[11px] text-slate-500">Haz clic en una barra para ver el detalle en tabla.</div>
-          {renderDetailTable(widget)}
         </div>
       );
     }
@@ -1097,7 +1114,6 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
           </BarChart>
         </ResponsiveContainer>
         <div className="mt-2 text-[11px] text-slate-500">Haz clic en una barra para ver el detalle en tabla.</div>
-        {renderDetailTable(widget)}
       </div>
     );
   } 
@@ -1271,6 +1287,18 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
           </div>
         )}
       </div>
+
+      {activeDrilldownWidget && activeDrilldownSelection && (
+        <div ref={detailSectionRef} className="bg-white border border-slate-200 rounded-2xl p-5">
+          <div className="mb-3">
+            <h4 className="font-bold text-slate-900">Detalle por selección</h4>
+            <p className="text-xs text-slate-500 mt-1">
+              Widget: {activeDrilldownWidget.title} · {CHART_LABELS[activeDrilldownWidget.chartType]}
+            </p>
+          </div>
+          {renderDetailTable(activeDrilldownWidget)}
+        </div>
+      )}
 
     </div>
   );
