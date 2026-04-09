@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { LayoutDashboard, PlusCircle, List, User, Trash2, Lock, AlertCircle, Filter, X, Cloud, WifiOff, CloudOff, Edit, ChevronDown, ChevronUp, Calendar, Monitor, XCircle, FileDown, AlertTriangle, Clock, ChevronLeft, ChevronRight, LogOut, Users, History, ShieldCheck, CheckCircle, RefreshCw, Menu } from 'lucide-react';
+import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import ShiftForm from './components/ShiftForm';
 import Dashboard from './components/Dashboard';
 import Login from './components/Login';
@@ -32,9 +33,30 @@ interface DynamicHistoryColumn {
 }
 
 const ITEMS_PER_PAGE = 15;
+const AUTH_ROUTES = {
+  login: '/login',
+  register: '/register',
+  pending: '/espera',
+} as const;
+const VIEW_ROUTES: Record<View, string> = {
+  entry: '/registro',
+  dashboard: '/dashboard',
+  list: '/historial',
+  profile: '/perfil',
+  admin: '/admin/usuarios',
+  audit: '/admin/actividad',
+  permissions: '/admin/permisos',
+  fieldSchemas: '/admin/campos',
+  dashboardAdmin: '/admin/dashboards',
+};
 const METER_FIELD_ALIASES = ['metros', 'metro', 'meters'];
 const CHANGE_FIELD_ALIASES = ['cambiopedido', 'cambio_pedido', 'cambios', 'changescount', 'changes'];
 const HISTORY_SORT_STORAGE_KEY_PREFIX = 'pigmea_history_sort_v1_';
+
+const getViewFromPath = (pathname: string): View | null => {
+  const matchingEntry = (Object.entries(VIEW_ROUTES) as Array<[View, string]>).find(([, route]) => route === pathname);
+  return matchingEntry ? matchingEntry[0] : null;
+};
 
 const normalizeFieldKey = (value: string): string =>
   String(value || '')
@@ -93,6 +115,8 @@ const getHistorySortStorageKey = (userId?: string | null): string =>
   `${HISTORY_SORT_STORAGE_KEY_PREFIX}${userId || 'guest'}`;
 
 const AppContent: React.FC = () => {
+  const location = useLocation();
+  const navigate = useNavigate();
   const { user, logout } = useAuth();
   const hasPermission = (permissionKey: string) => {
     if (user?.role === 'admin') return true;
@@ -106,7 +130,6 @@ const AppContent: React.FC = () => {
   const canExportBackup = (user?.role === 'admin' || user?.role === 'jefe_planta') && hasPermission('backup.export');
   const canImportBackup = (user?.role === 'admin' || user?.role === 'jefe_planta') && hasPermission('backup.import');
 
-  const [currentView, setCurrentView] = useState<View>('entry');
   const [records, setRecords] = useState<ProductionRecord[]>([]);
   const [availableBosses, setAvailableBosses] = useState<string[]>([]);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -166,6 +189,33 @@ const AppContent: React.FC = () => {
     direction: 'desc',
   });
   const [machineSchemasByMachine, setMachineSchemasByMachine] = useState<Record<string, MachineFieldDefinition[]>>({});
+
+  const allowedViews = useMemo<View[]>(() => {
+    const views: View[] = ['entry', 'dashboard', 'list', 'profile'];
+    if (canAccessUsers) views.push('admin');
+    if (canAccessAudit) views.push('audit');
+    if (canAccessFieldSchemas) views.push('fieldSchemas');
+    if (canAccessDashboardManager) views.push('dashboardAdmin');
+    if (canAccessPermissionsMatrix) views.push('permissions');
+    return views;
+  }, [canAccessUsers, canAccessAudit, canAccessFieldSchemas, canAccessDashboardManager, canAccessPermissionsMatrix]);
+
+  const defaultView = allowedViews.includes('entry') ? 'entry' : allowedViews[0] ?? 'profile';
+
+  const currentView = useMemo<View>(() => {
+    const routeView = getViewFromPath(location.pathname);
+    if (routeView && allowedViews.includes(routeView)) {
+      return routeView;
+    }
+    return defaultView;
+  }, [location.pathname, allowedViews, defaultView]);
+
+  useEffect(() => {
+    const routeView = getViewFromPath(location.pathname);
+    if (!routeView || !allowedViews.includes(routeView)) {
+      navigate(VIEW_ROUTES[defaultView], { replace: true });
+    }
+  }, [location.pathname, allowedViews, defaultView, navigate]);
   
   // Real-time synchronization
   useEffect(() => {
@@ -488,7 +538,7 @@ const AppContent: React.FC = () => {
   const handleEdit = (record: ProductionRecord, source: EditSource) => {
     setEditingRecord(record);
     setEditSource(source);
-    setCurrentView('entry');
+    navigate(VIEW_ROUTES.entry);
   };
 
   const handleCancelEdit = () => {
@@ -499,7 +549,7 @@ const AppContent: React.FC = () => {
   const handleBackToHistory = () => {
     setEditingRecord(null);
     setEditSource(null);
-    setCurrentView('list');
+    navigate(VIEW_ROUTES.list);
   };
 
   const initiateDeleteAll = () => {
@@ -597,12 +647,15 @@ const AppContent: React.FC = () => {
   };
 
   const changeView = (view: View) => {
-    setCurrentView(view);
+    if (!allowedViews.includes(view)) {
+      return;
+    }
     if (view !== 'entry') {
       setEditingRecord(null);
     } else if (currentView !== 'entry') {
       setEditingRecord(null);
     }
+    navigate(VIEW_ROUTES[view]);
   };
 
   const isConnectionLost = !isOnline || (dbError && dbError.includes('Offline'));
@@ -1232,27 +1285,27 @@ const AppContent: React.FC = () => {
                 <>
                   <p className="text-xs font-bold text-slate-400 uppercase tracking-wider px-3 pt-2 pb-1">Administración</p>
                   {canAccessUsers && (
-                    <button onClick={() => { setShowMorePanel(false); setCurrentView('admin'); }} className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all w-full ${ currentView === 'admin' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100' }`}>
+                    <button onClick={() => { setShowMorePanel(false); changeView('admin'); }} className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all w-full ${ currentView === 'admin' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100' }`}>
                       <Users className="w-5 h-5" /><span className="font-medium">Usuarios</span>
                     </button>
                   )}
                   {canAccessAudit && (
-                    <button onClick={() => { setShowMorePanel(false); setCurrentView('audit'); }} className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all w-full ${ currentView === 'audit' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100' }`}>
+                    <button onClick={() => { setShowMorePanel(false); changeView('audit'); }} className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all w-full ${ currentView === 'audit' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100' }`}>
                       <History className="w-5 h-5" /><span className="font-medium">Actividad</span>
                     </button>
                   )}
                   {canAccessFieldSchemas && (
-                    <button onClick={() => { setShowMorePanel(false); setCurrentView('fieldSchemas'); }} className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all w-full ${ currentView === 'fieldSchemas' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100' }`}>
+                    <button onClick={() => { setShowMorePanel(false); changeView('fieldSchemas'); }} className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all w-full ${ currentView === 'fieldSchemas' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100' }`}>
                       <Monitor className="w-5 h-5" /><span className="font-medium">Campos</span>
                     </button>
                   )}
                   {canAccessDashboardManager && (
-                    <button onClick={() => { setShowMorePanel(false); setCurrentView('dashboardAdmin'); }} className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all w-full ${ currentView === 'dashboardAdmin' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100' }`}>
+                    <button onClick={() => { setShowMorePanel(false); changeView('dashboardAdmin'); }} className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all w-full ${ currentView === 'dashboardAdmin' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100' }`}>
                       <LayoutDashboard className="w-5 h-5" /><span className="font-medium">Dashboards</span>
                     </button>
                   )}
                   {canAccessPermissionsMatrix && (
-                    <button onClick={() => { setShowMorePanel(false); setCurrentView('permissions'); }} className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all w-full ${ currentView === 'permissions' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100' }`}>
+                    <button onClick={() => { setShowMorePanel(false); changeView('permissions'); }} className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all w-full ${ currentView === 'permissions' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100' }`}>
                       <ShieldCheck className="w-5 h-5" /><span className="font-medium">Permisos</span>
                     </button>
                   )}
@@ -1412,31 +1465,43 @@ const AppContent: React.FC = () => {
 };
 
 const App: React.FC = () => {
+  const navigate = useNavigate();
   const { user, loading } = useAuth();
-  const [authView, setAuthView] = useState<'login' | 'register'>('login');
-
-  let appView: React.ReactNode;
-
   if (loading) {
-    appView = (
+    return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
       </div>
     );
-  } else if (!user) {
-    appView = authView === 'login' ? (
-      <Login onSwitchToRegister={() => setAuthView('register')} />
-    ) : (
-      <Register onSwitchToLogin={() => setAuthView('login')} />
+  }
+
+  if (!user) {
+    return (
+      <Routes>
+        <Route
+          path={AUTH_ROUTES.login}
+          element={<Login onSwitchToRegister={() => navigate(AUTH_ROUTES.register)} />}
+        />
+        <Route
+          path={AUTH_ROUTES.register}
+          element={<Register onSwitchToLogin={() => navigate(AUTH_ROUTES.login)} />}
+        />
+        <Route path="*" element={<Navigate to={AUTH_ROUTES.login} replace />} />
+      </Routes>
     );
-  } else if (user.status === 'pending') {
-    appView = <WaitingRoom />;
-  } else {
-    appView = <AppContent />;
+  }
+
+  if (user.status === 'pending') {
+    return (
+      <Routes>
+        <Route path={AUTH_ROUTES.pending} element={<WaitingRoom />} />
+        <Route path="*" element={<Navigate to={AUTH_ROUTES.pending} replace />} />
+      </Routes>
+    );
   }
 
   return (
-    <>{appView}</>
+    <AppContent />
   );
 };
 
