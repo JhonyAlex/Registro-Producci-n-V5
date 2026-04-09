@@ -38,6 +38,7 @@ interface DashboardProps {
   records: ProductionRecord[];
   canManageDashboards?: boolean;
   onOpenAdmin?: () => void;
+  onEditRecord?: (record: ProductionRecord) => void;
 }
 
 type GroupAccumulator = {
@@ -440,7 +441,12 @@ const buildSegmentCompareData = (
   return { rows, segments, segmentMetrics, grandTotal, recordCount: globalCount };
 };
 
-const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = false, onOpenAdmin }) => {
+const Dashboard: React.FC<DashboardProps> = ({
+  records,
+  canManageDashboards = false,
+  onOpenAdmin,
+  onEditRecord,
+}) => {
   const [configs, setConfigs] = useState<DashboardConfig[]>([]);
   const [fieldOptions, setFieldOptions] = useState<DashboardFieldOption[]>(DASHBOARD_ALLOWED_CORE_FIELDS);
   const [selectedConfigId, setSelectedConfigId] = useState('');
@@ -730,7 +736,12 @@ const Dashboard: React.FC<DashboardProps> = ({ records, canManageDashboards = fa
               </thead>
               <tbody>
                 {pageRows.map((record) => (
-                  <tr key={record.id} className="border-t border-slate-100 hover:bg-slate-50">
+                  <tr
+                    key={record.id}
+                    className={`border-t border-slate-100 hover:bg-slate-50 ${onEditRecord ? 'cursor-pointer' : ''}`}
+                    onClick={onEditRecord ? () => onEditRecord(record) : undefined}
+                    title={onEditRecord ? 'Abrir pedido para editar' : undefined}
+                  >
                     <td className="px-3 py-2">{record.date}</td>
                     <td className="px-3 py-2">{record.machine}</td>
                     <td className="px-3 py-2">{record.shift}</td>

@@ -1032,6 +1032,7 @@ const AppContent: React.FC = () => {
                 records={filteredRecords}
                 canManageDashboards={canAccessDashboardManager}
                 onOpenAdmin={canAccessDashboardManager ? () => changeView('dashboardAdmin') : undefined}
+                onEditRecord={(record) => handleEdit(record, 'history')}
               />
             </div>
           )}
