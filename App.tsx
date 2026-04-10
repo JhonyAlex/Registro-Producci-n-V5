@@ -122,6 +122,9 @@ const AppContent: React.FC = () => {
     if (user?.role === 'admin') return true;
     return Boolean(user?.permissions?.some((perm) => perm.key === permissionKey));
   };
+  const canWriteRecords = hasPermission('records.write');
+  const canDeleteRecords = hasPermission('records.delete');
+  const canDeleteAllRecords = hasPermission('records.delete_all');
   const canAccessUsers = (user?.role === 'admin' || user?.role === 'jefe_planta') && hasPermission('admin.users.read');
   const canAccessAudit = (user?.role === 'admin' || user?.role === 'jefe_planta') && hasPermission('admin.audit.read');
   const canAccessPermissionsMatrix = user?.role === 'admin';
@@ -191,14 +194,15 @@ const AppContent: React.FC = () => {
   const [machineSchemasByMachine, setMachineSchemasByMachine] = useState<Record<string, MachineFieldDefinition[]>>({});
 
   const allowedViews = useMemo<View[]>(() => {
-    const views: View[] = ['entry', 'dashboard', 'list', 'profile'];
+    const views: View[] = ['dashboard', 'list', 'profile'];
+    if (canWriteRecords) views.unshift('entry');
     if (canAccessUsers) views.push('admin');
     if (canAccessAudit) views.push('audit');
     if (canAccessFieldSchemas) views.push('fieldSchemas');
     if (canAccessDashboardManager) views.push('dashboardAdmin');
     if (canAccessPermissionsMatrix) views.push('permissions');
     return views;
-  }, [canAccessUsers, canAccessAudit, canAccessFieldSchemas, canAccessDashboardManager, canAccessPermissionsMatrix]);
+  }, [canWriteRecords, canAccessUsers, canAccessAudit, canAccessFieldSchemas, canAccessDashboardManager, canAccessPermissionsMatrix]);
 
   const defaultView = allowedViews.includes('entry') ? 'entry' : allowedViews[0] ?? 'profile';
 
@@ -536,6 +540,7 @@ const AppContent: React.FC = () => {
   };
 
   const handleEdit = (record: ProductionRecord, source: EditSource) => {
+    if (!canWriteRecords) return;
     setEditingRecord(record);
     setEditSource(source);
     navigate(VIEW_ROUTES.entry);
@@ -746,7 +751,7 @@ const AppContent: React.FC = () => {
         </div>
 
         <nav className="p-4 flex flex-col gap-1 flex-1 overflow-y-auto">
-          <NavItem view="entry" icon={PlusCircle} label="Registro" />
+          {canWriteRecords && <NavItem view="entry" icon={PlusCircle} label="Registro" />}
           <NavItem view="dashboard" icon={LayoutDashboard} label="Dashboard" />
           <NavItem view="list" icon={List} label="Historial" />
           <NavItem view="profile" icon={User} label="Mi Perfil" />
@@ -1085,7 +1090,7 @@ const AppContent: React.FC = () => {
                 records={filteredRecords}
                 canManageDashboards={canAccessDashboardManager}
                 onOpenAdmin={canAccessDashboardManager ? () => changeView('dashboardAdmin') : undefined}
-                onEditRecord={(record) => handleEdit(record, 'history')}
+                onEditRecord={canWriteRecords ? (record) => handleEdit(record, 'history') : undefined}
               />
             </div>
           )}
@@ -1105,7 +1110,7 @@ const AppContent: React.FC = () => {
                   </div>
                 </div>
                 
-                {records.length > 0 && (
+                {records.length > 0 && canDeleteAllRecords && (
                   <button 
                     onClick={initiateDeleteAll}
                     className="flex items-center gap-2 text-red-600 bg-red-50 hover:bg-red-100 px-4 py-2 rounded-lg transition-colors text-sm font-bold border border-red-100"
@@ -1133,15 +1138,15 @@ const AppContent: React.FC = () => {
                           </React.Fragment>
                         ))}
                         {renderSortableHeader('Comentarios', 'changesComment', 'hidden sm:table-cell')}
-                        <th className="px-6 py-4 text-center">Acciones</th>
+                        {(canWriteRecords || canDeleteRecords) && <th className="px-6 py-4 text-center">Acciones</th>}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {paginatedRecords.map((r) => (
                         <tr 
                           key={r.id} 
-                          onClick={() => handleEdit(r, 'history')}
-                          className="hover:bg-blue-50 transition-colors group cursor-pointer active:bg-blue-100"
+                          onClick={canWriteRecords ? () => handleEdit(r, 'history') : undefined}
+                          className={`transition-colors group ${canWriteRecords ? 'cursor-pointer hover:bg-blue-50 active:bg-blue-100' : ''}`}
                         >
                           <td className="px-6 py-4 text-slate-600 whitespace-nowrap">
                             <div className="font-bold text-slate-800">
@@ -1176,24 +1181,30 @@ const AppContent: React.FC = () => {
                           <td className="px-6 py-4 text-slate-500 max-w-xs truncate hidden sm:table-cell" title={r.changesComment}>
                             {r.changesComment}
                           </td>
-                          <td className="px-6 py-4 text-center">
-                            <div className="flex items-center justify-center gap-1">
-                              <button 
-                                onClick={(e) => { e.stopPropagation(); handleEdit(r, 'history'); }}
-                                className="p-2 text-slate-300 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-all"
-                                title="Editar registro"
-                              >
-                                <Edit className="w-4 h-4" />
-                              </button>
-                              <button 
-                                onClick={(e) => initiateDeleteSingle(r.id, e)}
-                                className="p-2 text-slate-300 hover:text-red-600 hover:bg-red-50 rounded-full transition-all"
-                                title="Borrar registro"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            </div>
-                          </td>
+                          {(canWriteRecords || canDeleteRecords) && (
+                            <td className="px-6 py-4 text-center">
+                              <div className="flex items-center justify-center gap-1">
+                                {canWriteRecords && (
+                                  <button 
+                                    onClick={(e) => { e.stopPropagation(); handleEdit(r, 'history'); }}
+                                    className="p-2 text-slate-300 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-all"
+                                    title="Editar registro"
+                                  >
+                                    <Edit className="w-4 h-4" />
+                                  </button>
+                                )}
+                                {canDeleteRecords && (
+                                  <button 
+                                    onClick={(e) => initiateDeleteSingle(r.id, e)}
+                                    className="p-2 text-slate-300 hover:text-red-600 hover:bg-red-50 rounded-full transition-all"
+                                    title="Borrar registro"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          )}
                         </tr>
                       ))}
                     </tbody>
@@ -1241,7 +1252,7 @@ const AppContent: React.FC = () => {
 
       {/* Bottom Nav — Mobile/Tablet */}
       <nav className="xl:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 pb-safe z-40 flex justify-around items-center px-1 shadow-[0_-4px_10px_rgba(0,0,0,0.05)] h-[70px]">
-        <NavItem view="entry" icon={PlusCircle} label="Registro" mobileOnly />
+        {canWriteRecords && <NavItem view="entry" icon={PlusCircle} label="Registro" mobileOnly />}
         <NavItem view="dashboard" icon={LayoutDashboard} label="Dashboard" mobileOnly />
         <NavItem view="list" icon={List} label="Historial" mobileOnly />
         <NavItem view="profile" icon={User} label="Mi Perfil" mobileOnly />

@@ -18,6 +18,7 @@ interface AdminUser {
 const ROLE_OPTIONS = [
   { value: 'operario', label: 'Operario' },
   { value: 'jefe_turno', label: 'Jefe de Turno' },
+  { value: 'supervisor', label: 'Supervisor' },
   { value: 'jefe_planta', label: 'Jefe de Planta' },
   { value: 'admin', label: 'Administrador' }
 ] as const;
@@ -180,7 +181,7 @@ const AdminUsers: React.FC = () => {
     const newName = window.prompt(`Nuevo nombre para ${target.name}`, target.name);
     if (newName === null) return;
 
-    const newRole = window.prompt('Nuevo rol (admin, jefe_planta, jefe_turno, operario)', target.role);
+    const newRole = window.prompt('Nuevo rol (admin, jefe_planta, supervisor, jefe_turno, operario)', target.role);
     if (newRole === null) return;
 
     const newStatus = window.prompt('Nuevo estado (active, pending, locked)', target.status);
@@ -322,6 +323,7 @@ const AdminUsers: React.FC = () => {
     const labels: Record<string, string> = {
       'admin': 'Administrador',
       'jefe_planta': 'Jefe de Planta',
+      'supervisor': 'Supervisor',
       'jefe_turno': 'Jefe de Turno',
       'operario': 'Operario'
     };

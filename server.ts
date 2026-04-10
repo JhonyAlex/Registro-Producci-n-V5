@@ -362,7 +362,7 @@ const SESSION_TIMEOUT_MINUTES = parseInt(process.env.SESSION_TIMEOUT_MINUTES || 
 const MAX_FAILED_ATTEMPTS = 3;
 const PIN_LENGTH = 4;
 
-const APP_ROLES = ['admin', 'jefe_planta', 'jefe_turno', 'operario'] as const;
+const APP_ROLES = ['admin', 'jefe_planta', 'supervisor', 'jefe_turno', 'operario'] as const;
 type AppRole = typeof APP_ROLES[number];
 const USER_STATUSES = ['pending', 'active', 'locked'] as const;
 type UserStatus = typeof USER_STATUSES[number];
@@ -407,6 +407,7 @@ const DEFAULT_ROLE_PERMISSIONS: Record<AppRole, string[]> = {
     'backup.export',
     'backup.import'
   ],
+  supervisor: ['records.read', 'settings.read'],
   jefe_turno: ['records.read', 'records.write', 'settings.read'],
   operario: ['records.read', 'records.write', 'settings.read']
 };
@@ -1939,7 +1940,7 @@ app.get('/api/records', authenticate, requirePermission('records.read'), require
     let query = 'SELECT id, timestamp, recorded_at as "recordedAt", created_by_user_id as "createdByUserId", last_modified_by_user_id as "lastModifiedByUserId", date, machine, meters, changescount as "changesCount", changescomment as "changesComment", shift, boss, boss_user_id as "bossUserId", operator, operator_user_id as "operatorUserId", dynamic_fields_values as "dynamicFieldsValues", schema_version_used as "schemaVersionUsed" FROM production_records';
     let params: any[] = [];
 
-    const canViewAllRecords = user.role === 'admin' || user.role === 'jefe_planta';
+    const canViewAllRecords = user.role === 'admin' || user.role === 'jefe_planta' || user.role === 'supervisor';
 
     if (!canViewAllRecords) {
       const visResult = await pool.query('SELECT target_id FROM user_visibility WHERE observer_id = $1', [user.id]);

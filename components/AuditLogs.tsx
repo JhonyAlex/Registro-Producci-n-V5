@@ -36,6 +36,7 @@ const roleLabel = (role: string | null) => {
   const labels: Record<string, string> = {
     admin: 'Administrador',
     jefe_planta: 'Jefe de Planta',
+    supervisor: 'Supervisor',
     jefe_turno: 'Jefe de Turno',
     operario: 'Operario'
   };

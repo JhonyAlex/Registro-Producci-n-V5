@@ -8,6 +8,7 @@ const PIN_LENGTH = 4;
 const ROLE_OPTIONS = [
   { value: 'operario', label: 'Operario' },
   { value: 'jefe_turno', label: 'Jefe de Turno' },
+  { value: 'supervisor', label: 'Supervisor' },
   { value: 'jefe_planta', label: 'Jefe de Planta' },
   { value: 'admin', label: 'Administrador' }
 ] as const;
