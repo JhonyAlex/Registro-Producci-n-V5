@@ -25,7 +25,9 @@ import {
   Table,
   Filter,
   AlertTriangle,
+  Image,
 } from 'lucide-react';
+import html2canvas from 'html2canvas';
 import { DashboardConfig, DashboardFieldOption, DashboardWidgetConfig, ProductionRecord, MachineType, ShiftType } from '../types';
 import { exportToExcel, getDashboardConfigs, getFieldCatalog } from '../services/storageService';
 import {
@@ -52,6 +54,16 @@ type WidgetDrilldownSelection = {
   comparisonField?: string;
   comparisonValue?: string;
 };
+
+type AreaRangeKey = 'week' | 'month' | '2months' | 'year' | 'all';
+
+const AREA_RANGE_OPTIONS: Array<{ key: AreaRangeKey; label: string }> = [
+  { key: 'week', label: 'Semana' },
+  { key: 'month', label: 'Mes' },
+  { key: '2months', label: '2 meses' },
+  { key: 'year', label: 'Anio' },
+  { key: 'all', label: 'Todo' },
+];
 
 const CHART_LABELS: Record<string, string> = {
   kpi: 'Tarjeta KPI',
@@ -453,8 +465,11 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [widgetSelections, setWidgetSelections] = useState<Record<string, WidgetDrilldownSelection | undefined>>({});
   const [widgetPages, setWidgetPages] = useState<Record<string, number>>({});
   const [widgetPageSizes, setWidgetPageSizes] = useState<Record<string, number>>({});
+  const [areaRangeByWidget, setAreaRangeByWidget] = useState<Record<string, AreaRangeKey>>({});
+  const [chartExportStatus, setChartExportStatus] = useState<Record<string, string | undefined>>({});
   const [activeDrilldownWidgetId, setActiveDrilldownWidgetId] = useState<string | null>(null);
   const detailSectionRef = useRef<HTMLDivElement | null>(null);
+  const chartContainerRefs = useRef<Record<string, HTMLDivElement | null>>({});
   
   // Global Filters
   const [startDate, setStartDate] = useState('');
@@ -581,6 +596,112 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (val >= 1000000) return (val / 1000000).toFixed(2) + 'M';
     if (val >= 1000) return (val / 1000).toFixed(2) + 'K';
     return val.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  };
+
+  const getRangeStartDate = (endDateValue: Date, range: AreaRangeKey): Date | null => {
+    const start = new Date(endDateValue);
+
+    if (range === 'all') return null;
+    if (range === 'week') {
+      start.setDate(start.getDate() - 6);
+      return start;
+    }
+    if (range === 'month') {
+      start.setMonth(start.getMonth() - 1);
+      return start;
+    }
+    if (range === '2months') {
+      start.setMonth(start.getMonth() - 2);
+      return start;
+    }
+
+    start.setFullYear(start.getFullYear() - 1);
+    return start;
+  };
+
+  const filterAreaRecordsByRange = (sourceRecords: ProductionRecord[], range: AreaRangeKey) => {
+    if (range === 'all' || sourceRecords.length === 0) return sourceRecords;
+
+    const validDates = sourceRecords
+      .map((record) => record.date)
+      .filter((value) => /^\d{4}-\d{2}-\d{2}$/.test(value));
+
+    if (validDates.length === 0) return sourceRecords;
+
+    const maxDateString = validDates.reduce((max, current) => (current > max ? current : max), validDates[0]);
+    const maxDate = new Date(`${maxDateString}T00:00:00`);
+    const rangeStart = getRangeStartDate(maxDate, range);
+
+    if (!rangeStart) return sourceRecords;
+
+    return sourceRecords.filter((record) => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(record.date)) return false;
+      const current = new Date(`${record.date}T00:00:00`);
+      return current >= rangeStart && current <= maxDate;
+    });
+  };
+
+  const copyWidgetChartAsJpg = async (widget: DashboardWidgetConfig) => {
+    const node = chartContainerRefs.current[widget.id];
+    if (!node) {
+      setChartExportStatus((prev) => ({ ...prev, [widget.id]: 'No se encontro el contenedor del grafico.' }));
+      return;
+    }
+
+    try {
+      const canvas = await html2canvas(node, {
+        backgroundColor: '#ffffff',
+        scale: 2,
+        useCORS: true,
+      });
+
+      const blob: Blob | null = await new Promise((resolve) => {
+        canvas.toBlob((result) => resolve(result), 'image/jpeg', 0.96);
+      });
+
+      if (!blob) {
+        throw new Error('No se pudo generar la imagen JPG.');
+      }
+
+      const canWriteClipboard = typeof navigator !== 'undefined'
+        && !!navigator.clipboard
+        && typeof navigator.clipboard.write === 'function'
+        && typeof ClipboardItem !== 'undefined';
+
+      if (canWriteClipboard) {
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            'image/jpeg': blob,
+          }),
+        ]);
+        setChartExportStatus((prev) => ({
+          ...prev,
+          [widget.id]: 'Grafico copiado al portapapeles en JPG.',
+        }));
+        return;
+      }
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const safeTitle = (widget.title || widget.id || 'grafico')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)/g, '');
+      link.href = url;
+      link.download = `${safeTitle || 'grafico'}.jpg`;
+      link.click();
+      URL.revokeObjectURL(url);
+
+      setChartExportStatus((prev) => ({
+        ...prev,
+        [widget.id]: 'El navegador no permite copiar JPG directo. Se descargo el archivo .jpg.',
+      }));
+    } catch (err: any) {
+      setChartExportStatus((prev) => ({
+        ...prev,
+        [widget.id]: err?.message || 'No se pudo copiar el grafico en JPG.',
+      }));
+    }
   };
 
   const setWidgetSelection = (widgetId: string, selection: WidgetDrilldownSelection) => {
@@ -1077,10 +1198,44 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
 
     if (widget.chartType === 'area') {
+      const areaRange = areaRangeByWidget[widget.id] || 'month';
+      const areaRecords = filterAreaRecordsByRange(filteredRecords, areaRange);
+      const areaData = buildGroupedData(
+        areaRecords,
+        groupByField,
+        widget.valueField,
+        widget.aggregation
+      );
+
       return (
-        <div className="h-72">
+        <div>
+          <div className="mb-2 flex items-center justify-end gap-2">
+            <label className="text-[11px] text-slate-600 font-semibold" htmlFor={`area-range-${widget.id}`}>
+              Rango area
+            </label>
+            <select
+              id={`area-range-${widget.id}`}
+              value={areaRange}
+              onChange={(e) => {
+                const nextRange = e.target.value as AreaRangeKey;
+                setAreaRangeByWidget((prev) => ({
+                  ...prev,
+                  [widget.id]: nextRange,
+                }));
+              }}
+              className="px-2 py-1 text-xs font-semibold rounded-lg bg-white border border-slate-300"
+            >
+              {AREA_RANGE_OPTIONS.map((option) => (
+                <option key={option.key} value={option.key}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="h-72">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 8 }}>
+            <AreaChart data={areaData} margin={{ top: 8, right: 12, left: 0, bottom: 8 }}>
               <defs>
                 <linearGradient id={`gradient-${widget.id}`} x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#16a34a" stopOpacity={0.7} />
@@ -1110,6 +1265,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               />
             </AreaChart>
           </ResponsiveContainer>
+          </div>
           <div className="mt-2 text-[11px] text-slate-500">Haz clic en un punto/area para ver el detalle en tabla.</div>
         </div>
       );
@@ -1363,14 +1519,33 @@ const Dashboard: React.FC<DashboardProps> = ({
             key={widget.id}
             className={`bg-white border border-slate-200 rounded-2xl p-5 min-w-0 ${getWidgetSpanClass(widget)}`}
           >
-            <div className="mb-3">
-              <h4 className="font-bold text-slate-900">{widget.title}</h4>
-              <p className="text-xs text-slate-500 mt-1">
-                {CHART_LABELS[widget.chartType]} 
-                {widget.chartType !== 'kpi' && ` · Agrupado por ${metricLabel(widget.groupBy || 'machine', fieldMap)}`}
-              </p>
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div>
+                <h4 className="font-bold text-slate-900">{widget.title}</h4>
+                <p className="text-xs text-slate-500 mt-1">
+                  {CHART_LABELS[widget.chartType]} 
+                  {widget.chartType !== 'kpi' && ` · Agrupado por ${metricLabel(widget.groupBy || 'machine', fieldMap)}`}
+                </p>
+              </div>
+              <button
+                onClick={() => void copyWidgetChartAsJpg(widget)}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700"
+                title="Copiar grafico como JPG"
+              >
+                <Image className="w-3.5 h-3.5" /> JPG
+              </button>
             </div>
-            {renderWidget(widget)}
+            <div
+              ref={(node) => {
+                chartContainerRefs.current[widget.id] = node;
+              }}
+              className="rounded-xl bg-white"
+            >
+              {renderWidget(widget)}
+            </div>
+            {chartExportStatus[widget.id] && (
+              <p className="mt-2 text-[11px] text-slate-500">{chartExportStatus[widget.id]}</p>
+            )}
           </div>
         ))}
         {orderedWidgets.length === 0 && (
