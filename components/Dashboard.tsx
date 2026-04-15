@@ -25,7 +25,7 @@ import {
   Table,
   Filter,
   AlertTriangle,
-  Image,
+  Copy,
 } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { DashboardConfig, DashboardFieldOption, DashboardWidgetConfig, ProductionRecord, MachineType, ShiftType } from '../types';
@@ -501,6 +501,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           const secondary = widget.secondaryValueField && optionMap.has(widget.secondaryValueField)
             ? widget.secondaryValueField
             : undefined;
+          const safeSpanColumns: DashboardWidgetConfig['spanColumns'] = Number((widget as any).spanColumns) === 1 ? 1 : 2;
           const safeAggregation = widget.aggregation === 'count' || (safeValueField && optionMap.get(safeValueField)?.type === 'number')
             ? widget.aggregation
             : 'count';
@@ -523,7 +524,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             valueField: safeValueField,
             secondaryValueField: secondary,
             aggregation: safeAggregation,
-            spanColumns: Number((widget as any).spanColumns) === 1 ? 1 : 2,
+            spanColumns: safeSpanColumns,
           };
         });
 
@@ -656,11 +657,11 @@ const Dashboard: React.FC<DashboardProps> = ({
       });
 
       const blob: Blob | null = await new Promise((resolve) => {
-        canvas.toBlob((result) => resolve(result), 'image/jpeg', 0.96);
+        canvas.toBlob((result) => resolve(result), 'image/png');
       });
 
       if (!blob) {
-        throw new Error('No se pudo generar la imagen JPG.');
+        throw new Error('No se pudo generar la imagen.');
       }
 
       const canWriteClipboard = typeof navigator !== 'undefined'
@@ -671,12 +672,12 @@ const Dashboard: React.FC<DashboardProps> = ({
       if (canWriteClipboard) {
         await navigator.clipboard.write([
           new ClipboardItem({
-            'image/jpeg': blob,
+            'image/png': blob,
           }),
         ]);
         setChartExportStatus((prev) => ({
           ...prev,
-          [widget.id]: 'Grafico copiado al portapapeles en JPG.',
+          [widget.id]: 'Grafico copiado al portapapeles.',
         }));
         return;
       }
@@ -688,18 +689,18 @@ const Dashboard: React.FC<DashboardProps> = ({
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/(^-|-$)/g, '');
       link.href = url;
-      link.download = `${safeTitle || 'grafico'}.jpg`;
+      link.download = `${safeTitle || 'grafico'}.png`;
       link.click();
       URL.revokeObjectURL(url);
 
       setChartExportStatus((prev) => ({
         ...prev,
-        [widget.id]: 'El navegador no permite copiar JPG directo. Se descargo el archivo .jpg.',
+        [widget.id]: 'El navegador no permite copiar imagen directo. Se descargo el archivo .png.',
       }));
     } catch (err: any) {
       setChartExportStatus((prev) => ({
         ...prev,
-        [widget.id]: err?.message || 'No se pudo copiar el grafico en JPG.',
+        [widget.id]: err?.message || 'No se pudo copiar el grafico.',
       }));
     }
   };
@@ -1529,10 +1530,11 @@ const Dashboard: React.FC<DashboardProps> = ({
               </div>
               <button
                 onClick={() => void copyWidgetChartAsJpg(widget)}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700"
-                title="Copiar grafico como JPG"
+                className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700"
+                title="Copiar grafico"
+                aria-label="Copiar grafico"
               >
-                <Image className="w-3.5 h-3.5" /> JPG
+                <Copy className="w-4 h-4" />
               </button>
             </div>
             <div
