@@ -26,6 +26,7 @@ import {
   Filter,
   AlertTriangle,
   Copy,
+  Check,
 } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { DashboardConfig, DashboardFieldOption, DashboardWidgetConfig, ProductionRecord, MachineType, ShiftType } from '../types';
@@ -467,9 +468,11 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [widgetPageSizes, setWidgetPageSizes] = useState<Record<string, number>>({});
   const [areaRangeByWidget, setAreaRangeByWidget] = useState<Record<string, AreaRangeKey>>({});
   const [chartExportStatus, setChartExportStatus] = useState<Record<string, string | undefined>>({});
+  const [chartCopyFeedback, setChartCopyFeedback] = useState<Record<string, boolean>>({});
   const [activeDrilldownWidgetId, setActiveDrilldownWidgetId] = useState<string | null>(null);
   const detailSectionRef = useRef<HTMLDivElement | null>(null);
   const chartContainerRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const copyFeedbackTimeoutsRef = useRef<Record<string, number | undefined>>({});
   
   // Global Filters
   const [startDate, setStartDate] = useState('');
@@ -479,6 +482,14 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  useEffect(() => () => {
+    Object.values(copyFeedbackTimeoutsRef.current).forEach((timeoutId) => {
+      if (timeoutId) {
+        window.clearTimeout(timeoutId);
+      }
+    });
+  }, []);
 
   const loadDashboardData = async () => {
     setLoading(true);
@@ -644,6 +655,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const copyWidgetChartAsJpg = async (widget: DashboardWidgetConfig) => {
     const node = chartContainerRefs.current[widget.id];
+    setChartCopyFeedback((prev) => ({ ...prev, [widget.id]: false }));
     if (!node) {
       setChartExportStatus((prev) => ({ ...prev, [widget.id]: 'No se encontro el contenedor del grafico.' }));
       return;
@@ -675,10 +687,23 @@ const Dashboard: React.FC<DashboardProps> = ({
             'image/png': blob,
           }),
         ]);
+        if (copyFeedbackTimeoutsRef.current[widget.id]) {
+          window.clearTimeout(copyFeedbackTimeoutsRef.current[widget.id]);
+        }
+        setChartCopyFeedback((prev) => ({
+          ...prev,
+          [widget.id]: true,
+        }));
         setChartExportStatus((prev) => ({
           ...prev,
-          [widget.id]: 'Grafico copiado al portapapeles.',
+          [widget.id]: undefined,
         }));
+        copyFeedbackTimeoutsRef.current[widget.id] = window.setTimeout(() => {
+          setChartCopyFeedback((prev) => ({
+            ...prev,
+            [widget.id]: false,
+          }));
+        }, 2000);
         return;
       }
 
@@ -697,11 +722,13 @@ const Dashboard: React.FC<DashboardProps> = ({
         ...prev,
         [widget.id]: 'El navegador no permite copiar imagen directo. Se descargo el archivo .png.',
       }));
+      setChartCopyFeedback((prev) => ({ ...prev, [widget.id]: false }));
     } catch (err: any) {
       setChartExportStatus((prev) => ({
         ...prev,
         [widget.id]: err?.message || 'No se pudo copiar el grafico.',
       }));
+      setChartCopyFeedback((prev) => ({ ...prev, [widget.id]: false }));
     }
   };
 
@@ -1530,11 +1557,21 @@ const Dashboard: React.FC<DashboardProps> = ({
               </div>
               <button
                 onClick={() => void copyWidgetChartAsJpg(widget)}
-                className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700"
-                title="Copiar grafico"
-                aria-label="Copiar grafico"
+                className={`inline-flex items-center justify-center rounded-lg h-8 transition-colors ${chartCopyFeedback[widget.id]
+                  ? 'px-2.5 gap-1.5 bg-emerald-100 text-emerald-700'
+                  : 'w-8 bg-slate-100 hover:bg-slate-200 text-slate-700'
+                }`}
+                title={chartCopyFeedback[widget.id] ? 'Copiado' : 'Copiar grafico'}
+                aria-label={chartCopyFeedback[widget.id] ? 'Copiado' : 'Copiar grafico'}
               >
-                <Copy className="w-4 h-4" />
+                {chartCopyFeedback[widget.id] ? (
+                  <>
+                    <Check className="w-4 h-4" />
+                    <span className="text-[11px] font-semibold">Copiado</span>
+                  </>
+                ) : (
+                  <Copy className="w-4 h-4" />
+                )}
               </button>
             </div>
             <div
@@ -1545,7 +1582,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             >
               {renderWidget(widget)}
             </div>
-            {chartExportStatus[widget.id] && (
+            {chartExportStatus[widget.id] && !chartCopyFeedback[widget.id] && (
               <p className="mt-2 text-[11px] text-slate-500">{chartExportStatus[widget.id]}</p>
             )}
           </div>
