@@ -111,7 +111,9 @@ export interface ProductionStats {
 export interface FilterState {
   startDate: string;
   endDate: string;
+  machineMode: 'auto' | 'manual';
   machineGroups: string[];
+  machines: string[];
   boss: string;
   operator: string;
 }

@@ -187,7 +187,9 @@ const AppContent: React.FC = () => {
   const [filters, setFilters] = useState<FilterState>({
     startDate: '',
     endDate: '',
+    machineMode: 'auto',
     machineGroups: [],
+    machines: [],
     boss: '',
     operator: ''
   });
@@ -390,6 +392,15 @@ const AppContent: React.FC = () => {
     return machineSet;
   }, [filters.machineGroups]);
 
+  const selectedMachinesManual = useMemo(() => new Set(filters.machines), [filters.machines]);
+
+  const effectiveMachineFilter = useMemo(() => {
+    if (filters.machineMode === 'manual') {
+      return selectedMachinesManual;
+    }
+    return selectedMachinesByGroup;
+  }, [filters.machineMode, selectedMachinesByGroup, selectedMachinesManual]);
+
   const getDynamicValueByAliases = (record: ProductionRecord, aliases: string[]): unknown => {
     const entries = Object.entries(record.dynamicFieldsValues || {});
     for (const [key, value] of entries) {
@@ -455,12 +466,12 @@ const AppContent: React.FC = () => {
     return records.filter(r => {
       const matchDate = (!filters.startDate || r.date >= filters.startDate) && 
                         (!filters.endDate || r.date <= filters.endDate);
-      const matchMachine = selectedMachinesByGroup.size === 0 || selectedMachinesByGroup.has(r.machine);
+      const matchMachine = effectiveMachineFilter.size === 0 || effectiveMachineFilter.has(r.machine);
       const matchBoss = !filters.boss || r.boss === filters.boss;
       const matchOperator = !filters.operator || r.operator === filters.operator;
       return matchDate && matchMachine && matchBoss && matchOperator;
     });
-  }, [records, filters, selectedMachinesByGroup]);
+  }, [records, filters, effectiveMachineFilter]);
 
   const sortedRecords = useMemo(() => {
     const sorted = [...filteredRecords];
@@ -558,7 +569,8 @@ const AppContent: React.FC = () => {
     let count = 0;
     if (filters.startDate) count++;
     if (filters.endDate) count++;
-    if (filters.machineGroups.length > 0) count++;
+    if (filters.machineMode === 'auto' && filters.machineGroups.length > 0) count++;
+    if (filters.machineMode === 'manual' && filters.machines.length > 0) count++;
     if (filters.boss) count++;
     if (filters.operator) count++;
     return count;
@@ -622,8 +634,20 @@ const AppContent: React.FC = () => {
   };
 
   const clearFilters = () => {
-    setFilters({ startDate: '', endDate: '', machineGroups: [], boss: '', operator: '' });
+    setFilters({
+      startDate: '',
+      endDate: '',
+      machineMode: 'auto',
+      machineGroups: [],
+      machines: [],
+      boss: '',
+      operator: '',
+    });
     setShowFilters(false);
+  };
+
+  const setMachineMode = (machineMode: 'auto' | 'manual') => {
+    setFilters((prev) => ({ ...prev, machineMode }));
   };
 
   const toggleMachineGroup = (groupId: string) => {
@@ -645,6 +669,24 @@ const AppContent: React.FC = () => {
 
   const clearMachineGroups = () => {
     setFilters((prev) => ({ ...prev, machineGroups: [] }));
+  };
+
+  const toggleMachine = (machine: string) => {
+    setFilters((prev) => {
+      const exists = prev.machines.includes(machine);
+      const machines = exists
+        ? prev.machines.filter((m) => m !== machine)
+        : [...prev.machines, machine];
+      return { ...prev, machines };
+    });
+  };
+
+  const selectAllMachines = () => {
+    setFilters((prev) => ({ ...prev, machines: [...MACHINES] }));
+  };
+
+  const clearMachines = () => {
+    setFilters((prev) => ({ ...prev, machines: [] }));
   };
 
   const applyDateShortcut = (type: 'today' | 'yesterday' | 'thisWeek' | 'lastWeek' | 'thisMonth' | 'lastMonth' | 'thisYear' | 'lastYear' | 'last3Months') => {
@@ -999,53 +1041,126 @@ const AppContent: React.FC = () => {
                     <div className="relative">
                       <label className="block text-xs font-bold text-slate-500 mb-1.5 ml-1">Grupo de máquinas</label>
                       <div className="rounded-lg border border-slate-200 bg-white shadow-sm p-2.5">
+                        <div className="mb-2 flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setMachineMode('auto')}
+                            className={`px-2.5 py-1 rounded-md text-[11px] font-semibold border transition-colors ${filters.machineMode === 'auto'
+                              ? 'border-blue-300 bg-blue-50 text-blue-700'
+                              : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                            }`}
+                          >
+                            Auto por grupo
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setMachineMode('manual')}
+                            className={`px-2.5 py-1 rounded-md text-[11px] font-semibold border transition-colors ${filters.machineMode === 'manual'
+                              ? 'border-blue-300 bg-blue-50 text-blue-700'
+                              : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                            }`}
+                          >
+                            Manual por máquina
+                          </button>
+                        </div>
+
                         <div className="flex items-center gap-2 mb-2 px-0.5">
                           <Monitor className="w-4 h-4 text-slate-400" />
-                          <span className="text-xs font-semibold text-slate-600">Selecciona una o varias áreas</span>
+                          <span className="text-xs font-semibold text-slate-600">
+                            {filters.machineMode === 'auto'
+                              ? 'Selecciona una o varias áreas'
+                              : 'Selecciona una o varias máquinas'}
+                          </span>
                         </div>
 
-                        <div className="space-y-1.5">
-                          {MACHINE_GROUPS.map((group) => {
-                            const checked = filters.machineGroups.includes(group.id);
-                            return (
-                              <label
-                                key={group.id}
-                                className={`flex items-start gap-2.5 rounded-md border px-2 py-1.5 cursor-pointer transition-colors ${checked
-                                  ? 'border-blue-300 bg-blue-50'
-                                  : 'border-slate-200 bg-white hover:bg-slate-50'
-                                }`}
+                        {filters.machineMode === 'auto' ? (
+                          <>
+                            <div className="space-y-1.5">
+                              {MACHINE_GROUPS.map((group) => {
+                                const checked = filters.machineGroups.includes(group.id);
+                                return (
+                                  <label
+                                    key={group.id}
+                                    className={`flex items-start gap-2.5 rounded-md border px-2 py-1.5 cursor-pointer transition-colors ${checked
+                                      ? 'border-blue-300 bg-blue-50'
+                                      : 'border-slate-200 bg-white hover:bg-slate-50'
+                                    }`}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={() => toggleMachineGroup(group.id)}
+                                      className="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                    />
+                                    <span className="min-w-0">
+                                      <span className="block text-sm font-semibold text-slate-700">{group.label}</span>
+                                      <span className="block text-[11px] text-slate-500 leading-4">{group.machines.join(', ')}</span>
+                                    </span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+
+                            <div className="mt-2.5 flex items-center justify-between gap-2">
+                              <button
+                                type="button"
+                                onClick={selectAllMachineGroups}
+                                className="text-[11px] font-semibold text-blue-700 hover:text-blue-800"
                               >
-                                <input
-                                  type="checkbox"
-                                  checked={checked}
-                                  onChange={() => toggleMachineGroup(group.id)}
-                                  className="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                                />
-                                <span className="min-w-0">
-                                  <span className="block text-sm font-semibold text-slate-700">{group.label}</span>
-                                  <span className="block text-[11px] text-slate-500 leading-4">{group.machines.join(', ')}</span>
-                                </span>
-                              </label>
-                            );
-                          })}
-                        </div>
+                                Seleccionar todos
+                              </button>
+                              <button
+                                type="button"
+                                onClick={clearMachineGroups}
+                                className="text-[11px] font-semibold text-slate-600 hover:text-slate-800"
+                              >
+                                Limpiar
+                              </button>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                              {MACHINES.map((machine) => {
+                                const checked = filters.machines.includes(machine);
+                                return (
+                                  <label
+                                    key={machine}
+                                    className={`flex items-center gap-2 rounded-md border px-2 py-1.5 cursor-pointer transition-colors ${checked
+                                      ? 'border-blue-300 bg-blue-50'
+                                      : 'border-slate-200 bg-white hover:bg-slate-50'
+                                    }`}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={() => toggleMachine(machine)}
+                                      className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                    />
+                                    <span className="text-sm font-semibold text-slate-700">{machine}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
 
-                        <div className="mt-2.5 flex items-center justify-between gap-2">
-                          <button
-                            type="button"
-                            onClick={selectAllMachineGroups}
-                            className="text-[11px] font-semibold text-blue-700 hover:text-blue-800"
-                          >
-                            Seleccionar todos
-                          </button>
-                          <button
-                            type="button"
-                            onClick={clearMachineGroups}
-                            className="text-[11px] font-semibold text-slate-600 hover:text-slate-800"
-                          >
-                            Limpiar
-                          </button>
-                        </div>
+                            <div className="mt-2.5 flex items-center justify-between gap-2">
+                              <button
+                                type="button"
+                                onClick={selectAllMachines}
+                                className="text-[11px] font-semibold text-blue-700 hover:text-blue-800"
+                              >
+                                Seleccionar todas
+                              </button>
+                              <button
+                                type="button"
+                                onClick={clearMachines}
+                                className="text-[11px] font-semibold text-slate-600 hover:text-slate-800"
+                              >
+                                Limpiar
+                              </button>
+                            </div>
+                          </>
+                        )}
                       </div>
                     </div>
 
