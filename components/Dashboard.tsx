@@ -23,13 +23,12 @@ import {
   Settings2,
   RefreshCw,
   Table,
-  Filter,
   AlertTriangle,
   Copy,
   Check,
 } from 'lucide-react';
 import html2canvas from 'html2canvas';
-import { DashboardConfig, DashboardFieldOption, DashboardWidgetConfig, ProductionRecord, MachineType, ShiftType } from '../types';
+import { DashboardConfig, DashboardFieldOption, DashboardWidgetConfig, ProductionRecord } from '../types';
 import { exportToExcel, getDashboardConfigs, getFieldCatalog } from '../services/storageService';
 import {
   buildDynamicFieldOptionsFromCatalog,
@@ -473,12 +472,6 @@ const Dashboard: React.FC<DashboardProps> = ({
   const detailSectionRef = useRef<HTMLDivElement | null>(null);
   const chartContainerRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const copyFeedbackTimeoutsRef = useRef<Record<string, number | undefined>>({});
-  
-  // Global Filters
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [filterMachine, setFilterMachine] = useState('');
-  const [filterShift, setFilterShift] = useState('');
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -566,16 +559,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [records.length]); // Reload structure if new dynamic fields appear in records
 
-  const filteredRecords = useMemo(() => {
-    return records.filter((r) => {
-      let keep = true;
-      if (startDate && r.date < startDate) keep = false;
-      if (endDate && r.date > endDate) keep = false;
-      if (filterMachine && r.machine !== filterMachine) keep = false;
-      if (filterShift && r.shift !== filterShift) keep = false;
-      return keep;
-    });
-  }, [records, startDate, endDate, filterMachine, filterShift]);
+  const filteredRecords = records;
 
   const fieldMap = useMemo<Record<string, DashboardFieldOption>>(() => {
     const map: Record<string, DashboardFieldOption> = {};
@@ -1482,62 +1466,6 @@ const Dashboard: React.FC<DashboardProps> = ({
               </button>
             )}
           </div>
-        </div>
-      </div>
-
-      {/* Global Data Filters */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-4">
-        <div className="flex items-center gap-2 text-slate-700 font-bold mb-3 text-sm">
-          <Filter className="w-4 h-4" /> Filtros de Datos
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div>
-            <label className="block text-xs font-bold text-slate-500 mb-1">Fecha Inicio</label>
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-bold text-slate-500 mb-1">Fecha Fin</label>
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-bold text-slate-500 mb-1">Maquina</label>
-            <select
-              value={filterMachine}
-              onChange={(e) => setFilterMachine(e.target.value)}
-              className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm"
-            >
-              <option value="">Todas</option>
-              {Object.values(MachineType).map((m) => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-bold text-slate-500 mb-1">Turno</label>
-            <select
-              value={filterShift}
-              onChange={(e) => setFilterShift(e.target.value)}
-              className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm"
-            >
-              <option value="">Todos</option>
-              {Object.values(ShiftType).map((s) => (
-                <option key={s} value={s}>{s}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-        <div className="mt-3 text-xs font-medium text-slate-500 text-right">
-          Mostrando {filteredRecords.length.toLocaleString()} de {records.length.toLocaleString()} registros totales
         </div>
       </div>
 

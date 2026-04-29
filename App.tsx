@@ -52,6 +52,23 @@ const VIEW_ROUTES: Record<View, string> = {
 const METER_FIELD_ALIASES = ['metros', 'metro', 'meters'];
 const CHANGE_FIELD_ALIASES = ['cambiopedido', 'cambio_pedido', 'cambios', 'changescount', 'changes'];
 const HISTORY_SORT_STORAGE_KEY_PREFIX = 'pigmea_history_sort_v1_';
+const MACHINE_GROUPS: Array<{ id: string; label: string; machines: string[] }> = [
+  {
+    id: 'impresion',
+    label: 'Impresión',
+    machines: ['WH1', 'WH3', 'Giave'],
+  },
+  {
+    id: 'laminacion',
+    label: 'Laminación',
+    machines: ['NEXUS', 'SL2', 'SL2 EVO'],
+  },
+  {
+    id: 'rebobinado',
+    label: 'Rebobinado',
+    machines: ['S2DT', '21', '22', 'PROSLIT'],
+  },
+];
 
 const getViewFromPath = (pathname: string): View | null => {
   const matchingEntry = (Object.entries(VIEW_ROUTES) as Array<[View, string]>).find(([, route]) => route === pathname);
@@ -170,7 +187,7 @@ const AppContent: React.FC = () => {
   const [filters, setFilters] = useState<FilterState>({
     startDate: '',
     endDate: '',
-    machine: '',
+    machineGroups: [],
     boss: '',
     operator: ''
   });
@@ -360,6 +377,19 @@ const AppContent: React.FC = () => {
     return Array.from(ops).sort();
   }, [records]);
 
+  const selectedMachinesByGroup = useMemo(() => {
+    if (!filters.machineGroups.length) return new Set<string>();
+
+    const machineSet = new Set<string>();
+    MACHINE_GROUPS.forEach((group) => {
+      if (filters.machineGroups.includes(group.id)) {
+        group.machines.forEach((machine) => machineSet.add(machine));
+      }
+    });
+
+    return machineSet;
+  }, [filters.machineGroups]);
+
   const getDynamicValueByAliases = (record: ProductionRecord, aliases: string[]): unknown => {
     const entries = Object.entries(record.dynamicFieldsValues || {});
     for (const [key, value] of entries) {
@@ -425,12 +455,12 @@ const AppContent: React.FC = () => {
     return records.filter(r => {
       const matchDate = (!filters.startDate || r.date >= filters.startDate) && 
                         (!filters.endDate || r.date <= filters.endDate);
-      const matchMachine = !filters.machine || r.machine === filters.machine;
+      const matchMachine = selectedMachinesByGroup.size === 0 || selectedMachinesByGroup.has(r.machine);
       const matchBoss = !filters.boss || r.boss === filters.boss;
       const matchOperator = !filters.operator || r.operator === filters.operator;
       return matchDate && matchMachine && matchBoss && matchOperator;
     });
-  }, [records, filters]);
+  }, [records, filters, selectedMachinesByGroup]);
 
   const sortedRecords = useMemo(() => {
     const sorted = [...filteredRecords];
@@ -528,7 +558,7 @@ const AppContent: React.FC = () => {
     let count = 0;
     if (filters.startDate) count++;
     if (filters.endDate) count++;
-    if (filters.machine) count++;
+    if (filters.machineGroups.length > 0) count++;
     if (filters.boss) count++;
     if (filters.operator) count++;
     return count;
@@ -592,8 +622,29 @@ const AppContent: React.FC = () => {
   };
 
   const clearFilters = () => {
-    setFilters({ startDate: '', endDate: '', machine: '', boss: '', operator: '' });
+    setFilters({ startDate: '', endDate: '', machineGroups: [], boss: '', operator: '' });
     setShowFilters(false);
+  };
+
+  const toggleMachineGroup = (groupId: string) => {
+    setFilters((prev) => {
+      const exists = prev.machineGroups.includes(groupId);
+      const machineGroups = exists
+        ? prev.machineGroups.filter((id) => id !== groupId)
+        : [...prev.machineGroups, groupId];
+      return { ...prev, machineGroups };
+    });
+  };
+
+  const selectAllMachineGroups = () => {
+    setFilters((prev) => ({
+      ...prev,
+      machineGroups: MACHINE_GROUPS.map((group) => group.id),
+    }));
+  };
+
+  const clearMachineGroups = () => {
+    setFilters((prev) => ({ ...prev, machineGroups: [] }));
   };
 
   const applyDateShortcut = (type: 'today' | 'yesterday' | 'thisWeek' | 'lastWeek' | 'thisMonth' | 'lastMonth' | 'thisYear' | 'lastYear' | 'last3Months') => {
@@ -946,18 +997,55 @@ const AppContent: React.FC = () => {
                     </div>
 
                     <div className="relative">
-                      <label className="block text-xs font-bold text-slate-500 mb-1.5 ml-1">Máquina</label>
-                      <div className="relative">
-                        <Monitor className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                        <select 
-                          className="w-full pl-9 pr-8 py-2.5 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-700 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all appearance-none shadow-sm cursor-pointer"
-                          value={filters.machine} 
-                          onChange={e => setFilters({...filters, machine: e.target.value})}
-                        >
-                          <option value="">Todas</option>
-                          {MACHINES.map(m => <option key={m} value={m}>{m}</option>)}
-                        </select>
-                        <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <label className="block text-xs font-bold text-slate-500 mb-1.5 ml-1">Grupo de máquinas</label>
+                      <div className="rounded-lg border border-slate-200 bg-white shadow-sm p-2.5">
+                        <div className="flex items-center gap-2 mb-2 px-0.5">
+                          <Monitor className="w-4 h-4 text-slate-400" />
+                          <span className="text-xs font-semibold text-slate-600">Selecciona una o varias áreas</span>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          {MACHINE_GROUPS.map((group) => {
+                            const checked = filters.machineGroups.includes(group.id);
+                            return (
+                              <label
+                                key={group.id}
+                                className={`flex items-start gap-2.5 rounded-md border px-2 py-1.5 cursor-pointer transition-colors ${checked
+                                  ? 'border-blue-300 bg-blue-50'
+                                  : 'border-slate-200 bg-white hover:bg-slate-50'
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => toggleMachineGroup(group.id)}
+                                  className="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                />
+                                <span className="min-w-0">
+                                  <span className="block text-sm font-semibold text-slate-700">{group.label}</span>
+                                  <span className="block text-[11px] text-slate-500 leading-4">{group.machines.join(', ')}</span>
+                                </span>
+                              </label>
+                            );
+                          })}
+                        </div>
+
+                        <div className="mt-2.5 flex items-center justify-between gap-2">
+                          <button
+                            type="button"
+                            onClick={selectAllMachineGroups}
+                            className="text-[11px] font-semibold text-blue-700 hover:text-blue-800"
+                          >
+                            Seleccionar todos
+                          </button>
+                          <button
+                            type="button"
+                            onClick={clearMachineGroups}
+                            className="text-[11px] font-semibold text-slate-600 hover:text-slate-800"
+                          >
+                            Limpiar
+                          </button>
+                        </div>
                       </div>
                     </div>
 

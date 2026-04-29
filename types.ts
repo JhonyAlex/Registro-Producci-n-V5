@@ -111,7 +111,7 @@ export interface ProductionStats {
 export interface FilterState {
   startDate: string;
   endDate: string;
-  machine: string;
+  machineGroups: string[];
   boss: string;
   operator: string;
 }
