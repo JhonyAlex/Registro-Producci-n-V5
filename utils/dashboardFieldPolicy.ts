@@ -190,7 +190,9 @@ export const evaluateRuleForRecord = (
     } else {
       value = getDynamicFieldValueByKey(record.dynamicFieldsValues, field);
     }
+    console.log(`[evaluateRuleForRecord] machine: ${(record as any).machine}, field: ${field}, coreField: ${coreFields.has(field)}, value: ${value}, numeric: ${toNumeric(value)}`);
     total += toNumeric(value);
   }
+  console.log(`[evaluateRuleForRecord] machine: ${(record as any).machine}, rule: ${rule.name}, total: ${total}, sourceFields: ${JSON.stringify(rule.sourceFields)}`);
   return total;
 };
