@@ -180,9 +180,16 @@ export const evaluateRuleForRecord = (
     return 0;
   }
 
+  const coreFields = new Set(['meters', 'changesCount', 'date', 'shift', 'boss', 'operator', 'machine', 'changesComment']);
+
   let total = 0;
   for (const field of rule.sourceFields) {
-    const value = getDynamicFieldValueByKey(record.dynamicFieldsValues, field);
+    let value: unknown;
+    if (coreFields.has(field)) {
+      value = (record as any)[field];
+    } else {
+      value = getDynamicFieldValueByKey(record.dynamicFieldsValues, field);
+    }
     total += toNumeric(value);
   }
   return total;
