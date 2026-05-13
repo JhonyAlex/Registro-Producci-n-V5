@@ -965,6 +965,8 @@ const sanitizeDashboardConfigPayload = (incoming: any): DashboardConfigPayload =
       throw new Error(`El widget ${title} requiere un campo de serie/comparación.`);
     }
 
+    const activeRuleId = widget?.activeRuleId ? String(widget.activeRuleId).trim() : null;
+
     return {
       id,
       title,
@@ -976,6 +978,7 @@ const sanitizeDashboardConfigPayload = (incoming: any): DashboardConfigPayload =
       secondaryValueField,
       aggregation,
       spanColumns,
+      activeRuleId,
     };
   });
 

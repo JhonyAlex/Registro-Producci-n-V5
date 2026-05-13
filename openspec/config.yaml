@@ -1,0 +1,59 @@
+# OpenSpec Configuration — Registro-Producci-n-V5
+# Generated: 2026-05-13
+
+project: Registro-Produccion-V5
+description: Production registration system for Pigmea — React/TypeScript SPA with Express backend and PostgreSQL.
+
+context: |
+  - Frontend: React 18 + TypeScript 5.8, Vite 6, Lucide UI, Recharts
+  - Backend: Express 5, PostgreSQL (pg), Socket.IO, JWT auth, bcrypt
+  - AI integrations: Gemini, Browserbase/Stagehand, OpenAI
+  - Deployment: Docker Compose (app + Postgres)
+  - Architecture: client-side heavy; dashboard widgets, dynamic fields, machine management
+  - Existing SDD change: dashboard-sum-rules (proposal only, incomplete)
+
+strict_tdd: true
+
+testing:
+  runner: node --import tsx --test
+  framework: Node.js built-in test (node:test + assert/strict)
+  unit:
+    available: true
+    pattern: "*.test.ts"
+    command: npx tsx --test utils/auditLog.test.ts
+  integration:
+    available: false
+    note: No integration test framework configured
+  e2e:
+    available: true
+    tool: Browserbase/Stagehand (test-browserbase.ts)
+    note: Not integrated into npm test; launches browser session
+  coverage:
+    available: false
+    note: No coverage tool installed (consider c8 or vite-plugin-istanbul)
+  quality:
+    linter:
+      available: false
+      note: No ESLint configured
+    type_checker:
+      available: true
+      command: npx tsc --noEmit
+    formatter:
+      available: false
+      note: No Prettier configured
+
+phases:
+  proposal:
+    requires: [problem_statement, scope, approach]
+  spec:
+    requires: [requirements, scenarios, acceptance_criteria]
+  design:
+    requires: [architecture, data_model, affected_files]
+  tasks:
+    requires: [implementation_steps, test_strategy]
+  apply:
+    requires: [specs, design, tasks]
+  verify:
+    requires: [test_results, spec_compliance]
+  archive:
+    requires: [synced_delta_specs]
