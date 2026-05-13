@@ -787,7 +787,14 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
                     <label className="block text-xs font-bold text-slate-500 mb-1">Campo Principal</label>
                     <select
                       value={rule.principalField || rule.sourceFields[0] || ''}
-                      onChange={(e) => updateRule(index, { principalField: e.target.value })}
+                      onChange={(e) => {
+                        const newPrincipal = e.target.value;
+                        const currentFields = rule.sourceFields || [];
+                        const updatedFields = currentFields.includes(newPrincipal)
+                          ? [newPrincipal, ...currentFields.filter(f => f !== newPrincipal)]
+                          : [newPrincipal, ...currentFields];
+                        updateRule(index, { principalField: newPrincipal, sourceFields: updatedFields });
+                      }}
                       className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
                     >
                       {numericFieldOptions.length === 0 ? (
