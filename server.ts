@@ -510,6 +510,7 @@ type DashboardConfigPayload = {
     name: string;
     description?: string;
     sourceFields: string[];
+    principalField: string;
     aggregation: string;
     condition?: {
       field: string;
@@ -992,6 +993,7 @@ const sanitizeDashboardConfigPayload = (incoming: any): DashboardConfigPayload =
         const id = String(rule?.id || '').trim() || `rule_${index + 1}`;
         const name = String(rule?.name || '').trim() || `Regla ${index + 1}`;
         const description = normalizeOptionalString(rule?.description) || undefined;
+        const principalField = String(rule?.principalField || rule?.sourceFields?.[0] || '').trim();
         const sourceFields = Array.isArray(rule?.sourceFields)
           ? rule.sourceFields.map((f: any) => String(f || '').trim()).filter((f: string) => f.length > 0)
           : [];
@@ -1006,11 +1008,16 @@ const sanitizeDashboardConfigPayload = (incoming: any): DashboardConfigPayload =
           throw new Error(`La regla ${name} requiere al menos un campo de origen.`);
         }
 
+        if (!principalField) {
+          throw new Error(`La regla ${name} requiere un campo principal.`);
+        }
+
         return {
           id,
           name,
           description,
           sourceFields,
+          principalField,
           aggregation,
           condition,
         };

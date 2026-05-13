@@ -145,6 +145,7 @@ export interface DashboardSumRule {
   name: string;
   description?: string;
   sourceFields: string[];
+  principalField: string;
   aggregation: 'sum';
   condition?: DashboardRuleCondition;
 }

@@ -139,6 +139,10 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
             spanColumns: normalizedSpanColumns,
           };
         }),
+        rules: (config.rules || []).map((rule) => ({
+          ...rule,
+          principalField: rule.principalField || rule.sourceFields?.[0] || '',
+        })),
       }));
 
       setConfigs(sanitizedConfigs);
@@ -244,6 +248,7 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
           name: `Nueva Regla`,
           description: '',
           sourceFields: ['meters'],
+          principalField: 'meters',
           aggregation: 'sum',
         },
       ],
@@ -779,25 +784,49 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
                   </div>
 
                   <div className="md:col-span-2">
-                    <label className="block text-xs font-bold text-slate-500 mb-1">Campos de Origen (Suma todos)</label>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Campo Principal</label>
+                    <select
+                      value={rule.principalField || rule.sourceFields[0] || ''}
+                      onChange={(e) => updateRule(index, { principalField: e.target.value })}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                    >
+                      {numericFieldOptions.length === 0 ? (
+                        <option value="">Sin campos numericos disponibles</option>
+                      ) : (
+                        numericFieldOptions.map((field) => (
+                          <option key={field.key} value={field.key}>{field.label}</option>
+                        ))
+                      )}
+                    </select>
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      El campo base al que se sumaran los campos adicionales.
+                    </p>
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Campos Adicionales (Suma al principal)</label>
                     <select
                       multiple
-                      value={rule.sourceFields}
+                      value={rule.sourceFields.filter((f) => f !== (rule.principalField || rule.sourceFields[0]))}
                       onChange={(e) => {
-                        const values = Array.from(
+                        const additionalValues = Array.from(
                           e.target.selectedOptions,
                           (option) => (option as HTMLOptionElement).value
                         );
-                        updateRuleSourceFields(index, values);
+                        const principal = rule.principalField || rule.sourceFields[0];
+                        const allFields = principal ? [principal, ...additionalValues.filter((f) => f !== principal)] : additionalValues;
+                        updateRuleSourceFields(index, allFields);
                       }}
                       className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm min-h-[120px]"
                     >
                       {numericFieldOptions.map((field) => (
-                        <option key={field.key} value={field.key}>{field.label}</option>
+                        <option key={field.key} value={field.key} disabled={field.key === (rule.principalField || rule.sourceFields[0])}>
+                          {field.label}{field.key === (rule.principalField || rule.sourceFields[0]) ? ' (campo principal)' : ''}
+                        </option>
                       ))}
                     </select>
                     <p className="text-[11px] text-slate-500 mt-1">
-                      Selecciona uno o varios campos numericos. La regla sumara todos los seleccionados por registro.
+                      Estos campos se sumaran al campo principal. El total sera: campo principal + campos adicionales.
                     </p>
                   </div>
 
