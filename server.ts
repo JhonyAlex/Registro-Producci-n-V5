@@ -325,6 +325,15 @@ async function initDB() {
       END $$;
     `);
 
+    await pool.query(`
+      DO $$
+      BEGIN
+        ALTER TABLE dashboard_configs ADD COLUMN rules JSONB NOT NULL DEFAULT '[]'::jsonb;
+      EXCEPTION
+        WHEN duplicate_column THEN NULL;
+      END $$;
+    `);
+
     for (const role of APP_ROLES) {
       for (const key of PERMISSION_KEYS) {
         const allowed = DEFAULT_ROLE_PERMISSIONS[role].includes(key);
@@ -496,6 +505,18 @@ type DashboardConfigPayload = {
   baseField?: string | null;
   relatedFields?: string[];
   widgets: DashboardWidgetConfig[];
+  rules?: Array<{
+    id: string;
+    name: string;
+    description?: string;
+    sourceFields: string[];
+    aggregation: string;
+    condition?: {
+      field: string;
+      operator: string;
+      value: string | number;
+    };
+  }>;
   isDefault: boolean;
 };
 
@@ -962,12 +983,44 @@ const sanitizeDashboardConfigPayload = (incoming: any): DashboardConfigPayload =
     throw new Error('Debes configurar al menos un widget.');
   }
 
+  const rawRules = incoming?.rules;
+  const rules = Array.isArray(rawRules)
+    ? rawRules.map((rule: any, index: number) => {
+        const id = String(rule?.id || '').trim() || `rule_${index + 1}`;
+        const name = String(rule?.name || '').trim() || `Regla ${index + 1}`;
+        const description = normalizeOptionalString(rule?.description) || undefined;
+        const sourceFields = Array.isArray(rule?.sourceFields)
+          ? rule.sourceFields.map((f: any) => String(f || '').trim()).filter((f: string) => f.length > 0)
+          : [];
+        const aggregation = String(rule?.aggregation || 'sum').trim() as DashboardAggregation;
+        const condition = rule?.condition ? {
+          field: String(rule.condition.field || '').trim(),
+          operator: String(rule.condition.operator || 'equals').trim(),
+          value: rule.condition.value,
+        } : undefined;
+
+        if (sourceFields.length === 0) {
+          throw new Error(`La regla ${name} requiere al menos un campo de origen.`);
+        }
+
+        return {
+          id,
+          name,
+          description,
+          sourceFields,
+          aggregation,
+          condition,
+        };
+      })
+    : [];
+
   return {
     name,
     description,
     baseField,
     relatedFields,
     widgets,
+    rules,
     isDefault,
   };
 };
@@ -2635,7 +2688,7 @@ app.get('/api/settings/dashboard-configs', authenticate, requirePermission('sett
   try {
     const result = await pool.query(
       `SELECT id, name, description, base_field as "baseField", related_fields as "relatedFields",
-              widgets, is_default as "isDefault", updated_by_user_id as "updatedByUserId",
+              widgets, rules, is_default as "isDefault", updated_by_user_id as "updatedByUserId",
               created_at as "createdAt", updated_at as "updatedAt"
        FROM dashboard_configs
        ORDER BY is_default DESC, updated_at DESC`
@@ -2650,7 +2703,7 @@ app.get('/api/settings/dashboard-configs/:id', authenticate, requirePermission('
   try {
     const result = await pool.query(
       `SELECT id, name, description, base_field as "baseField", related_fields as "relatedFields",
-              widgets, is_default as "isDefault", updated_by_user_id as "updatedByUserId",
+              widgets, rules, is_default as "isDefault", updated_by_user_id as "updatedByUserId",
               created_at as "createdAt", updated_at as "updatedAt"
        FROM dashboard_configs
        WHERE id = $1
@@ -2682,10 +2735,10 @@ app.post('/api/settings/dashboard-configs', authenticate, requirePermission('set
     }
 
     const result = await pool.query(
-      `INSERT INTO dashboard_configs (name, description, base_field, related_fields, widgets, is_default, updated_by_user_id, updated_at)
-       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, NOW())
+      `INSERT INTO dashboard_configs (name, description, base_field, related_fields, widgets, rules, is_default, updated_by_user_id, updated_at)
+       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7, $8, NOW())
        RETURNING id, name, description, base_field as "baseField", related_fields as "relatedFields",
-                 widgets, is_default as "isDefault", updated_by_user_id as "updatedByUserId",
+                 widgets, rules, is_default as "isDefault", updated_by_user_id as "updatedByUserId",
                  created_at as "createdAt", updated_at as "updatedAt"`,
       [
         payload.name,
@@ -2693,6 +2746,7 @@ app.post('/api/settings/dashboard-configs', authenticate, requirePermission('set
         payload.baseField,
         JSON.stringify(payload.relatedFields),
         JSON.stringify(payload.widgets),
+        JSON.stringify(payload.rules || []),
         payload.isDefault,
         user.id,
       ]
@@ -2740,12 +2794,13 @@ app.put('/api/settings/dashboard-configs/:id', authenticate, requirePermission('
            base_field = $3,
            related_fields = $4::jsonb,
            widgets = $5::jsonb,
-           is_default = $6,
-           updated_by_user_id = $7,
+           rules = $6::jsonb,
+           is_default = $7,
+           updated_by_user_id = $8,
            updated_at = NOW()
-       WHERE id = $8
+       WHERE id = $9
        RETURNING id, name, description, base_field as "baseField", related_fields as "relatedFields",
-                 widgets, is_default as "isDefault", updated_by_user_id as "updatedByUserId",
+                 widgets, rules, is_default as "isDefault", updated_by_user_id as "updatedByUserId",
                  created_at as "createdAt", updated_at as "updatedAt"`,
       [
         payload.name,
@@ -2753,6 +2808,7 @@ app.put('/api/settings/dashboard-configs/:id', authenticate, requirePermission('
         payload.baseField,
         JSON.stringify(payload.relatedFields),
         JSON.stringify(payload.widgets),
+        JSON.stringify(payload.rules || []),
         payload.isDefault,
         user.id,
         req.params.id,
@@ -2979,7 +3035,7 @@ app.get('/api/export', authenticate, requireRole(['admin', 'jefe_planta']), requ
       'SELECT machine, schema_version as version, fields_json as fields, updated_by_user_id as "updatedByUserId", updated_at as "updatedAt" FROM machine_field_schemas'
     );
     const dashboardConfigs = await pool.query(
-      `SELECT id, name, description, base_field as "baseField", related_fields as "relatedFields", widgets,
+      `SELECT id, name, description, base_field as "baseField", related_fields as "relatedFields", widgets, rules,
               is_default as "isDefault", updated_by_user_id as "updatedByUserId", created_at as "createdAt", updated_at as "updatedAt"
        FROM dashboard_configs`
     );
@@ -3077,14 +3133,15 @@ app.post('/api/import', authenticate, requireRole(['admin', 'jefe_planta']), req
         const incomingId = normalizeOptionalString(config?.id);
 
         await pool.query(
-          `INSERT INTO dashboard_configs (id, name, description, base_field, related_fields, widgets, is_default, updated_by_user_id, created_at, updated_at)
-           VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, COALESCE($9::timestamptz, NOW()), COALESCE($10::timestamptz, NOW()))
+          `INSERT INTO dashboard_configs (id, name, description, base_field, related_fields, widgets, rules, is_default, updated_by_user_id, created_at, updated_at)
+           VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, $8, $9, COALESCE($10::timestamptz, NOW()), COALESCE($11::timestamptz, NOW()))
            ON CONFLICT (id) DO UPDATE SET
              name = EXCLUDED.name,
              description = EXCLUDED.description,
              base_field = EXCLUDED.base_field,
              related_fields = EXCLUDED.related_fields,
              widgets = EXCLUDED.widgets,
+             rules = EXCLUDED.rules,
              is_default = EXCLUDED.is_default,
              updated_by_user_id = EXCLUDED.updated_by_user_id,
              updated_at = NOW()`,
@@ -3095,6 +3152,7 @@ app.post('/api/import', authenticate, requireRole(['admin', 'jefe_planta']), req
             payload.baseField,
             JSON.stringify(payload.relatedFields),
             JSON.stringify(payload.widgets),
+            JSON.stringify(payload.rules || []),
             payload.isDefault,
             config?.updatedByUserId || user.id,
             config?.createdAt || null,

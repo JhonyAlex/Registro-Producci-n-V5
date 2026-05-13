@@ -16,6 +16,7 @@ import GlobalLockScreenGuard from './components/GlobalLockScreenGuard';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { subscribeToRecords, subscribeToSettings, clearAllRecords, deleteRecord, exportToExcel, exportAllData, importAllData, reconnectDatabase, getMachineFieldSchema } from './services/storageService';
 import { getQueueCount, flushQueue, onQueueChanged } from './services/offlineQueue';
+import { METER_FIELD_ALIASES, CHANGE_FIELD_ALIASES, normalizeKeyForAlias, getMetersValue, getChangesValue } from './utils/dashboardFieldPolicy';
 import { socket } from './services/socket';
 import { ProductionRecord, FilterState, MachineFieldDefinition } from './types';
 import { MACHINES } from './constants';
@@ -49,8 +50,6 @@ const VIEW_ROUTES: Record<View, string> = {
   fieldSchemas: '/admin/campos',
   dashboardAdmin: '/admin/dashboards',
 };
-const METER_FIELD_ALIASES = ['metros', 'metro', 'meters'];
-const CHANGE_FIELD_ALIASES = ['cambiopedido', 'cambio_pedido', 'cambios', 'changescount', 'changes'];
 const HISTORY_SORT_STORAGE_KEY_PREFIX = 'pigmea_history_sort_v1_';
 const MACHINE_GROUPS: Array<{ id: string; label: string; machines: string[] }> = [
   {
@@ -74,13 +73,6 @@ const getViewFromPath = (pathname: string): View | null => {
   const matchingEntry = (Object.entries(VIEW_ROUTES) as Array<[View, string]>).find(([, route]) => route === pathname);
   return matchingEntry ? matchingEntry[0] : null;
 };
-
-const normalizeFieldKey = (value: string): string =>
-  String(value || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, '');
 
 const formatCellValue = (value: unknown): string => {
   if (value === null || value === undefined || value === '') return '—';
@@ -401,36 +393,15 @@ const AppContent: React.FC = () => {
     return selectedMachinesByGroup;
   }, [filters.machineMode, selectedMachinesByGroup, selectedMachinesManual]);
 
-  const getDynamicValueByAliases = (record: ProductionRecord, aliases: string[]): unknown => {
-    const entries = Object.entries(record.dynamicFieldsValues || {});
-    for (const [key, value] of entries) {
-      const normalized = normalizeFieldKey(key);
-      if (aliases.some((alias) => normalizeFieldKey(alias) === normalized)) {
-        return value;
-      }
-    }
-    return undefined;
-  };
-
-  const getMetersValue = (record: ProductionRecord): unknown => {
-    const dynamicMeters = getDynamicValueByAliases(record, METER_FIELD_ALIASES);
-    return dynamicMeters !== undefined ? dynamicMeters : record.meters;
-  };
-
-  const getChangesValue = (record: ProductionRecord): unknown => {
-    const dynamicChanges = getDynamicValueByAliases(record, CHANGE_FIELD_ALIASES);
-    return dynamicChanges !== undefined ? dynamicChanges : record.changesCount;
-  };
-
   const dynamicHistoryColumns = useMemo<DynamicHistoryColumn[]>(() => {
     const map = new Map<string, DynamicHistoryColumn>();
-    const excludedAliases = new Set([...METER_FIELD_ALIASES, ...CHANGE_FIELD_ALIASES].map(normalizeFieldKey));
+    const excludedAliases = new Set([...METER_FIELD_ALIASES, ...CHANGE_FIELD_ALIASES].map(normalizeKeyForAlias));
 
     (Object.values(machineSchemasByMachine) as MachineFieldDefinition[][]).forEach((fields) => {
       fields
         .filter((field) => field.enabled !== false)
         .forEach((field) => {
-          if (excludedAliases.has(normalizeFieldKey(field.key))) return;
+          if (excludedAliases.has(normalizeKeyForAlias(field.key))) return;
           const existing = map.get(field.key);
           if (!existing || field.order < existing.order) {
             map.set(field.key, {
@@ -444,7 +415,7 @@ const AppContent: React.FC = () => {
 
     records.forEach((record) => {
       Object.keys(record.dynamicFieldsValues || {}).forEach((fieldKey) => {
-        if (excludedAliases.has(normalizeFieldKey(fieldKey))) return;
+        if (excludedAliases.has(normalizeKeyForAlias(fieldKey))) return;
         if (!map.has(fieldKey)) {
           map.set(fieldKey, {
             key: fieldKey,

@@ -382,6 +382,7 @@ export const createDashboardConfig = async (data: {
   baseField?: string;
   relatedFields?: string[];
   widgets: DashboardConfig['widgets'];
+  rules?: DashboardConfig['rules'];
   isDefault: boolean;
 }): Promise<DashboardConfig> => {
   return fetchJson('/settings/dashboard-configs', {
@@ -398,6 +399,7 @@ export const updateDashboardConfig = async (
     baseField?: string;
     relatedFields?: string[];
     widgets: DashboardConfig['widgets'];
+    rules?: DashboardConfig['rules'];
     isDefault: boolean;
   }
 ): Promise<DashboardConfig> => {

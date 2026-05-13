@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Plus, Save, Trash2, RefreshCw, Settings2, BarChart3, Info, ArrowUp, ArrowDown } from 'lucide-react';
-import { DashboardConfig, DashboardFieldOption, DashboardWidgetConfig, ProductionRecord } from '../types';
+import { Plus, Save, Trash2, RefreshCw, Settings2, BarChart3, Info, ArrowUp, ArrowDown, Filter } from 'lucide-react';
+import { DashboardConfig, DashboardFieldOption, DashboardSumRule, DashboardWidgetConfig, ProductionRecord } from '../types';
 import {
   buildDynamicFieldOptionsFromCatalog,
   DASHBOARD_ALLOWED_CORE_FIELDS,
@@ -23,6 +23,7 @@ type EditableDashboard = {
   name: string;
   description: string;
   widgets: DashboardWidgetConfig[];
+  rules: DashboardSumRule[];
   isDefault: boolean;
 };
 
@@ -58,6 +59,7 @@ const makeEmptyDashboard = (): EditableDashboard => ({
       spanColumns: 2,
     },
   ],
+  rules: [],
   isDefault: false,
 });
 
@@ -84,6 +86,7 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [activeTab, setActiveTab] = useState<'widgets' | 'rules'>('widgets');
 
   const showSuccess = (message: string) => {
     setSuccess(message);
@@ -110,7 +113,11 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
       const sanitizedConfigs = dashboardConfigs.map((config) => ({
         ...config,
         widgets: (config.widgets || []).map((w) => {
-          const normalizedSpanColumns = Number((w as any).spanColumns) === 1 ? 1 : 2;
+          const normalizedSpanColumns: DashboardWidgetConfig['spanColumns'] = Number((w as any).spanColumns) === 1 ? 1 : 2;
+
+          const resolvedValueField = optionMap.has(w.valueField)
+            ? w.valueField
+            : (numericKeys.size > 0 ? Array.from(numericKeys)[0] : 'operator');
 
           return {
             ...w,
@@ -122,13 +129,11 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
                   .map((value) => String(value || '').trim())
                   .filter((value) => value.length > 0)
               : undefined,
-            valueField: optionMap.has(w.valueField)
-              ? w.valueField
-              : (numericKeys.size > 0 ? Array.from(numericKeys)[0] : 'operator'),
+            valueField: resolvedValueField,
             secondaryValueField:
               w.secondaryValueField && optionMap.has(w.secondaryValueField) ? w.secondaryValueField : undefined,
             aggregation:
-              w.aggregation === 'count' || numericKeys.has(w.valueField)
+              w.aggregation === 'count' || numericKeys.has(resolvedValueField)
                 ? w.aggregation
                 : 'count',
             spanColumns: normalizedSpanColumns,
@@ -145,6 +150,7 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
           name: first.name,
           description: first.description || '',
           widgets: first.widgets || [],
+          rules: first.rules || [],
           isDefault: first.isDefault,
         });
       } else {
@@ -168,6 +174,7 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
       name: config.name,
       description: config.description || '',
       widgets: config.widgets || [],
+      rules: config.rules || [],
       isDefault: config.isDefault,
     });
     setError('');
@@ -227,6 +234,52 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
     });
   };
 
+  const addRule = () => {
+    setForm((prev) => ({
+      ...prev,
+      rules: [
+        ...prev.rules,
+        {
+          id: `rule_${Date.now()}`,
+          name: `Nueva Regla`,
+          description: '',
+          sourceFields: ['meters'],
+          aggregation: 'sum',
+        },
+      ],
+    }));
+  };
+
+  const removeRule = (index: number) => {
+    setForm((prev) => {
+      const removedRule = prev.rules[index];
+      const widgetsUsingRule = prev.widgets.filter((w) => w.activeRuleId === removedRule?.id);
+      const cleanedWidgets = prev.widgets.map((w) =>
+        w.activeRuleId === removedRule?.id ? { ...w, activeRuleId: null } : w
+      );
+
+      return {
+        ...prev,
+        rules: prev.rules.filter((_, i) => i !== index),
+        widgets: cleanedWidgets,
+      };
+    });
+  };
+
+  const updateRule = (index: number, patch: Partial<DashboardSumRule>) => {
+    setForm((prev) => ({
+      ...prev,
+      rules: prev.rules.map((rule, i) => (i === index ? { ...rule, ...patch } : rule)),
+    }));
+  };
+
+  const updateRuleSourceFields = (index: number, fields: string[]) => {
+    setForm((prev) => ({
+      ...prev,
+      rules: prev.rules.map((rule, i) => (i === index ? { ...rule, sourceFields: fields } : rule)),
+    }));
+  };
+
   const handleSave = async () => {
     if (!form.name.trim()) {
       setError('El nombre del dashboard es obligatorio.');
@@ -246,6 +299,7 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
         name: form.name.trim(),
         description: form.description.trim(),
         widgets: form.widgets,
+        rules: form.rules,
         isDefault: form.isDefault,
       };
 
@@ -263,6 +317,7 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
         name: updated.name,
         description: updated.description || '',
         widgets: updated.widgets || [],
+        rules: updated.rules || [],
         isDefault: updated.isDefault,
       });
     } catch (err: any) {
@@ -415,6 +470,37 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
             <label htmlFor="isDefaultDashboard" className="text-sm font-semibold text-slate-700">Mostrar por defecto al entrar</label>
           </div>
 
+          <div className="flex gap-2 border-b border-slate-200">
+            <button
+              type="button"
+              onClick={() => setActiveTab('widgets')}
+              className={`px-4 py-2 text-sm font-semibold border-b-2 transition-colors ${
+                activeTab === 'widgets'
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              <BarChart3 className="w-4 h-4 inline mr-1" /> Widgets
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('rules')}
+              className={`px-4 py-2 text-sm font-semibold border-b-2 transition-colors ${
+                activeTab === 'rules'
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              <Filter className="w-4 h-4 inline mr-1" /> Reglas
+              {form.rules.length > 0 && (
+                <span className="ml-1 inline-flex items-center justify-center h-5 min-w-[20px] px-1 text-[10px] font-bold rounded-full bg-blue-100 text-blue-700">
+                  {form.rules.length}
+                </span>
+              )}
+            </button>
+          </div>
+
+          {activeTab === 'widgets' && (
           <div className="border border-slate-200 rounded-xl p-3 space-y-4 bg-slate-50">
             <div className="flex items-center justify-between">
               <div>
@@ -537,6 +623,25 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
                   </div>
 
                   <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Regla Activa (Opcional)</label>
+                    <select
+                      value={widget.activeRuleId || ''}
+                      onChange={(e) => updateWidget(index, { activeRuleId: e.target.value || null })}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                    >
+                      <option value="">Sin regla (usa campo individual)</option>
+                      {form.rules.map((rule) => (
+                        <option key={rule.id} value={rule.id}>{rule.name}</option>
+                      ))}
+                    </select>
+                    {widget.activeRuleId && (
+                      <p className="text-[11px] text-blue-600 mt-1">
+                        La regla suma los campos configurados en lugar del campo individual.
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
                     <label className="block text-xs font-bold text-slate-500 mb-1">Operacion</label>
                     <select
                       value={widget.aggregation}
@@ -621,6 +726,98 @@ const DashboardManager: React.FC<DashboardManagerProps> = ({ records }) => {
               </div>
             )}
           </div>
+          )}
+
+          {activeTab === 'rules' && (
+          <div className="border border-slate-200 rounded-xl p-3 space-y-4 bg-slate-50">
+            <div className="flex items-center justify-between">
+              <div>
+                <h4 className="font-bold text-slate-800 flex items-center gap-2"><Filter className="w-4 h-4" /> Reglas de Metricas</h4>
+                <p className="text-xs text-slate-500 mt-1">Crea reglas que suman multiples campos en una sola metrica. Luego activa una regla en cualquier widget.</p>
+              </div>
+              <button
+                type="button"
+                onClick={addRule}
+                className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-lg bg-blue-600 text-white hover:bg-blue-700"
+              >
+                <Plus className="w-4 h-4" /> Agregar Regla
+              </button>
+            </div>
+
+            {form.rules.map((rule, index) => (
+              <div key={rule.id} className="bg-white border border-slate-200 shadow-sm rounded-xl p-4 space-y-3">
+                <div className="flex justify-between items-center pb-2 border-b border-slate-100">
+                  <p className="text-sm font-bold text-slate-800">Regla {index + 1}</p>
+                  <button
+                    type="button"
+                    onClick={() => removeRule(index)}
+                    className="text-xs font-semibold text-red-600 hover:text-red-800 flex items-center gap-1"
+                  >
+                    <Trash2 className="w-3 h-3" /> Eliminar
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Nombre de la Regla</label>
+                    <input
+                      value={rule.name}
+                      onChange={(e) => updateRule(index, { name: e.target.value })}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                      placeholder="Ej: Total Metros Combinados"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Descripcion (Opcional)</label>
+                    <input
+                      value={rule.description || ''}
+                      onChange={(e) => updateRule(index, { description: e.target.value })}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                      placeholder="Que representa esta regla"
+                    />
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Campos de Origen (Suma todos)</label>
+                    <select
+                      multiple
+                      value={rule.sourceFields}
+                      onChange={(e) => {
+                        const values = Array.from(
+                          e.target.selectedOptions,
+                          (option) => (option as HTMLOptionElement).value
+                        );
+                        updateRuleSourceFields(index, values);
+                      }}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm min-h-[120px]"
+                    >
+                      {numericFieldOptions.map((field) => (
+                        <option key={field.key} value={field.key}>{field.label}</option>
+                      ))}
+                    </select>
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      Selecciona uno o varios campos numericos. La regla sumara todos los seleccionados por registro.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Widgets usando esta regla</label>
+                    <p className="text-xs text-slate-700">
+                      {form.widgets.filter((w) => w.activeRuleId === rule.id).length} widget(s) activo(s)
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ))}
+            {form.rules.length === 0 && (
+              <div className="text-center py-6 text-slate-500 text-sm flex flex-col items-center">
+                <Filter className="w-8 h-8 text-slate-300 mb-2" />
+                Agrega reglas para combinar multiples campos en una sola metrica.
+              </div>
+            )}
+          </div>
+          )}
 
           <div className="pt-2">
             <button

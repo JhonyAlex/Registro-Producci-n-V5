@@ -132,6 +132,23 @@ export type DashboardChartType =
 
 export type DashboardAggregationType = 'count' | 'sum' | 'avg';
 
+export type DashboardRuleOperator = 'equals' | 'not_equals' | 'greater_than' | 'less_than' | 'contains';
+
+export interface DashboardRuleCondition {
+  field: string;
+  operator: DashboardRuleOperator;
+  value: string | number;
+}
+
+export interface DashboardSumRule {
+  id: string;
+  name: string;
+  description?: string;
+  sourceFields: string[];
+  aggregation: 'sum';
+  condition?: DashboardRuleCondition;
+}
+
 export interface DashboardFieldOption {
   key: string;
   label: string;
@@ -143,22 +160,24 @@ export interface DashboardWidgetConfig {
   id: string;
   title: string;
   chartType: DashboardChartType;
-  groupBy?: string; // New field for V2
+  groupBy?: string;
   comparisonField?: string;
   comparisonValues?: string[];
   valueField: string;
   secondaryValueField?: string;
   aggregation: DashboardAggregationType;
   spanColumns?: 1 | 2;
+  activeRuleId?: string | null;
 }
 
 export interface DashboardConfig {
   id: string;
   name: string;
   description?: string;
-  baseField?: string; // Made optional for V2
-  relatedFields?: string[]; // Made optional for V2
+  baseField?: string;
+  relatedFields?: string[];
   widgets: DashboardWidgetConfig[];
+  rules?: DashboardSumRule[];
   isDefault: boolean;
   createdAt?: string;
   updatedAt?: string;

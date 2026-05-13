@@ -11,8 +11,11 @@
     "test": "node --import tsx --test"
   },
   "dependencies": {
+    "@browserbasehq/sdk": "^2.10.0",
+    "@browserbasehq/stagehand": "^3.4.0",
     "@google/genai": "latest",
     "bcrypt": "^6.0.0",
+    "browserbase": "^3.1.1",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
@@ -22,6 +25,7 @@
     "jspdf": "2.5.1",
     "jspdf-autotable": "3.8.2",
     "lucide-react": "0.263.1",
+    "openai": "^6.37.0",
     "pg": "^8.20.0",
     "react": "18.2.0",
     "react-dom": "18.2.0",

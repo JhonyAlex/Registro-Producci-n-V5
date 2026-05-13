@@ -28,12 +28,15 @@ import {
   Check,
 } from 'lucide-react';
 import html2canvas from 'html2canvas';
-import { DashboardConfig, DashboardFieldOption, DashboardWidgetConfig, ProductionRecord } from '../types';
+import { DashboardConfig, DashboardFieldOption, DashboardSumRule, DashboardWidgetConfig, ProductionRecord } from '../types';
 import { exportToExcel, getDashboardConfigs, getFieldCatalog } from '../services/storageService';
 import {
   buildDynamicFieldOptionsFromCatalog,
   DASHBOARD_ALLOWED_CORE_FIELDS,
   getDynamicFieldValueByKey,
+  getMetersValue,
+  getChangesValue,
+  evaluateRuleForRecord,
 } from '../utils/dashboardFieldPolicy';
 
 interface DashboardProps {
@@ -83,8 +86,6 @@ const AGGREGATION_LABELS: Record<string, string> = {
 };
 
 const COLORS = ['#0ea5e9', '#16a34a', '#f97316', '#ef4444', '#a855f7', '#f43f5e', '#14b8a6', '#6366f1'];
-const METER_FIELD_ALIASES = ['metros', 'metro', 'meters'];
-const CHANGE_FIELD_ALIASES = ['cambiopedido', 'cambio_pedido', 'cambios', 'changescount', 'changes'];
 
 const RADIAN = Math.PI / 180;
 
@@ -153,27 +154,6 @@ const normalizeFieldKey = (value: string): string =>
 
 const metricLabel = (valueField: string, fieldMap: Record<string, DashboardFieldOption>) => {
   return fieldMap[valueField]?.label || valueField;
-};
-
-const getDynamicValueByAliases = (record: ProductionRecord, aliases: string[]): unknown => {
-  const entries = Object.entries(record.dynamicFieldsValues || {});
-  for (const [key, value] of entries) {
-    const normalized = normalizeFieldKey(key);
-    if (aliases.some((alias) => normalizeFieldKey(alias) === normalized)) {
-      return value;
-    }
-  }
-  return undefined;
-};
-
-const getMetersValue = (record: ProductionRecord): unknown => {
-  const dynamicMeters = getDynamicValueByAliases(record, METER_FIELD_ALIASES);
-  return dynamicMeters !== undefined ? dynamicMeters : record.meters;
-};
-
-const getChangesValue = (record: ProductionRecord): unknown => {
-  const dynamicChanges = getDynamicValueByAliases(record, CHANGE_FIELD_ALIASES);
-  return dynamicChanges !== undefined ? dynamicChanges : record.changesCount;
 };
 
 const getWidgetSpanClass = (widget: DashboardWidgetConfig) => {
@@ -343,6 +323,166 @@ const buildKpiData = (
   }
   return totalSum;
 };
+
+const resolveActiveRule = (
+  widget: DashboardWidgetConfig,
+  rules: DashboardSumRule[] | undefined
+): DashboardSumRule | null => {
+  if (!widget.activeRuleId || !rules || rules.length === 0) return null;
+  return rules.find((r) => r.id === widget.activeRuleId) || null;
+};
+
+const buildRuleBasedGroupedData = (
+  records: ProductionRecord[],
+  baseField: string,
+  rule: DashboardSumRule,
+  aggregation: DashboardWidgetConfig['aggregation']
+) => {
+  const groups = new Map<string, GroupAccumulator>();
+
+  records.forEach((record) => {
+    const key = toDisplayString(getRecordFieldValue(record, baseField));
+    const current = groups.get(key) || { label: key, sum: 0, count: 0 };
+    const ruleValue = evaluateRuleForRecord(record, rule);
+
+    if (aggregation === 'count') {
+      current.sum += 1;
+      current.count += 1;
+    } else {
+      current.sum += ruleValue;
+      current.count += 1;
+    }
+
+    groups.set(key, current);
+  });
+
+  let rows = Array.from(groups.values()).map((entry) => ({
+    label: entry.label,
+    value: aggregation === 'avg' ? (entry.count > 0 ? entry.sum / entry.count : 0) : entry.sum,
+  }));
+
+  if (baseField === 'date') {
+    rows = rows.sort((a, b) => a.label.localeCompare(b.label));
+  } else {
+    rows = rows.sort((a, b) => b.value - a.value);
+  }
+
+  return rows;
+};
+
+const buildRuleBasedKpiData = (
+  records: ProductionRecord[],
+  rule: DashboardSumRule,
+  aggregation: DashboardWidgetConfig['aggregation']
+): number => {
+  if (records.length === 0) return 0;
+  if (aggregation === 'count') return records.length;
+
+  const totalSum = records.reduce((acc, record) => acc + evaluateRuleForRecord(record, rule), 0);
+  if (aggregation === 'avg') {
+    return totalSum / records.length;
+  }
+  return totalSum;
+};
+
+const buildRuleBasedSegmentCompareData = (
+  records: ProductionRecord[],
+  baseField: string,
+  selectedGroupValues: string[],
+  comparisonField: string,
+  selectedComparisonValues: string[],
+  rule: DashboardSumRule,
+  aggregation: DashboardWidgetConfig['aggregation']
+) => {
+  const groups = new Map<string, { label: string; totals: Record<string, GroupAccumulator> }>();
+  let globalSum = 0;
+  let globalCount = 0;
+  const explicitSegments = selectedComparisonValues
+    .map((value) => String(value || '').trim())
+    .filter((value) => value.length > 0);
+
+  records.forEach((record) => {
+    const groupKey = toDisplayString(getRecordFieldValue(record, baseField));
+    const segmentKey = toDisplayString(getRecordFieldValue(record, comparisonField));
+
+    if (selectedGroupValues.length > 0 && !selectedGroupValues.includes(groupKey)) return;
+    if (explicitSegments.length > 0 && !explicitSegments.includes(segmentKey)) return;
+
+    const current = groups.get(groupKey) || { label: groupKey, totals: {} };
+    const segment = current.totals[segmentKey] || { label: segmentKey, sum: 0, count: 0 };
+
+    if (aggregation === 'count') {
+      segment.sum += 1;
+      segment.count += 1;
+      globalSum += 1;
+      globalCount += 1;
+    } else {
+      const numeric = evaluateRuleForRecord(record, rule);
+      segment.sum += numeric;
+      segment.count += 1;
+      globalSum += numeric;
+      globalCount += 1;
+    }
+
+    current.totals[segmentKey] = segment;
+    groups.set(groupKey, current);
+  });
+
+  const inferredSegments = Array.from(
+    new Set(Array.from(groups.values()).flatMap((group) => Object.keys(group.totals)))
+  ).sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+
+  const segments = explicitSegments.length > 0 ? explicitSegments : inferredSegments.slice(0, 6);
+
+  let rows = Array.from(groups.values()).map((group) => {
+    const row: Record<string, string | number> = { label: group.label, total: 0 };
+    let rowSum = 0;
+    let rowCount = 0;
+
+    segments.forEach((segment) => {
+      const bucket = group.totals[segment];
+      const value = !bucket
+        ? 0
+        : aggregation === 'avg'
+          ? (bucket.count > 0 ? bucket.sum / bucket.count : 0)
+          : bucket.sum;
+      row[segment] = value;
+
+      if (bucket) {
+        rowSum += bucket.sum;
+        rowCount += bucket.count;
+      }
+    });
+
+    row.total = aggregation === 'avg' ? (rowCount > 0 ? rowSum / rowCount : 0) : rowSum;
+    return row;
+  });
+
+  if (baseField === 'date') {
+    rows = rows.sort((a, b) => String(a.label).localeCompare(String(b.label)));
+  } else {
+    rows = rows.sort((a, b) => Number(b.total || 0) - Number(a.total || 0));
+  }
+
+  const segmentMetrics = segments
+    .map((segment) => {
+      let sum = 0;
+      let count = 0;
+      Array.from(groups.values()).forEach((group) => {
+        const bucket = group.totals[segment];
+        if (!bucket) return;
+        sum += bucket.sum;
+        count += bucket.count;
+      });
+      return { segment, total: aggregation === 'avg' ? (count > 0 ? sum / count : 0) : sum };
+    })
+    .sort((a, b) => b.total - a.total);
+
+  const grandTotal = aggregation === 'avg' ? (globalCount > 0 ? globalSum / globalCount : 0) : globalSum;
+
+  return { rows, segments, segmentMetrics, grandTotal, recordCount: globalCount };
+};
+
 
 const buildSegmentCompareData = (
   records: ProductionRecord[],
@@ -939,16 +1079,19 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const renderWidget = (widget: DashboardWidgetConfig) => {
     const groupByField = widget.groupBy || 'machine';
+    const activeRule = resolveActiveRule(widget, selectedConfig?.rules);
 
     if (widget.chartType === 'kpi') {
-      const val = buildKpiData(filteredRecords, widget.valueField, widget.aggregation);
+      const val = activeRule
+        ? buildRuleBasedKpiData(filteredRecords, activeRule, widget.aggregation)
+        : buildKpiData(filteredRecords, widget.valueField, widget.aggregation);
       return (
         <div className="flex flex-col items-center justify-center h-40">
           <p className="text-[3rem] font-black text-slate-800 leading-none tracking-tight">
             {formatNumber(val)}
           </p>
           <p className="text-sm font-medium text-slate-500 mt-2 uppercase tracking-wide">
-            {AGGREGATION_LABELS[widget.aggregation]} de {metricLabel(widget.valueField, fieldMap)}
+            {AGGREGATION_LABELS[widget.aggregation]} de {activeRule ? activeRule.name : metricLabel(widget.valueField, fieldMap)}
           </p>
         </div>
       );
@@ -969,7 +1112,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               <Legend />
               <Bar
                 dataKey="primary"
-                name={metricLabel(widget.valueField, fieldMap)}
+                name={activeRule ? activeRule.name : metricLabel(widget.valueField, fieldMap)}
                 fill="#0ea5e9"
                 radius={[6, 6, 0, 0]}
                 cursor="pointer"
@@ -1012,15 +1155,25 @@ const Dashboard: React.FC<DashboardProps> = ({
         availableComparisonValues.includes(value)
       );
 
-      const { rows, segments, segmentMetrics, grandTotal, recordCount } = buildSegmentCompareData(
-        filteredRecords,
-        groupByField,
-        selectedGroupValues,
-        comparisonField,
-        selectedComparisonValues,
-        widget.valueField,
-        widget.aggregation
-      );
+      const { rows, segments, segmentMetrics, grandTotal, recordCount } = activeRule
+        ? buildRuleBasedSegmentCompareData(
+            filteredRecords,
+            groupByField,
+            selectedGroupValues,
+            comparisonField,
+            selectedComparisonValues,
+            activeRule,
+            widget.aggregation
+          )
+        : buildSegmentCompareData(
+            filteredRecords,
+            groupByField,
+            selectedGroupValues,
+            comparisonField,
+            selectedComparisonValues,
+            widget.valueField,
+            widget.aggregation
+          );
 
       const bestRow = rows[0];
       const detailRows = rows.slice(0, 8);
@@ -1130,12 +1283,14 @@ const Dashboard: React.FC<DashboardProps> = ({
       );
     }
 
-    const data = buildGroupedData(
-      filteredRecords,
-      groupByField,
-      widget.valueField,
-      widget.aggregation
-    );
+    const data = activeRule
+      ? buildRuleBasedGroupedData(filteredRecords, groupByField, activeRule, widget.aggregation)
+      : buildGroupedData(
+          filteredRecords,
+          groupByField,
+          widget.valueField,
+          widget.aggregation
+        );
 
     if (widget.chartType === 'pie') {
       return (
@@ -1164,7 +1319,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               <Tooltip
                 formatter={(value: any, name: string) => [
                   Number(value).toLocaleString(),
-                  name === 'value' ? metricLabel(widget.valueField, fieldMap) : name,
+                  name === 'value' ? (activeRule ? activeRule.name : metricLabel(widget.valueField, fieldMap)) : name,
                 ]}
               />
               <Legend wrapperStyle={{ fontSize: '12px' }} />
@@ -1186,13 +1341,13 @@ const Dashboard: React.FC<DashboardProps> = ({
               <Tooltip
                 formatter={(value: any, name: string) => [
                   Number(value).toLocaleString(),
-                  name === 'value' ? metricLabel(widget.valueField, fieldMap) : name,
+                  name === 'value' ? (activeRule ? activeRule.name : metricLabel(widget.valueField, fieldMap)) : name,
                 ]}
               />
               <Line
                 type="monotone"
                 dataKey="value"
-                name={metricLabel(widget.valueField, fieldMap)}
+                name={activeRule ? activeRule.name : metricLabel(widget.valueField, fieldMap)}
                 stroke="#0ea5e9"
                 strokeWidth={2.5}
                 dot={{ r: 3 }}
@@ -1212,12 +1367,14 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (widget.chartType === 'area') {
       const areaRange = areaRangeByWidget[widget.id] || 'month';
       const areaRecords = filterAreaRecordsByRange(filteredRecords, areaRange);
-      const areaData = buildGroupedData(
-        areaRecords,
-        groupByField,
-        widget.valueField,
-        widget.aggregation
-      );
+      const areaData = activeRule
+        ? buildRuleBasedGroupedData(areaRecords, groupByField, activeRule, widget.aggregation)
+        : buildGroupedData(
+            areaRecords,
+            groupByField,
+            widget.valueField,
+            widget.aggregation
+          );
 
       return (
         <div>
@@ -1260,13 +1417,13 @@ const Dashboard: React.FC<DashboardProps> = ({
               <Tooltip
                 formatter={(value: any, name: string) => [
                   Number(value).toLocaleString(),
-                  name === 'value' ? metricLabel(widget.valueField, fieldMap) : name,
+                  name === 'value' ? (activeRule ? activeRule.name : metricLabel(widget.valueField, fieldMap)) : name,
                 ]}
               />
               <Area
                 type="monotone"
                 dataKey="value"
-                name={metricLabel(widget.valueField, fieldMap)}
+                name={activeRule ? activeRule.name : metricLabel(widget.valueField, fieldMap)}
                 stroke="#16a34a"
                 fill={`url(#gradient-${widget.id})`}
                 onClick={(payload: any) => {
@@ -1316,12 +1473,12 @@ const Dashboard: React.FC<DashboardProps> = ({
               <Tooltip
                 formatter={(value: any, name: string) => [
                   Number(value).toLocaleString(),
-                  name === 'value' ? metricLabel(widget.valueField, fieldMap) : name,
+                  name === 'value' ? (activeRule ? activeRule.name : metricLabel(widget.valueField, fieldMap)) : name,
                 ]}
               />
               <Bar
                 dataKey="value"
-                name={metricLabel(widget.valueField, fieldMap)}
+                name={activeRule ? activeRule.name : metricLabel(widget.valueField, fieldMap)}
                 fill="#0ea5e9"
                 radius={[0, 6, 6, 0]}
                 cursor="pointer"
@@ -1356,12 +1513,12 @@ const Dashboard: React.FC<DashboardProps> = ({
             <Tooltip
               formatter={(value: any, name: string) => [
                 Number(value).toLocaleString(),
-                name === 'value' ? metricLabel(widget.valueField, fieldMap) : name,
+                name === 'value' ? (activeRule ? activeRule.name : metricLabel(widget.valueField, fieldMap)) : name,
               ]}
             />
             <Bar
               dataKey="value"
-              name={metricLabel(widget.valueField, fieldMap)}
+              name={activeRule ? activeRule.name : metricLabel(widget.valueField, fieldMap)}
               fill="#0ea5e9"
               radius={[6, 6, 0, 0]}
               cursor="pointer"
@@ -1470,7 +1627,9 @@ const Dashboard: React.FC<DashboardProps> = ({
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 grid-flow-row-dense">
-        {orderedWidgets.map((widget) => (
+        {orderedWidgets.map((widget) => {
+          const widgetActiveRule = resolveActiveRule(widget, selectedConfig?.rules);
+          return (
           <div
             key={widget.id}
             className={`bg-white border border-slate-200 rounded-2xl p-5 min-w-0 ${getWidgetSpanClass(widget)}`}
@@ -1481,6 +1640,11 @@ const Dashboard: React.FC<DashboardProps> = ({
                 <p className="text-xs text-slate-500 mt-1">
                   {CHART_LABELS[widget.chartType]} 
                   {widget.chartType !== 'kpi' && ` · Agrupado por ${metricLabel(widget.groupBy || 'machine', fieldMap)}`}
+                  {widgetActiveRule && (
+                    <span className="ml-1.5 inline-flex items-center rounded-md bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 ring-1 ring-inset ring-blue-700/10">
+                      Regla: {widgetActiveRule.name}
+                    </span>
+                  )}
                 </p>
               </div>
               <button
@@ -1514,7 +1678,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               <p className="mt-2 text-[11px] text-slate-500">{chartExportStatus[widget.id]}</p>
             )}
           </div>
-        ))}
+        );})}
         {orderedWidgets.length === 0 && (
           <div className="col-span-full py-10 text-center text-slate-500">
             Este dashboard no tiene widgets configurados.
