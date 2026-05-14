@@ -37,6 +37,9 @@ import {
   getMetersValue,
   getChangesValue,
   evaluateRuleForRecord,
+  getRecordFieldValue,
+  toDisplayString,
+  toNumeric,
 } from '../utils/dashboardFieldPolicy';
 
 interface DashboardProps {
@@ -88,62 +91,6 @@ const AGGREGATION_LABELS: Record<string, string> = {
 const COLORS = ['#0ea5e9', '#16a34a', '#f97316', '#ef4444', '#a855f7', '#f43f5e', '#14b8a6', '#6366f1'];
 
 const RADIAN = Math.PI / 180;
-
-const getRecordFieldValue = (record: ProductionRecord, field: string): unknown => {
-  if (field.startsWith('dynamic.')) {
-    return getDynamicFieldValueByKey(record.dynamicFieldsValues, field);
-  }
-
-  if (field === 'meters') {
-    return getMetersValue(record);
-  }
-
-  if (field === 'changesCount') {
-    return getChangesValue(record);
-  }
-
-  return (record as any)[field];
-};
-
-const toDisplayString = (value: unknown): string => {
-  if (value === null || value === undefined || value === '') return 'Sin dato';
-  if (Array.isArray(value)) return value.join(', ') || 'Sin dato';
-  return String(value);
-};
-
-const toNumeric = (value: unknown): number => {
-  if (typeof value === 'number') {
-    return Number.isFinite(value) ? value : 0;
-  }
-
-  if (typeof value === 'string') {
-    const raw = value.trim();
-    if (!raw) return 0;
-
-    // Normaliza formatos comunes: 1.234,56 | 1,234.56 | 1234,56 | 1234.56
-    let normalized = raw.replace(/\s+/g, '');
-    const hasComma = normalized.includes(',');
-    const hasDot = normalized.includes('.');
-
-    if (hasComma && hasDot) {
-      const lastComma = normalized.lastIndexOf(',');
-      const lastDot = normalized.lastIndexOf('.');
-      if (lastComma > lastDot) {
-        normalized = normalized.replace(/\./g, '').replace(',', '.');
-      } else {
-        normalized = normalized.replace(/,/g, '');
-      }
-    } else if (hasComma) {
-      normalized = normalized.replace(',', '.');
-    }
-
-    const parsed = Number(normalized);
-    return Number.isFinite(parsed) ? parsed : 0;
-  }
-
-  const n = Number(value);
-  return Number.isFinite(n) ? n : 0;
-};
 
 const normalizeFieldKey = (value: string): string =>
   String(value || '')
@@ -268,7 +215,8 @@ const buildCombinedTrendData = (
   baseField: string,
   primaryField: string,
   secondaryField: string,
-  aggregation: DashboardWidgetConfig['aggregation']
+  aggregation: DashboardWidgetConfig['aggregation'],
+  activeRule: DashboardSumRule | null
 ) => {
   const groups = new Map<string, { primary: GroupAccumulator; secondary: GroupAccumulator }>();
 
@@ -285,7 +233,7 @@ const buildCombinedTrendData = (
       current.primary.count += 1;
       current.secondary.count += 1;
     } else {
-      current.primary.sum += toNumeric(getRecordFieldValue(record, primaryField));
+      current.primary.sum += activeRule ? evaluateRuleForRecord(record, activeRule) : toNumeric(getRecordFieldValue(record, primaryField));
       current.secondary.sum += toNumeric(getRecordFieldValue(record, secondaryField));
       current.primary.count += 1;
       current.secondary.count += 1;
@@ -1099,7 +1047,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
     if (widget.chartType === 'combined_trend') {
       const secondaryField = widget.secondaryValueField || widget.valueField;
-      const data = buildCombinedTrendData(filteredRecords, groupByField, widget.valueField, secondaryField, widget.aggregation);
+      const data = buildCombinedTrendData(filteredRecords, groupByField, widget.valueField, secondaryField, widget.aggregation, activeRule);
 
       return (
         <div className="h-72">

@@ -157,19 +157,60 @@ const passesRuleCondition = (
   }
 };
 
-const toDisplayString = (value: unknown): string => {
-  if (value === null || value === undefined || value === '') return '';
-  if (Array.isArray(value)) return value.join(', ');
+export const toDisplayString = (value: unknown): string => {
+  if (value === null || value === undefined || value === '') return 'Sin dato';
+  if (Array.isArray(value)) return value.join(', ') || 'Sin dato';
   return String(value);
 };
 
-const toNumeric = (value: unknown): number => {
-  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+export const toNumeric = (value: unknown): number => {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : 0;
+  }
+
   if (typeof value === 'string') {
-    const parsed = parseFloat(value.replace(/,/g, '.'));
+    const raw = value.trim();
+    if (!raw) return 0;
+
+    // Normaliza formatos comunes: 1.234,56 | 1,234.56 | 1234,56 | 1234.56
+    let normalized = raw.replace(/\s+/g, '');
+    const hasComma = normalized.includes(',');
+    const hasDot = normalized.includes('.');
+
+    if (hasComma && hasDot) {
+      const lastComma = normalized.lastIndexOf(',');
+      const lastDot = normalized.lastIndexOf('.');
+      if (lastComma > lastDot) {
+        normalized = normalized.replace(/\./g, '').replace(',', '.');
+      } else {
+        normalized = normalized.replace(/,/g, '');
+      }
+    } else if (hasComma) {
+      normalized = normalized.replace(',', '.');
+    }
+
+    const parsed = Number(normalized);
     return Number.isFinite(parsed) ? parsed : 0;
   }
-  return 0;
+
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+};
+
+export const getRecordFieldValue = (record: ProductionRecord, field: string): unknown => {
+  if (field.startsWith('dynamic.')) {
+    return getDynamicFieldValueByKey(record.dynamicFieldsValues, field);
+  }
+
+  if (field === 'meters') {
+    return getMetersValue(record);
+  }
+
+  if (field === 'changesCount') {
+    return getChangesValue(record);
+  }
+
+  return (record as any)[field];
 };
 
 export const evaluateRuleForRecord = (
@@ -180,17 +221,10 @@ export const evaluateRuleForRecord = (
     return 0;
   }
 
-  const coreFields = new Set(['meters', 'changesCount', 'date', 'shift', 'boss', 'operator', 'machine', 'changesComment']);
-
   let total = 0;
   for (const field of rule.sourceFields) {
-    let value: unknown;
-    if (coreFields.has(field)) {
-      value = (record as any)[field];
-    } else {
-      value = getDynamicFieldValueByKey(record.dynamicFieldsValues, field);
-    }
-    console.log(`[evaluateRuleForRecord] machine: ${(record as any).machine}, field: ${field}, coreField: ${coreFields.has(field)}, value: ${value}, numeric: ${toNumeric(value)}`);
+    const value = getRecordFieldValue(record, field);
+    console.log(`[evaluateRuleForRecord] machine: ${(record as any).machine}, field: ${field}, value: ${value}, numeric: ${toNumeric(value)}`);
     total += toNumeric(value);
   }
   console.log(`[evaluateRuleForRecord] machine: ${(record as any).machine}, rule: ${rule.name}, total: ${total}, sourceFields: ${JSON.stringify(rule.sourceFields)}`);
