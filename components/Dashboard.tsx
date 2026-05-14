@@ -1039,7 +1039,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             {formatNumber(val)}
           </p>
           <p className="text-sm font-medium text-slate-500 mt-2 uppercase tracking-wide">
-            {AGGREGATION_LABELS[widget.aggregation]} de {activeRule ? activeRule.name : metricLabel(widget.valueField, fieldMap)}
+            {AGGREGATION_LABELS[widget.aggregation]} de {metricLabel(activeRule ? (activeRule.principalField || widget.valueField) : widget.valueField, fieldMap)}
           </p>
         </div>
       );
@@ -1052,7 +1052,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       return (
         <div className="h-72">
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+            <ComposedChart data={data} margin={{ top: 24, right: 16, left: 0, bottom: 8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
               <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748b' }} />
               <YAxis tick={{ fontSize: 11, fill: '#64748b' }} />
@@ -1060,7 +1060,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               <Legend />
               <Bar
                 dataKey="primary"
-                name={activeRule ? activeRule.name : metricLabel(widget.valueField, fieldMap)}
+                name={metricLabel(activeRule ? (activeRule.principalField || widget.valueField) : widget.valueField, fieldMap)}
                 fill="#0ea5e9"
                 radius={[6, 6, 0, 0]}
                 cursor="pointer"
@@ -1069,7 +1069,15 @@ const Dashboard: React.FC<DashboardProps> = ({
                   if (!label) return;
                   setWidgetSelection(widget.id, { groupLabel: label });
                 }}
-              />
+              >
+                <LabelList
+                  dataKey="primary"
+                  position="top"
+                  offset={8}
+                  formatter={(value: any) => formatNumber(Number(value || 0))}
+                  style={{ fill: '#334155', fontSize: 10, fontWeight: 700 }}
+                />
+              </Bar>
               <Line
                 type="monotone"
                 dataKey="secondary"
@@ -1267,7 +1275,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               <Tooltip
                 formatter={(value: any, name: string) => [
                   Number(value).toLocaleString(),
-                  name === 'value' ? (activeRule ? activeRule.name : metricLabel(widget.valueField, fieldMap)) : name,
+                  name === 'value' ? (metricLabel(activeRule ? (activeRule.principalField || widget.valueField) : widget.valueField, fieldMap)) : name,
                 ]}
               />
               <Legend wrapperStyle={{ fontSize: '12px' }} />
@@ -1289,13 +1297,13 @@ const Dashboard: React.FC<DashboardProps> = ({
               <Tooltip
                 formatter={(value: any, name: string) => [
                   Number(value).toLocaleString(),
-                  name === 'value' ? (activeRule ? activeRule.name : metricLabel(widget.valueField, fieldMap)) : name,
+                  name === 'value' ? (metricLabel(activeRule ? (activeRule.principalField || widget.valueField) : widget.valueField, fieldMap)) : name,
                 ]}
               />
               <Line
                 type="monotone"
                 dataKey="value"
-                name={activeRule ? activeRule.name : metricLabel(widget.valueField, fieldMap)}
+                name={metricLabel(activeRule ? (activeRule.principalField || widget.valueField) : widget.valueField, fieldMap)}
                 stroke="#0ea5e9"
                 strokeWidth={2.5}
                 dot={{ r: 3 }}
@@ -1365,13 +1373,13 @@ const Dashboard: React.FC<DashboardProps> = ({
               <Tooltip
                 formatter={(value: any, name: string) => [
                   Number(value).toLocaleString(),
-                  name === 'value' ? (activeRule ? activeRule.name : metricLabel(widget.valueField, fieldMap)) : name,
+                  name === 'value' ? (metricLabel(activeRule ? (activeRule.principalField || widget.valueField) : widget.valueField, fieldMap)) : name,
                 ]}
               />
               <Area
                 type="monotone"
                 dataKey="value"
-                name={activeRule ? activeRule.name : metricLabel(widget.valueField, fieldMap)}
+                name={metricLabel(activeRule ? (activeRule.principalField || widget.valueField) : widget.valueField, fieldMap)}
                 stroke="#16a34a"
                 fill={`url(#gradient-${widget.id})`}
                 onClick={(payload: any) => {
@@ -1421,12 +1429,12 @@ const Dashboard: React.FC<DashboardProps> = ({
               <Tooltip
                 formatter={(value: any, name: string) => [
                   Number(value).toLocaleString(),
-                  name === 'value' ? (activeRule ? activeRule.name : metricLabel(widget.valueField, fieldMap)) : name,
+                  name === 'value' ? (metricLabel(activeRule ? (activeRule.principalField || widget.valueField) : widget.valueField, fieldMap)) : name,
                 ]}
               />
               <Bar
                 dataKey="value"
-                name={activeRule ? activeRule.name : metricLabel(widget.valueField, fieldMap)}
+                name={metricLabel(activeRule ? (activeRule.principalField || widget.valueField) : widget.valueField, fieldMap)}
                 fill="#0ea5e9"
                 radius={[0, 6, 6, 0]}
                 cursor="pointer"
@@ -1454,19 +1462,19 @@ const Dashboard: React.FC<DashboardProps> = ({
     return (
       <div className="h-72">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 8 }}>
+          <BarChart data={data} margin={{ top: 24, right: 12, left: 0, bottom: 8 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
             <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748b' }} />
             <YAxis tick={{ fontSize: 11, fill: '#64748b' }} />
             <Tooltip
               formatter={(value: any, name: string) => [
                 Number(value).toLocaleString(),
-                name === 'value' ? (activeRule ? activeRule.name : metricLabel(widget.valueField, fieldMap)) : name,
+                name === 'value' ? metricLabel(activeRule ? (activeRule.principalField || widget.valueField) : widget.valueField, fieldMap) : name,
               ]}
             />
             <Bar
               dataKey="value"
-              name={activeRule ? activeRule.name : metricLabel(widget.valueField, fieldMap)}
+              name={metricLabel(activeRule ? (activeRule.principalField || widget.valueField) : widget.valueField, fieldMap)}
               fill="#0ea5e9"
               radius={[6, 6, 0, 0]}
               cursor="pointer"
@@ -1475,7 +1483,15 @@ const Dashboard: React.FC<DashboardProps> = ({
                 if (!label) return;
                 setWidgetSelection(widget.id, { groupLabel: label });
               }}
-            />
+            >
+              <LabelList
+                dataKey="value"
+                position="top"
+                offset={8}
+                formatter={(value: any) => formatNumber(Number(value || 0))}
+                style={{ fill: '#334155', fontSize: 10, fontWeight: 700 }}
+              />
+            </Bar>
           </BarChart>
         </ResponsiveContainer>
         <div className="mt-2 text-[11px] text-slate-500">Haz clic en una barra para ver el detalle en tabla.</div>
