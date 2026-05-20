@@ -1598,45 +1598,47 @@ const Dashboard: React.FC<DashboardProps> = ({
             key={widget.id}
             className={`bg-white border border-slate-200 rounded-2xl p-5 min-w-0 ${getWidgetSpanClass(widget)}`}
           >
-            <div className="mb-3 flex items-start justify-between gap-3">
-              <div>
-                <h4 className="font-bold text-slate-900">{widget.title}</h4>
-                <p className="text-xs text-slate-500 mt-1">
-                  {CHART_LABELS[widget.chartType]} 
-                  {widget.chartType !== 'kpi' && ` · Agrupado por ${metricLabel(widget.groupBy || 'machine', fieldMap)}`}
-                  {widgetActiveRule && (
-                    <span className="ml-1.5 inline-flex items-center rounded-md bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 ring-1 ring-inset ring-blue-700/10">
-                      Regla: {widgetActiveRule.name}
-                    </span>
-                  )}
-                </p>
-              </div>
-              <button
-                onClick={() => void copyWidgetChartAsJpg(widget)}
-                className={`inline-flex items-center justify-center rounded-lg h-8 transition-colors ${chartCopyFeedback[widget.id]
-                  ? 'px-2.5 gap-1.5 bg-emerald-100 text-emerald-700'
-                  : 'w-8 bg-slate-100 hover:bg-slate-200 text-slate-700'
-                }`}
-                title={chartCopyFeedback[widget.id] ? 'Copiado' : 'Copiar grafico'}
-                aria-label={chartCopyFeedback[widget.id] ? 'Copiado' : 'Copiar grafico'}
-              >
-                {chartCopyFeedback[widget.id] ? (
-                  <>
-                    <Check className="w-4 h-4" />
-                    <span className="text-[11px] font-semibold">Copiado</span>
-                  </>
-                ) : (
-                  <Copy className="w-4 h-4" />
-                )}
-              </button>
-            </div>
             <div
               ref={(node) => {
                 chartContainerRefs.current[widget.id] = node;
               }}
               className="rounded-xl bg-white"
             >
-              {renderWidget(widget)}
+              <div className="mb-3 px-4 pt-4 flex items-start justify-between gap-3">
+                <div>
+                  <h4 className="font-bold text-slate-900">{widget.title}</h4>
+                  <p className="text-xs text-slate-500 mt-1">
+                    {CHART_LABELS[widget.chartType]} 
+                    {widget.chartType !== 'kpi' && ` · Agrupado por ${metricLabel(widget.groupBy || 'machine', fieldMap)}`}
+                    {widgetActiveRule && (
+                      <span className="ml-1.5 inline-flex items-center rounded-md bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 ring-1 ring-inset ring-blue-700/10">
+                        Regla: {widgetActiveRule.name}
+                      </span>
+                    )}
+                  </p>
+                </div>
+                <button
+                  onClick={() => void copyWidgetChartAsJpg(widget)}
+                  className={`inline-flex items-center justify-center rounded-lg h-8 transition-colors ${chartCopyFeedback[widget.id]
+                    ? 'px-2.5 gap-1.5 bg-emerald-100 text-emerald-700'
+                    : 'w-8 bg-slate-100 hover:bg-slate-200 text-slate-700'
+                  }`}
+                  title={chartCopyFeedback[widget.id] ? 'Copiado' : 'Copiar grafico'}
+                  aria-label={chartCopyFeedback[widget.id] ? 'Copiado' : 'Copiar grafico'}
+                >
+                  {chartCopyFeedback[widget.id] ? (
+                    <>
+                      <Check className="w-4 h-4" />
+                      <span className="text-[11px] font-semibold">Copiado</span>
+                    </>
+                  ) : (
+                    <Copy className="w-4 h-4" />
+                  )}
+                </button>
+              </div>
+              <div className="px-2 pb-3">
+                {renderWidget(widget)}
+              </div>
             </div>
             {chartExportStatus[widget.id] && !chartCopyFeedback[widget.id] && (
               <p className="mt-2 text-[11px] text-slate-500">{chartExportStatus[widget.id]}</p>
