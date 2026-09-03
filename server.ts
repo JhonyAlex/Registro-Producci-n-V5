@@ -176,6 +176,21 @@ async function initDB() {
       'CREATE INDEX IF NOT EXISTS idx_production_records_machine ON production_records(machine)'
     );
     await pool.query(
+      'CREATE INDEX IF NOT EXISTS idx_production_records_timestamp ON production_records(timestamp DESC)'
+    );
+    await pool.query(
+      'CREATE INDEX IF NOT EXISTS idx_production_records_recorded_at ON production_records(recorded_at DESC)'
+    );
+    await pool.query(
+      'CREATE INDEX IF NOT EXISTS idx_production_records_date ON production_records(date DESC)'
+    );
+    await pool.query(
+      'CREATE INDEX IF NOT EXISTS idx_production_records_operator ON production_records(operator)'
+    );
+    await pool.query(
+      'CREATE INDEX IF NOT EXISTS idx_production_records_boss ON production_records(boss)'
+    );
+    await pool.query(
       'CREATE INDEX IF NOT EXISTS idx_machine_field_schemas_updated_at ON machine_field_schemas(updated_at DESC)'
     );
 
@@ -1997,8 +2012,11 @@ app.put('/api/admin/role-permissions/:role', authenticate, requireRole(['admin']
 });
 
 // --- RECORDS ---
-app.get('/api/records', authenticate, requirePermission('records.read'), requireDB, async (req, res) => {
+
+// Fast Recent Records endpoint (ultra-light for initial view / ShiftForm)
+app.get('/api/records/recent', authenticate, requirePermission('records.read'), requireDB, async (req, res) => {
   const user = (req as any).user;
+  const limit = Math.max(1, Math.min(Number(req.query.limit) || 5, 50));
   try {
     let query = 'SELECT id, timestamp, recorded_at as "recordedAt", created_by_user_id as "createdByUserId", last_modified_by_user_id as "lastModifiedByUserId", date, machine, meters, changescount as "changesCount", changescomment as "changesComment", shift, boss, boss_user_id as "bossUserId", operator, operator_user_id as "operatorUserId", dynamic_fields_values as "dynamicFieldsValues", schema_version_used as "schemaVersionUsed" FROM production_records';
     let params: any[] = [];
@@ -2025,7 +2043,8 @@ app.get('/api/records', authenticate, requirePermission('records.read'), require
       params.push(visibleNames);
     }
 
-    query += ' ORDER BY timestamp DESC';
+    query += ` ORDER BY timestamp DESC LIMIT $${params.length + 1}`;
+    params.push(limit);
 
     const result = await pool.query(query, params);
     const rows = result.rows.map(row => ({
@@ -2034,6 +2053,162 @@ app.get('/api/records', authenticate, requirePermission('records.read'), require
     }));
     res.json(rows);
   } catch (err) {
+    console.error('Error in GET /api/records/recent:', err);
+    res.status(500).json({ error: 'Failed to fetch recent records' });
+  }
+});
+
+// Full / Paginated / Filtered Records endpoint
+app.get('/api/records', authenticate, requirePermission('records.read'), requireDB, async (req, res) => {
+  const user = (req as any).user;
+  try {
+    const {
+      page,
+      limit,
+      paginate,
+      startDate,
+      endDate,
+      machine,
+      machines,
+      boss,
+      operator,
+      sortBy,
+      sortDirection,
+      all
+    } = req.query;
+
+    const isPaginated = paginate === 'true' || Boolean(page) || (Boolean(limit) && limit !== 'all');
+    const parsedPage = Math.max(1, parseInt(String(page || '1'), 10) || 1);
+    const parsedLimit = limit === 'all' ? null : Math.max(1, Math.min(parseInt(String(limit || '25'), 10) || 25, 500));
+
+    let whereClauses: string[] = [];
+    let params: any[] = [];
+
+    const canViewAllRecords = user.role === 'admin' || user.role === 'jefe_planta' || user.role === 'supervisor';
+
+    if (!canViewAllRecords) {
+      const visResult = await pool.query('SELECT target_id FROM user_visibility WHERE observer_id = $1', [user.id]);
+      const visibleUserIds = [user.id, ...visResult.rows.map((r: any) => r.target_id)];
+      
+      const visibleUsersResult = await pool.query('SELECT name FROM users WHERE id = ANY($1)', [visibleUserIds]);
+      const visibleNames = visibleUsersResult.rows.map((r: any) => r.name);
+
+      whereClauses.push(`(
+        operator_user_id = ANY($${params.length + 1})
+        OR created_by_user_id = ANY($${params.length + 1})
+        OR (
+          operator_user_id IS NULL
+          AND created_by_user_id IS NULL
+          AND operator = ANY($${params.length + 2})
+        )
+      )`);
+      params.push(visibleUserIds);
+      params.push(visibleNames);
+    }
+
+    if (startDate && typeof startDate === 'string' && startDate.trim()) {
+      params.push(startDate.trim());
+      whereClauses.push(`date >= $${params.length}`);
+    }
+
+    if (endDate && typeof endDate === 'string' && endDate.trim()) {
+      params.push(endDate.trim());
+      whereClauses.push(`date <= $${params.length}`);
+    }
+
+    if (boss && typeof boss === 'string' && boss.trim()) {
+      params.push(boss.trim());
+      whereClauses.push(`boss = $${params.length}`);
+    }
+
+    if (operator && typeof operator === 'string' && operator.trim()) {
+      params.push(operator.trim());
+      whereClauses.push(`operator = $${params.length}`);
+    }
+
+    if (machines && typeof machines === 'string' && machines.trim()) {
+      const machineList = machines.split(',').map(m => m.trim()).filter(Boolean);
+      if (machineList.length > 0) {
+        params.push(machineList);
+        whereClauses.push(`machine = ANY($${params.length})`);
+      }
+    } else if (machine && typeof machine === 'string' && machine.trim()) {
+      params.push(machine.trim());
+      whereClauses.push(`machine = $${params.length}`);
+    }
+
+    const whereSql = whereClauses.length > 0 ? ` WHERE ${whereClauses.join(' AND ')}` : '';
+
+    // Calculate totalCount if pagination is requested
+    let totalCount = 0;
+    if (isPaginated) {
+      const countResult = await pool.query(`SELECT count(*)::int as total FROM production_records${whereSql}`, params);
+      totalCount = countResult.rows[0]?.total || 0;
+    }
+
+    // Determine sorting
+    let sortColumn = 'timestamp';
+    let sortDir = 'DESC';
+    const allowedSortColumns: Record<string, string> = {
+      timestamp: 'timestamp',
+      recordedAt: 'recorded_at',
+      date: 'date',
+      machine: 'machine',
+      shift: 'shift',
+      boss: 'boss',
+      operator: 'operator',
+      meters: 'meters',
+      changesCount: 'changescount'
+    };
+
+    if (sortBy && typeof sortBy === 'string') {
+      if (allowedSortColumns[sortBy]) {
+        sortColumn = allowedSortColumns[sortBy];
+      } else if (sortBy.startsWith('dynamic:')) {
+        const dynamicKey = sortBy.replace('dynamic:', '').trim();
+        if (/^[a-zA-Z0-9_-]+$/.test(dynamicKey)) {
+          sortColumn = `(dynamic_fields_values->>'${dynamicKey}')`;
+        }
+      }
+    }
+    if (sortDirection && typeof sortDirection === 'string') {
+      const upper = sortDirection.toUpperCase();
+      if (upper === 'ASC' || upper === 'DESC') {
+        sortDir = upper;
+      }
+    }
+
+    let query = `SELECT id, timestamp, recorded_at as "recordedAt", created_by_user_id as "createdByUserId", last_modified_by_user_id as "lastModifiedByUserId", date, machine, meters, changescount as "changesCount", changescomment as "changesComment", shift, boss, boss_user_id as "bossUserId", operator, operator_user_id as "operatorUserId", dynamic_fields_values as "dynamicFieldsValues", schema_version_used as "schemaVersionUsed" FROM production_records${whereSql} ORDER BY ${sortColumn} ${sortDir}`;
+
+    if (isPaginated && parsedLimit !== null) {
+      const offset = (parsedPage - 1) * parsedLimit;
+      params.push(parsedLimit);
+      query += ` LIMIT $${params.length}`;
+      params.push(offset);
+      query += ` OFFSET $${params.length}`;
+    }
+
+    const result = await pool.query(query, params);
+    const rows = result.rows.map(row => ({
+      ...row,
+      timestamp: Number(row.timestamp)
+    }));
+
+    if (isPaginated) {
+      const totalPages = parsedLimit ? Math.ceil(totalCount / parsedLimit) : 1;
+      return res.json({
+        records: rows,
+        totalCount,
+        page: parsedPage,
+        limit: parsedLimit || totalCount,
+        totalPages
+      });
+    }
+
+    res.setHeader('X-Total-Count', String(rows.length));
+    res.json(rows);
+  } catch (err) {
+    console.error('Error in GET /api/records:', err);
     res.status(500).json({ error: 'Failed to fetch records' });
   }
 });

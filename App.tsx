@@ -13,9 +13,19 @@ import UserProfile from './components/UserProfile';
 import MachineFieldManager from './components/MachineFieldManager';
 import DashboardManager from './components/DashboardManager';
 import GlobalLockScreenGuard from './components/GlobalLockScreenGuard';
-import { AuthProvider, useAuth } from './context/AuthContext';
-import { subscribeToRecords, subscribeToSettings, clearAllRecords, deleteRecord, exportToExcel, exportAllData, importAllData, reconnectDatabase, getMachineFieldSchema } from './services/storageService';
-import { getQueueCount, flushQueue, onQueueChanged } from './services/offlineQueue';
+import {
+  subscribeToRecentRecords,
+  getPaginatedRecords,
+  getAllRecords,
+  subscribeToSettings,
+  clearAllRecords,
+  deleteRecord,
+  exportToExcel,
+  exportAllData,
+  importAllData,
+  reconnectDatabase,
+  getMachineFieldSchema
+} from './services/storageService';
 import { METER_FIELD_ALIASES, CHANGE_FIELD_ALIASES, normalizeKeyForAlias, getMetersValue, getChangesValue } from './utils/dashboardFieldPolicy';
 import { socket } from './services/socket';
 import { ProductionRecord, FilterState, MachineFieldDefinition } from './types';
@@ -142,8 +152,15 @@ const AppContent: React.FC = () => {
   const canExportBackup = (user?.role === 'admin' || user?.role === 'jefe_planta') && hasPermission('backup.export');
   const canImportBackup = (user?.role === 'admin' || user?.role === 'jefe_planta') && hasPermission('backup.import');
 
-  const [records, setRecords] = useState<ProductionRecord[]>([]);
+  const [recentRecords, setRecentRecords] = useState<ProductionRecord[]>([]);
+  const [historyRecords, setHistoryRecords] = useState<ProductionRecord[]>([]);
+  const [totalHistoryCount, setTotalHistoryCount] = useState<number>(0);
+  const [totalHistoryPages, setTotalHistoryPages] = useState<number>(1);
+  const [isHistoryLoading, setIsHistoryLoading] = useState<boolean>(false);
+  const [dashboardRecords, setDashboardRecords] = useState<ProductionRecord[]>([]);
+  const [isDashboardLoading, setIsDashboardLoading] = useState<boolean>(false);
   const [availableBosses, setAvailableBosses] = useState<string[]>([]);
+  const [availableOperators, setAvailableOperators] = useState<string[]>([]);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [dbError, setDbError] = useState('');
 
@@ -232,20 +249,21 @@ const AppContent: React.FC = () => {
     }
   }, [location.pathname, allowedViews, defaultView, navigate]);
   
-  // Real-time synchronization
+  // Real-time synchronization for recent records (ultra-light, for entry view / quick preview)
   useEffect(() => {
     if (!user) {
-      setRecords([]);
+      setRecentRecords([]);
       setDbError('');
       return;
     }
 
-    const unsubscribe = subscribeToRecords(
+    const unsubscribe = subscribeToRecentRecords(
       (updatedRecords) => {
-        setRecords(updatedRecords);
+        setRecentRecords(updatedRecords);
         // If we get data again, clear stale offline warning.
         setDbError((prev) => (prev.includes('Offline') ? '' : prev));
       },
+      5,
       (errorMsg) => {
         setDbError(errorMsg);
       }
@@ -262,6 +280,92 @@ const AppContent: React.FC = () => {
       window.removeEventListener('offline', handleOffline);
     };
   }, [user?.id]);
+
+  // Fetch paginated history records with server-side filters & sorting
+  useEffect(() => {
+    if (!user || currentView !== 'list') return;
+
+    let isMounted = true;
+    const fetchHistory = async () => {
+      setIsHistoryLoading(true);
+      try {
+        const machinesArray = effectiveMachineFilter.size > 0 ? Array.from(effectiveMachineFilter) : undefined;
+        const res = await getPaginatedRecords({
+          page: currentPage,
+          limit: ITEMS_PER_PAGE,
+          startDate: filters.startDate || undefined,
+          endDate: filters.endDate || undefined,
+          boss: filters.boss || undefined,
+          operator: filters.operator || undefined,
+          machines: machinesArray,
+          sortBy: sortConfig.column,
+          sortDirection: sortConfig.direction,
+        });
+        if (isMounted) {
+          setHistoryRecords(res.records);
+          setTotalHistoryCount(res.totalCount);
+          setTotalHistoryPages(Math.max(1, res.totalPages));
+          setDbError((prev) => (prev.includes('Offline') ? '' : prev));
+        }
+      } catch (err: any) {
+        console.error("Error fetching history:", err);
+      } finally {
+        if (isMounted) setIsHistoryLoading(false);
+      }
+    };
+
+    void fetchHistory();
+
+    const handleRecordsChanged = () => {
+      void fetchHistory();
+    };
+
+    socket.on('records_changed', handleRecordsChanged);
+    return () => {
+      isMounted = false;
+      socket.off('records_changed', handleRecordsChanged);
+    };
+  }, [user?.id, currentView, currentPage, filters, effectiveMachineFilter, sortConfig]);
+
+  // Fetch dashboard records on demand when viewing Dashboard
+  useEffect(() => {
+    if (!user || (currentView !== 'dashboard' && currentView !== 'dashboardAdmin')) return;
+
+    let isMounted = true;
+    const fetchDashboardData = async () => {
+      setIsDashboardLoading(true);
+      try {
+        const machinesArray = effectiveMachineFilter.size > 0 ? Array.from(effectiveMachineFilter) : undefined;
+        const recs = await getAllRecords({
+          startDate: filters.startDate || undefined,
+          endDate: filters.endDate || undefined,
+          boss: filters.boss || undefined,
+          operator: filters.operator || undefined,
+          machines: machinesArray,
+        });
+        if (isMounted) {
+          setDashboardRecords(recs);
+          setDbError((prev) => (prev.includes('Offline') ? '' : prev));
+        }
+      } catch (err: any) {
+        console.error("Error fetching dashboard data:", err);
+      } finally {
+        if (isMounted) setIsDashboardLoading(false);
+      }
+    };
+
+    void fetchDashboardData();
+
+    const handleRecordsChanged = () => {
+      void fetchDashboardData();
+    };
+
+    socket.on('records_changed', handleRecordsChanged);
+    return () => {
+      isMounted = false;
+      socket.off('records_changed', handleRecordsChanged);
+    };
+  }, [user?.id, currentView, filters, effectiveMachineFilter]);
 
   // Track pending queue count for current user
   useEffect(() => {
@@ -293,8 +397,9 @@ const AppContent: React.FC = () => {
       return;
     }
 
-    const unsubscribe = subscribeToSettings((_comments, _operators, bosses) => {
+    const unsubscribe = subscribeToSettings((_comments, operators, bosses) => {
       setAvailableBosses(bosses);
+      setAvailableOperators(operators);
       setFilters((prev) => (prev.boss && !bosses.includes(prev.boss) ? { ...prev, boss: '' } : prev));
     });
 
@@ -365,11 +470,16 @@ const AppContent: React.FC = () => {
     }
   }, [sortConfig, user?.id]);
 
-  // Calculate unique operators from existing records for the filter dropdown
+  // Calculate unique operators for the filter dropdown
   const uniqueOperators = useMemo(() => {
-    const ops = new Set(records.map(r => r.operator).filter(Boolean));
+    const ops = new Set([
+      ...availableOperators,
+      ...recentRecords.map((r) => r.operator),
+      ...historyRecords.map((r) => r.operator),
+      ...dashboardRecords.map((r) => r.operator),
+    ].filter(Boolean));
     return Array.from(ops).sort();
-  }, [records]);
+  }, [availableOperators, recentRecords, historyRecords, dashboardRecords]);
 
   const selectedMachinesByGroup = useMemo(() => {
     if (!filters.machineGroups.length) return new Set<string>();
@@ -413,7 +523,7 @@ const AppContent: React.FC = () => {
         });
     });
 
-    records.forEach((record) => {
+    historyRecords.forEach((record) => {
       Object.keys(record.dynamicFieldsValues || {}).forEach((fieldKey) => {
         if (excludedAliases.has(normalizeKeyForAlias(fieldKey))) return;
         if (!map.has(fieldKey)) {
@@ -430,70 +540,16 @@ const AppContent: React.FC = () => {
       if (a.order !== b.order) return a.order - b.order;
       return a.label.localeCompare(b.label, 'es', { sensitivity: 'base' });
     });
-  }, [machineSchemasByMachine, records]);
-
-  // Filter Logic
-  const filteredRecords = useMemo(() => {
-    return records.filter(r => {
-      const matchDate = (!filters.startDate || r.date >= filters.startDate) && 
-                        (!filters.endDate || r.date <= filters.endDate);
-      const matchMachine = effectiveMachineFilter.size === 0 || effectiveMachineFilter.has(r.machine);
-      const matchBoss = !filters.boss || r.boss === filters.boss;
-      const matchOperator = !filters.operator || r.operator === filters.operator;
-      return matchDate && matchMachine && matchBoss && matchOperator;
-    });
-  }, [records, filters, effectiveMachineFilter]);
-
-  const sortedRecords = useMemo(() => {
-    const sorted = [...filteredRecords];
-
-    const getSortValue = (record: ProductionRecord): string | number => {
-      switch (sortConfig.column) {
-        case 'recordedAt':
-          return Number(new Date(record.recordedAt || record.timestamp).getTime()) || 0;
-        case 'shift':
-          return record.shift || '';
-        case 'machine':
-          return record.machine || '';
-        case 'operator':
-          return record.operator || '';
-        case 'meters':
-          return toComparableValue(getMetersValue(record));
-        case 'changesCount':
-          return toComparableValue(getChangesValue(record));
-        case 'changesComment':
-          return record.changesComment || '';
-        default:
-          if (sortConfig.column.startsWith('dynamic:')) {
-            const fieldKey = sortConfig.column.replace('dynamic:', '');
-            return toComparableValue(record.dynamicFieldsValues?.[fieldKey]);
-          }
-          return '';
-      }
-    };
-
-    sorted.sort((a, b) => {
-      const compared = compareValues(getSortValue(a), getSortValue(b));
-      if (compared !== 0) {
-        return sortConfig.direction === 'asc' ? compared : -compared;
-      }
-      return (b.timestamp || 0) - (a.timestamp || 0);
-    });
-
-    return sorted;
-  }, [filteredRecords, sortConfig]);
+  }, [machineSchemasByMachine, historyRecords]);
 
   // Reset pagination when filters change
   useEffect(() => {
     setCurrentPage(1);
   }, [filters]);
 
-  // Pagination Logic
-  const totalPages = Math.ceil(filteredRecords.length / ITEMS_PER_PAGE);
-  const paginatedRecords = useMemo(() => {
-    const start = (currentPage - 1) * ITEMS_PER_PAGE;
-    return sortedRecords.slice(start, start + ITEMS_PER_PAGE);
-  }, [sortedRecords, currentPage]);
+  // Server-side pagination mapping
+  const totalPages = Math.max(1, totalHistoryPages);
+  const paginatedRecords = historyRecords;
 
   const toggleSort = (column: SortableColumn) => {
     setSortConfig((prev) => {
@@ -584,8 +640,13 @@ const AppContent: React.FC = () => {
     setShowDeleteModal(true);
   };
 
-  const handleExportAndContinue = () => {
-    exportToExcel(records);
+  const handleExportAndContinue = async () => {
+    try {
+      const allData = await getAllRecords();
+      exportToExcel(allData);
+    } catch {
+      exportToExcel(historyRecords);
+    }
     setDeleteAllStep(2);
   };
 
@@ -921,7 +982,7 @@ const AppContent: React.FC = () => {
           )}
 
           {currentView === 'dashboardAdmin' && canAccessDashboardManager && (
-            <DashboardManager records={filteredRecords} />
+            <DashboardManager records={dashboardRecords} />
           )}
 
           {currentView === 'profile' && (
@@ -1228,7 +1289,7 @@ const AppContent: React.FC = () => {
                      </span>
                   </div>
                   <div className="bg-white rounded-xl shadow-sm border border-slate-200 divide-y divide-slate-100">
-                    {records.slice(0, 3).map(r => (
+                    {recentRecords.slice(0, 3).map(r => (
                       <div key={r.id} className="p-4 flex justify-between items-center cursor-pointer hover:bg-slate-50 transition-colors" onClick={() => handleEdit(r, 'entryPreview')}>
                         <div>
                           <span className="font-bold text-slate-800 block">{r.machine}</span>
@@ -1249,7 +1310,7 @@ const AppContent: React.FC = () => {
                         </div>
                       </div>
                     ))}
-                    {records.length === 0 && (
+                    {recentRecords.length === 0 && (
                       <div className="p-4 text-center text-slate-400 italic text-sm">Sin registros hoy</div>
                     )}
                   </div>
@@ -1260,12 +1321,19 @@ const AppContent: React.FC = () => {
 
           {currentView === 'dashboard' && (
             <div className="animate-fade-in">
-              <Dashboard
-                records={filteredRecords}
-                canManageDashboards={canAccessDashboardManager}
-                onOpenAdmin={canAccessDashboardManager ? () => changeView('dashboardAdmin') : undefined}
-                onEditRecord={canWriteRecords ? (record) => handleEdit(record, 'history') : undefined}
-              />
+              {isDashboardLoading ? (
+                <div className="bg-white rounded-xl p-12 text-center text-slate-400 flex flex-col items-center justify-center gap-3">
+                  <RefreshCw className="w-6 h-6 animate-spin text-blue-600" />
+                  <span className="text-sm font-medium">Cargando datos del dashboard...</span>
+                </div>
+              ) : (
+                <Dashboard
+                  records={dashboardRecords}
+                  canManageDashboards={canAccessDashboardManager}
+                  onOpenAdmin={canAccessDashboardManager ? () => changeView('dashboardAdmin') : undefined}
+                  onEditRecord={canWriteRecords ? (record) => handleEdit(record, 'history') : undefined}
+                />
+              )}
             </div>
           )}
 
@@ -1276,7 +1344,7 @@ const AppContent: React.FC = () => {
                   <h2 className="text-2xl font-bold text-slate-900">Historial</h2>
                   <div className="flex items-center gap-2 mt-1">
                     <span className="text-sm bg-slate-200 px-3 py-1 rounded-full text-slate-600 font-medium inline-block">
-                      {filteredRecords.length} registros totales
+                      {totalHistoryCount} registros totales
                     </span>
                     <span className="text-xs text-slate-400">
                       (Página {currentPage} de {totalPages || 1})
@@ -1284,7 +1352,7 @@ const AppContent: React.FC = () => {
                   </div>
                 </div>
                 
-                {records.length > 0 && canDeleteAllRecords && (
+                {totalHistoryCount > 0 && canDeleteAllRecords && (
                   <button 
                     onClick={initiateDeleteAll}
                     className="flex items-center gap-2 text-red-600 bg-red-50 hover:bg-red-100 px-4 py-2 rounded-lg transition-colors text-sm font-bold border border-red-100"
@@ -1296,7 +1364,15 @@ const AppContent: React.FC = () => {
               </div>
               
               <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col min-h-[500px]">
-                <div className="overflow-x-auto flex-1">
+                <div className="overflow-x-auto flex-1 relative">
+                  {isHistoryLoading && (
+                    <div className="absolute inset-0 bg-white/60 backdrop-blur-[1px] flex items-center justify-center z-10">
+                      <div className="flex items-center gap-2 text-sm font-medium text-slate-600 bg-white px-4 py-2 rounded-lg shadow-sm border border-slate-200">
+                        <RefreshCw className="w-4 h-4 animate-spin text-blue-600" />
+                        <span>Cargando registros...</span>
+                      </div>
+                    </div>
+                  )}
                   <table className="w-full text-sm text-left">
                     <thead className="bg-slate-50 text-slate-500 font-medium border-b border-slate-200">
                       <tr>
@@ -1383,9 +1459,9 @@ const AppContent: React.FC = () => {
                       ))}
                     </tbody>
                   </table>
-                  {paginatedRecords.length === 0 && (
+                  {!isHistoryLoading && paginatedRecords.length === 0 && (
                     <div className="p-12 text-center text-slate-400">
-                      {records.length > 0 ? 'No hay resultados con los filtros actuales.' : 'Base de datos vacía.'}
+                      {totalHistoryCount > 0 ? 'No hay resultados con los filtros actuales.' : 'Base de datos vacía.'}
                     </div>
                   )}
                 </div>
@@ -1395,7 +1471,7 @@ const AppContent: React.FC = () => {
                   <div className="border-t border-slate-100 p-4 bg-slate-50 flex items-center justify-between">
                      <button
                        onClick={() => goToPage(currentPage - 1)}
-                       disabled={currentPage === 1}
+                       disabled={currentPage === 1 || isHistoryLoading}
                        className="p-2 rounded-lg bg-white border border-slate-200 text-slate-600 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 transition-colors flex items-center gap-2 text-sm font-bold"
                      >
                        <ChevronLeft className="w-4 h-4" />
@@ -1408,7 +1484,7 @@ const AppContent: React.FC = () => {
 
                      <button
                        onClick={() => goToPage(currentPage + 1)}
-                       disabled={currentPage === totalPages}
+                       disabled={currentPage === totalPages || isHistoryLoading}
                        className="p-2 rounded-lg bg-white border border-slate-200 text-slate-600 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 transition-colors flex items-center gap-2 text-sm font-bold"
                      >
                        Siguiente
@@ -1554,7 +1630,7 @@ const AppContent: React.FC = () => {
                    </div>
                    <h3 className="text-lg font-bold text-slate-900">Advertencia de Seguridad</h3>
                    <p className="text-sm text-slate-600 mt-2">
-                     Estás a punto de borrar <strong>TODA</strong> la base de datos ({records.length} registros).
+                     Estás a punto de borrar <strong>TODA</strong> la base de datos ({totalHistoryCount} registros).
                    </p>
                    <p className="text-sm text-slate-500 mt-1">
                      Se recomienda encarecidamente descargar una copia de seguridad en Excel antes de continuar.

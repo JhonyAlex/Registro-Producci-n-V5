@@ -471,20 +471,6 @@ export const saveRecord = async (
   }
 
   try {
-    const overflowCandidates = findInt32OverflowCandidates(record);
-    console.groupCollapsed('[saveRecord] POST /api/records payload');
-    console.log('record.id:', record.id);
-    console.log('record.machine:', record.machine);
-    console.log('record.schemaVersionUsed:', record.schemaVersionUsed);
-    console.log('record.timestamp:', record.timestamp);
-    console.log('record payload:', record);
-    if (overflowCandidates.length > 0) {
-      console.warn('Potential int32 overflow candidates in payload:', overflowCandidates);
-    } else {
-      console.log('No int32 overflow candidates detected in frontend payload.');
-    }
-    console.groupEnd();
-
     // 1. Save the record to PostgreSQL
     await fetchJson('/records', {
       method: 'POST',
@@ -504,19 +490,7 @@ export const saveRecord = async (
     return {};
 
   } catch (e: any) {
-    console.error("Error saving record:", e);
-    const overflowCandidates = findInt32OverflowCandidates(record);
-    console.groupCollapsed('[saveRecord] POST /api/records failed');
-    console.error('Backend error message:', e?.message || e);
-    console.log('record.id:', record.id);
-    console.log('record.machine:', record.machine);
-    console.log('record.schemaVersionUsed:', record.schemaVersionUsed);
-    console.log('record.timestamp:', record.timestamp);
-    console.log('record payload:', record);
-    if (overflowCandidates.length > 0) {
-      console.warn('Potential int32 overflow candidates in payload:', overflowCandidates);
-    }
-    console.groupEnd();
+    console.error("Error saving record:", e?.message || e);
 
     // On network / connectivity errors: queue locally instead of showing an error
     const isConnectivityError =
@@ -610,6 +584,124 @@ export const clearAllRecords = async (): Promise<void> => {
   }
 };
 
+export interface PaginatedRecordsResponse {
+  records: ProductionRecord[];
+  totalCount: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
+export interface RecordQueryParams {
+  page?: number;
+  limit?: number | 'all';
+  startDate?: string;
+  endDate?: string;
+  machine?: string;
+  machines?: string[];
+  boss?: string;
+  operator?: string;
+  sortBy?: string;
+  sortDirection?: 'asc' | 'desc';
+  all?: boolean;
+}
+
+export const getRecentRecords = async (limit = 5): Promise<ProductionRecord[]> => {
+  try {
+    const data = await fetchJson(`/records/recent?limit=${encodeURIComponent(limit)}`);
+    return Array.isArray(data) ? data : [];
+  } catch (e) {
+    console.warn("Could not fetch recent records:", e);
+    return [];
+  }
+};
+
+export const subscribeToRecentRecords = (
+  callback: (records: ProductionRecord[]) => void,
+  limit = 5,
+  onError?: (errorMsg: string) => void
+) => {
+  let isSubscribed = true;
+
+  const fetchRecent = async () => {
+    try {
+      const records = await getRecentRecords(limit);
+      if (isSubscribed) {
+        callback(records);
+        if (onError) onError('');
+      }
+    } catch (error: any) {
+      if (isSubscribed && onError) onError(error?.message || 'Error de conexión.');
+    }
+  };
+
+  fetchRecent();
+
+  const handleSync = () => {
+    if (isSubscribed) void fetchRecent();
+  };
+
+  socket.on('records_changed', handleSync);
+  socket.on('connect', handleSync);
+  window.addEventListener('online', handleSync);
+
+  return () => {
+    isSubscribed = false;
+    socket.off('records_changed', handleSync);
+    socket.off('connect', handleSync);
+    window.removeEventListener('online', handleSync);
+  };
+};
+
+export const getPaginatedRecords = async (params: RecordQueryParams = {}): Promise<PaginatedRecordsResponse> => {
+  const query = new URLSearchParams();
+  query.set('paginate', 'true');
+  if (params.page) query.set('page', String(params.page));
+  if (params.limit) query.set('limit', String(params.limit));
+  if (params.startDate) query.set('startDate', params.startDate);
+  if (params.endDate) query.set('endDate', params.endDate);
+  if (params.boss) query.set('boss', params.boss);
+  if (params.operator) query.set('operator', params.operator);
+  if (params.machines && params.machines.length > 0) {
+    query.set('machines', params.machines.join(','));
+  } else if (params.machine) {
+    query.set('machine', params.machine);
+  }
+  if (params.sortBy) query.set('sortBy', params.sortBy);
+  if (params.sortDirection) query.set('sortDirection', params.sortDirection);
+
+  const res = await fetchJson(`/records?${query.toString()}`);
+  if (res && Array.isArray(res.records)) {
+    return res;
+  }
+  return {
+    records: Array.isArray(res) ? res : [],
+    totalCount: Array.isArray(res) ? res.length : 0,
+    page: params.page || 1,
+    limit: typeof params.limit === 'number' ? params.limit : 25,
+    totalPages: 1,
+  };
+};
+
+export const getAllRecords = async (params: Omit<RecordQueryParams, 'page' | 'limit'> = {}): Promise<ProductionRecord[]> => {
+  const query = new URLSearchParams();
+  query.set('all', 'true');
+  if (params.startDate) query.set('startDate', params.startDate);
+  if (params.endDate) query.set('endDate', params.endDate);
+  if (params.boss) query.set('boss', params.boss);
+  if (params.operator) query.set('operator', params.operator);
+  if (params.machines && params.machines.length > 0) {
+    query.set('machines', params.machines.join(','));
+  } else if (params.machine) {
+    query.set('machine', params.machine);
+  }
+  if (params.sortBy) query.set('sortBy', params.sortBy);
+  if (params.sortDirection) query.set('sortDirection', params.sortDirection);
+
+  const res = await fetchJson(`/records?${query.toString()}`);
+  return Array.isArray(res) ? res : (res?.records || []);
+};
+
 export const subscribeToRecords = (
   callback: (records: ProductionRecord[]) => void,
   onError?: (errorMsg: string) => void
@@ -661,8 +753,7 @@ export const subscribeToRecords = (
     if (onError) onError('Desconectado del servidor en tiempo real.');
   };
 
-  const intervalId = window.setInterval(triggerRecordsSync, RECORDS_SYNC_INTERVAL_MS);
-
+  // Listen to realtime socket events and lifecycle changes
   socket.on('records_changed', triggerRecordsSync);
   socket.on('connect', handleConnect);
   socket.on('disconnect', handleDisconnect);
@@ -670,9 +761,16 @@ export const subscribeToRecords = (
   window.addEventListener('focus', triggerRecordsSync);
   document.addEventListener('visibilitychange', handleVisibilitySync);
 
+  // Safety fallback: only check every 2 minutes if socket disconnected
+  const fallbackIntervalId = window.setInterval(() => {
+    if (!socket.connected) {
+      triggerRecordsSync();
+    }
+  }, 120000);
+
   return () => {
     isSubscribed = false;
-    window.clearInterval(intervalId);
+    window.clearInterval(fallbackIntervalId);
     socket.off('records_changed', triggerRecordsSync);
     socket.off('connect', handleConnect);
     socket.off('disconnect', handleDisconnect);
