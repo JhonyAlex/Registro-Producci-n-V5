@@ -17,11 +17,11 @@ const stagehand = new Stagehand({
   },
   llmClient: new CustomOpenAIClient({
     modelName: "deepseek-chat",
-    client: openai,
+    client: openai as any,
   }),
   domSettleTimeoutMs: 5_000,
   disableAPI: true,
-});
+} as any);
 
 async function main() {
   await stagehand.init();

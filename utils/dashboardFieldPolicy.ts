@@ -224,9 +224,7 @@ export const evaluateRuleForRecord = (
   let total = 0;
   for (const field of rule.sourceFields) {
     const value = getRecordFieldValue(record, field);
-    console.log(`[evaluateRuleForRecord] machine: ${(record as any).machine}, field: ${field}, value: ${value}, numeric: ${toNumeric(value)}`);
     total += toNumeric(value);
   }
-  console.log(`[evaluateRuleForRecord] machine: ${(record as any).machine}, rule: ${rule.name}, total: ${total}, sourceFields: ${JSON.stringify(rule.sourceFields)}`);
   return total;
 };

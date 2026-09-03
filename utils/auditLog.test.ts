@@ -21,7 +21,7 @@ test('treats identical record payloads as no-op updates', () => {
     changesComment: '  ajuste fino  ',
     dynamicFieldsValues: { color: ' azul ', medidas: ['A', 'B'] },
     schemaVersionUsed: 4,
-  });
+  } as any);
 
   const after = buildRecordAuditSnapshot({
     date: '2026-03-30',
@@ -36,7 +36,7 @@ test('treats identical record payloads as no-op updates', () => {
     changesComment: 'ajuste fino',
     dynamicFieldsValues: { medidas: ['A', 'B'], color: 'azul' },
     schemaVersionUsed: 4,
-  });
+  } as any);
 
   assert.equal(hasRecordAuditChanges(before, after), false);
   assert.deepEqual(getRecordAuditChangedFields(before, after), []);
@@ -54,7 +54,7 @@ test('detects dynamic field changes explicitly', () => {
     changesComment: 'ajuste fino',
     dynamicFieldsValues: { color: 'azul', temperatura: 120 },
     schemaVersionUsed: 4,
-  });
+  } as any);
 
   const after = buildRecordAuditSnapshot({
     date: '2026-03-30',
@@ -67,7 +67,7 @@ test('detects dynamic field changes explicitly', () => {
     changesComment: 'ajuste fino',
     dynamicFieldsValues: { color: 'verde', temperatura: 120 },
     schemaVersionUsed: 4,
-  });
+  } as any);
 
   assert.equal(hasRecordAuditChanges(before, after), true);
   assert.deepEqual(getRecordAuditChangedFields(before, after), ['dynamicFieldsValues.color']);
@@ -85,7 +85,7 @@ test('detects schema version changes as audit-relevant', () => {
     changesComment: 'ajuste fino',
     dynamicFieldsValues: {},
     schemaVersionUsed: 4,
-  });
+  } as any);
 
   const after = buildRecordAuditSnapshot({
     date: '2026-03-30',
@@ -98,7 +98,7 @@ test('detects schema version changes as audit-relevant', () => {
     changesComment: 'ajuste fino',
     dynamicFieldsValues: {},
     schemaVersionUsed: 5,
-  });
+  } as any);
 
   assert.deepEqual(getRecordAuditChangedFields(before, after), ['schemaVersionUsed']);
 });

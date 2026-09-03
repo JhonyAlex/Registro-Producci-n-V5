@@ -13,6 +13,8 @@ import UserProfile from './components/UserProfile';
 import MachineFieldManager from './components/MachineFieldManager';
 import DashboardManager from './components/DashboardManager';
 import GlobalLockScreenGuard from './components/GlobalLockScreenGuard';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import { getQueueCount, flushQueue, onQueueChanged } from './services/offlineQueue';
 import {
   subscribeToRecentRecords,
   getPaginatedRecords,
@@ -202,6 +204,29 @@ const AppContent: React.FC = () => {
     boss: '',
     operator: ''
   });
+
+  const selectedMachinesByGroup = useMemo(() => {
+    if (!filters.machineGroups.length) return new Set<string>();
+
+    const machineSet = new Set<string>();
+    MACHINE_GROUPS.forEach((group) => {
+      if (filters.machineGroups.includes(group.id)) {
+        group.machines.forEach((machine) => machineSet.add(machine));
+      }
+    });
+
+    return machineSet;
+  }, [filters.machineGroups]);
+
+  const selectedMachinesManual = useMemo(() => new Set(filters.machines), [filters.machines]);
+
+  const effectiveMachineFilter = useMemo(() => {
+    if (filters.machineMode === 'manual') {
+      return selectedMachinesManual;
+    }
+    return selectedMachinesByGroup;
+  }, [filters.machineMode, selectedMachinesByGroup, selectedMachinesManual]);
+
   const [showFilters, setShowFilters] = useState(false);
 
   // Pagination State
@@ -480,28 +505,6 @@ const AppContent: React.FC = () => {
     ].filter(Boolean));
     return Array.from(ops).sort();
   }, [availableOperators, recentRecords, historyRecords, dashboardRecords]);
-
-  const selectedMachinesByGroup = useMemo(() => {
-    if (!filters.machineGroups.length) return new Set<string>();
-
-    const machineSet = new Set<string>();
-    MACHINE_GROUPS.forEach((group) => {
-      if (filters.machineGroups.includes(group.id)) {
-        group.machines.forEach((machine) => machineSet.add(machine));
-      }
-    });
-
-    return machineSet;
-  }, [filters.machineGroups]);
-
-  const selectedMachinesManual = useMemo(() => new Set(filters.machines), [filters.machines]);
-
-  const effectiveMachineFilter = useMemo(() => {
-    if (filters.machineMode === 'manual') {
-      return selectedMachinesManual;
-    }
-    return selectedMachinesByGroup;
-  }, [filters.machineMode, selectedMachinesByGroup, selectedMachinesManual]);
 
   const dynamicHistoryColumns = useMemo<DynamicHistoryColumn[]>(() => {
     const map = new Map<string, DynamicHistoryColumn>();

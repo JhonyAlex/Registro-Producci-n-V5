@@ -59,8 +59,8 @@ export const buildRecordAuditSnapshot = (
   source: Partial<RecordAuditSnapshot> | null | undefined,
 ): RecordAuditSnapshot => ({
   date: normalizeOptionalString(source?.date),
-  machine: normalizeOptionalString(source?.machine),
-  shift: normalizeOptionalString(source?.shift),
+  machine: normalizeOptionalString(source?.machine) as any,
+  shift: normalizeOptionalString(source?.shift) as any,
   boss: normalizeOptionalString(source?.boss),
   bossUserId: normalizeOptionalString(source?.bossUserId),
   operator: normalizeOptionalString(source?.operator),
