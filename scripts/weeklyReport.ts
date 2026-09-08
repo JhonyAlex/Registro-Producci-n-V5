@@ -4,7 +4,7 @@ import path from 'path';
 import { spawn, type ChildProcess } from 'child_process';
 import { pathToFileURL } from 'url';
 import { Pool } from 'pg';
-import { sendEmail } from '../server/email/resendEmailService';
+import { DEFAULT_EMAIL_CONFIG, sendEmail } from '../server/email/resendEmailService';
 import { buildWeeklyReportEmail } from '../server/report/emailBuilder';
 import { resolveReportRange } from '../server/report/periodHelper';
 import { markReportRunFailed, markReportRunSuccess, startOrUpdateReportRun } from '../server/report/reportRunRepository';
@@ -36,11 +36,10 @@ export function parseWeeklyReportArgs(args: string[]): CliOptions {
 }
 
 function recipientsFromEnvironment(): string[] {
-  const recipients = (process.env.REPORT_TO || '')
+  const recipients = (process.env.REPORT_TO?.trim() || DEFAULT_EMAIL_CONFIG.to)
     .split(',')
     .map((recipient) => recipient.trim().toLowerCase())
     .filter(Boolean);
-  if (recipients.length === 0) throw new Error('REPORT_TO debe contener al menos un destinatario.');
   return [...new Set(recipients)];
 }
 
