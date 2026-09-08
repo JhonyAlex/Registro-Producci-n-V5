@@ -8,8 +8,10 @@
     "build": "vite build",
     "start": "npx tsx server.ts",
     "preview": "vite preview",
-    "test": "node --import tsx --test",
-    "email:test": "tsx scripts/sendTestEmail.ts"
+    "test": "node --import tsx --test utils/*.test.ts server/**/*.test.ts scripts/*.test.ts",
+    "test:browserbase": "node --import tsx --test test-browserbase.ts",
+    "email:test": "tsx scripts/sendTestEmail.ts",
+    "report:weekly": "tsx scripts/weeklyReport.ts"
   },
   "dependencies": {
     "@browserbasehq/sdk": "^2.10.0",
@@ -28,6 +30,7 @@
     "lucide-react": "0.263.1",
     "openai": "^6.37.0",
     "pg": "^8.20.0",
+    "puppeteer-core": "^24.43.1",
     "react": "18.2.0",
     "react-dom": "18.2.0",
     "react-router-dom": "^6.30.3",

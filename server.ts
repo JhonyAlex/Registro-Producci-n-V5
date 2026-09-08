@@ -11,6 +11,8 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { buildRecordAuditSnapshot, getRecordAuditChangedFields } from './utils/auditLog';
 import { isSessionTokenCurrent } from './utils/sessionAuth';
+import { MACHINE_GROUPS } from './shared/machineGroups';
+import { isValidYmd } from './server/report/periodHelper';
 
 type AuthTokenPayload = {
   id: string;
@@ -349,6 +351,30 @@ async function initDB() {
       END $$;
     `);
 
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS report_email_runs (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        report_type VARCHAR(50) NOT NULL,
+        start_date VARCHAR(50) NOT NULL,
+        end_date VARCHAR(50) NOT NULL,
+        recipient TEXT NOT NULL,
+        status VARCHAR(50) NOT NULL DEFAULT 'processing',
+        resend_id VARCHAR(255),
+        attempts INTEGER NOT NULL DEFAULT 1,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        last_attempt_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        sent_at TIMESTAMP WITH TIME ZONE,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        error_message TEXT,
+        CONSTRAINT report_email_runs_unique UNIQUE (report_type, start_date, end_date, recipient)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_report_email_runs_status ON report_email_runs(status);
+      CREATE INDEX IF NOT EXISTS idx_report_email_runs_period ON report_email_runs(start_date, end_date);
+    `);
+    await pool.query('ALTER TABLE report_email_runs ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()');
+    await pool.query('ALTER TABLE report_email_runs ADD COLUMN IF NOT EXISTS sent_at TIMESTAMP WITH TIME ZONE');
+
     for (const role of APP_ROLES) {
       for (const key of PERMISSION_KEYS) {
         const allowed = DEFAULT_ROLE_PERMISSIONS[role].includes(key);
@@ -379,6 +405,95 @@ const requireDB = (_req, res, next) => {
 };
 
 // API Routes
+
+// --- SYSTEM & REPORT ENDPOINTS ---
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true, isDbConnected, timestamp: Date.now() });
+});
+
+app.get('/api/report/data', requireDB, async (req, res) => {
+  const providedSecret = req.headers['x-report-secret'];
+  const configuredSecret = process.env.REPORT_RENDER_SECRET;
+
+  if (!configuredSecret || providedSecret !== configuredSecret) {
+    return res.status(401).json({ error: 'Acceso no autorizado al renderizador de reportes' });
+  }
+
+  const { from, to } = req.query;
+  if (!from || !to || typeof from !== 'string' || typeof to !== 'string') {
+    return res.status(400).json({ error: 'Se requieren parámetros "from" y "to" (YYYY-MM-DD)' });
+  }
+
+  if (!isValidYmd(from) || !isValidYmd(to) || from > to) {
+    return res.status(400).json({ error: 'El rango de reporte no es válido.' });
+  }
+
+  try {
+    const [recordsResult, configsResult, catalogResult] = await Promise.all([
+      pool.query(
+        `SELECT id,
+                timestamp,
+                recorded_at as "recordedAt",
+                created_by_user_id as "createdByUserId",
+                last_modified_by_user_id as "lastModifiedByUserId",
+                date,
+                machine,
+                meters,
+                changescount as "changesCount",
+                changescomment as "changesComment",
+                shift,
+                boss,
+                boss_user_id as "bossUserId",
+                operator,
+                operator_user_id as "operatorUserId",
+                dynamic_fields_values as "dynamicFieldsValues",
+                schema_version_used as "schemaVersionUsed"
+         FROM production_records
+         WHERE date >= $1 AND date <= $2
+         ORDER BY date ASC, timestamp ASC`,
+        [from.trim(), to.trim()]
+      ),
+      pool.query(
+        `SELECT id,
+                name,
+                description,
+                base_field as "baseField",
+                related_fields as "relatedFields",
+                widgets,
+                rules,
+                is_default as "isDefault",
+                updated_by_user_id as "updatedByUserId",
+                created_at as "createdAt",
+                updated_at as "updatedAt"
+         FROM dashboard_configs
+         ORDER BY is_default DESC, updated_at DESC`
+      ),
+      pool.query(
+        `SELECT id,
+                key,
+                label,
+                type,
+                required,
+                display_order as "displayOrder",
+                options,
+                default_value as "defaultValue",
+                rules
+         FROM field_catalog
+         ORDER BY display_order ASC, label ASC`
+      ),
+    ]);
+
+    res.json({
+      records: recordsResult.rows,
+      dashboardConfigs: configsResult.rows,
+      fieldCatalog: catalogResult.rows,
+      groups: MACHINE_GROUPS,
+    });
+  } catch (err: any) {
+    console.error('Error al obtener datos para el reporte:', err);
+    res.status(500).json({ error: 'Error al consultar datos de reporte.' });
+  }
+});
 
 // --- AUTHENTICATION & AUTHORIZATION ---
 const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-key-change-in-production';

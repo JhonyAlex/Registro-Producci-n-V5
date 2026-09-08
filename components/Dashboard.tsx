@@ -173,7 +173,7 @@ const renderPieExternalLabel = ({
   );
 };
 
-const buildGroupedData = (
+export const buildGroupedData = (
   records: ProductionRecord[],
   baseField: string,
   valueField: string,
@@ -210,7 +210,7 @@ const buildGroupedData = (
   return rows;
 };
 
-const buildCombinedTrendData = (
+export const buildCombinedTrendData = (
   records: ProductionRecord[],
   baseField: string,
   primaryField: string,
@@ -272,7 +272,7 @@ const buildKpiData = (
   return totalSum;
 };
 
-const resolveActiveRule = (
+export const resolveActiveRule = (
   widget: DashboardWidgetConfig,
   rules: DashboardSumRule[] | undefined
 ): DashboardSumRule | null => {
@@ -280,7 +280,7 @@ const resolveActiveRule = (
   return rules.find((r) => r.id === widget.activeRuleId) || null;
 };
 
-const buildRuleBasedGroupedData = (
+export const buildRuleBasedGroupedData = (
   records: ProductionRecord[],
   baseField: string,
   rule: DashboardSumRule,

@@ -13,6 +13,8 @@ import UserProfile from './components/UserProfile';
 import MachineFieldManager from './components/MachineFieldManager';
 import DashboardManager from './components/DashboardManager';
 import GlobalLockScreenGuard from './components/GlobalLockScreenGuard';
+import ReportRenderView from './components/ReportRenderView';
+import { MACHINE_GROUPS } from './shared/machineGroups';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { getQueueCount, flushQueue, onQueueChanged } from './services/offlineQueue';
 import {
@@ -63,24 +65,6 @@ const VIEW_ROUTES: Record<View, string> = {
   dashboardAdmin: '/admin/dashboards',
 };
 const HISTORY_SORT_STORAGE_KEY_PREFIX = 'pigmea_history_sort_v1_';
-const MACHINE_GROUPS: Array<{ id: string; label: string; machines: string[] }> = [
-  {
-    id: 'impresion',
-    label: 'Impresión',
-    machines: ['WH1', 'WH3', 'Giave'],
-  },
-  {
-    id: 'laminacion',
-    label: 'Laminación',
-    machines: ['NEXUS', 'SL2', 'SL2 EVO'],
-  },
-  {
-    id: 'rebobinado',
-    label: 'Rebobinado',
-    machines: ['S2DT', '21', '22', 'PROSLIT'],
-  },
-];
-
 const getViewFromPath = (pathname: string): View | null => {
   const matchingEntry = (Object.entries(VIEW_ROUTES) as Array<[View, string]>).find(([, route]) => route === pathname);
   return matchingEntry ? matchingEntry[0] : null;
@@ -1770,6 +1754,12 @@ const App: React.FC = () => {
 };
 
 const AppWrapper: React.FC = () => {
+  const location = useLocation();
+
+  if (location.pathname === '/report-render') {
+    return <ReportRenderView />;
+  }
+
   return (
     <AuthProvider>
       <GlobalLockScreenGuard>

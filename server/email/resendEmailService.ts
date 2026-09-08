@@ -17,6 +17,8 @@ export interface SendEmailOptions {
   html: string;
   text?: string;
   attachments?: EmailAttachment[];
+  /** Prevents duplicate provider sends within Resend's idempotency window. */
+  idempotencyKey?: string;
 }
 
 export interface SendEmailResult {
@@ -92,15 +94,18 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
   const resend = getResendClient(apiKey);
 
   try {
-    const { data, error } = await resend.emails.send({
-      from,
-      to,
-      replyTo: replyTo || undefined,
-      subject,
-      html,
-      text: options.text,
-      attachments: options.attachments as Attachment[] | undefined,
-    });
+    const { data, error } = await resend.emails.send(
+      {
+        from,
+        to,
+        replyTo: replyTo || undefined,
+        subject,
+        html,
+        text: options.text,
+        attachments: options.attachments as Attachment[] | undefined,
+      },
+      options.idempotencyKey ? { idempotencyKey: options.idempotencyKey } : undefined
+    );
 
     if (error) {
       const errorMsg = error.message || 'Error desconocido de Resend';
