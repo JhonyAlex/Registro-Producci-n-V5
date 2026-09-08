@@ -31,6 +31,7 @@ COPY --from=builder /app/server.ts ./
 COPY --from=builder /app/server ./server
 COPY --from=builder /app/utils ./utils
 COPY --from=builder /app/scripts ./scripts
+COPY --from=builder /app/shared ./shared
 
 # Environment variables
 ENV NODE_ENV=production
