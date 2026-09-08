@@ -11,10 +11,11 @@ export const REPORT_CHARTS = [
   'Metros por Operario',
   'Tendencia — Metros vs Cambios de pedido',
   'Cambios de pedido por Operario',
+  'Metros vs Cambios de pedido por Operario',
 ] as const;
 
-export type ReportChartIndex = 1 | 2 | 3 | 4 | 5;
-const REPORT_CHART_INDEXES: ReportChartIndex[] = [1, 2, 3, 4, 5];
+export type ReportChartIndex = 1 | 2 | 3 | 4 | 5 | 6;
+const REPORT_CHART_INDEXES: ReportChartIndex[] = [1, 2, 3, 4, 5, 6];
 
 export interface CapturedChart {
   lineId: MachineGroup['id'];
@@ -27,8 +28,8 @@ export function chartContentId(lineId: string, chartIndex: number): string {
 }
 
 export function validateCapturedCharts(charts: CapturedChart[]): void {
-  if (charts.length !== 15) {
-    throw new Error(`La captura debe contener exactamente 15 gráficas; se recibieron ${charts.length}.`);
+  if (charts.length !== 18) {
+    throw new Error(`La captura debe contener exactamente 18 gráficas; se recibieron ${charts.length}.`);
   }
 
   const expected = new Set(
@@ -69,9 +70,8 @@ export function buildWeeklyReportEmail(range: ReportDateRange, charts: CapturedC
       });
       return `<td width="50%" valign="top" style="padding:8px;"><img src="cid:${contentId}" alt="${REPORT_CHARTS[chartIndex - 1]} · ${line.label}" width="460" style="display:block;width:100%;max-width:460px;height:auto;border:0;outline:none;text-decoration:none;" /></td>`;
     });
-    // La quinta gráfica queda a la izquierda de una tercera fila, conservando
-    // el layout de dos columnas en Outlook.
-    return `<h2 style="margin:28px 0 8px;font-family:Arial,sans-serif;font-size:18px;color:#1e293b;">${line.label}:</h2><table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%"><tr>${cells[0]}${cells[1]}</tr><tr>${cells[2]}${cells[3]}</tr><tr>${cells[4]}<td width="50%" valign="top" style="padding:8px;">&nbsp;</td></tr></table>`;
+    // Tres filas completas de dos columnas conservan el layout de Outlook.
+    return `<h2 style="margin:28px 0 8px;font-family:Arial,sans-serif;font-size:18px;color:#1e293b;">${line.label}:</h2><table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%"><tr>${cells[0]}${cells[1]}</tr><tr>${cells[2]}${cells[3]}</tr><tr>${cells[4]}${cells[5]}</tr></table>`;
   }).join('\n');
 
   const reportWeek = formatReportWeekLabel(range.to);

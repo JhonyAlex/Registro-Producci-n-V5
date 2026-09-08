@@ -30,3 +30,6 @@ dist-ssr
 
 # CodeGraph index
 .codegraph/
+
+# Preview local del reporte semanal (dry-run)
+temp/

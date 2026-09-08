@@ -10,6 +10,9 @@ export const REPORT_WIDGETS: DashboardWidgetConfig[] = [
   { id: 'operator', title: 'Metros por Operario', chartType: 'bar_horizontal', groupBy: 'operator', valueField: 'meters', aggregation: 'sum', spanColumns: 1 },
   { id: 'trend', title: 'Tendencia — Metros vs Cambios de pedido', chartType: 'combined_trend', groupBy: 'date', valueField: 'meters', secondaryValueField: 'changesCount', aggregation: 'sum', spanColumns: 1 },
   { id: 'operator-changes', title: 'Cambios de pedido por Operario', chartType: 'bar_horizontal', groupBy: 'operator', valueField: 'changesCount', aggregation: 'sum', spanColumns: 1, activeRuleId: null },
+  // Comparte identidad (groupBy + valueField) con "Metros por Operario", por lo que
+  // resolveReportWidgets le asigna la misma regla activa del Dashboard Principal.
+  { id: 'operator-meters-changes', title: 'Metros vs Cambios de pedido por Operario', chartType: 'combined_trend', groupBy: 'operator', valueField: 'meters', secondaryValueField: 'changesCount', aggregation: 'sum', spanColumns: 1 },
 ];
 
 export function resolveReportWidgets(config: DashboardConfig | null): DashboardWidgetConfig[] {

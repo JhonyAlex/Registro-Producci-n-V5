@@ -133,7 +133,7 @@ async function main(): Promise<void> {
 
     if (options.dryRun) {
       const preview = await writePreview(range, email.html, charts);
-      console.log(`Dry run completado: 15 PNG y report.html en ${preview.directory}`);
+      console.log(`Dry run completado: 18 PNG y report.html en ${preview.directory}`);
       console.log(`Peso total de las gráficas: ${preview.totalBytes} bytes.`);
       return;
     }

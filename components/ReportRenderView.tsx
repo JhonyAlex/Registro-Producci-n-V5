@@ -118,7 +118,7 @@ export const ReportRenderView: React.FC = () => {
       {MACHINE_GROUPS.map((group) => {
         const lineRecords = records.filter((r) => group.machines.includes(r.machine));
 
-        const [machineWidget, shiftWidget, operatorWidget, trendWidget, changesOperatorWidget] = reportWidgets;
+        const [machineWidget, shiftWidget, operatorWidget, trendWidget, changesOperatorWidget, metersChangesOperatorWidget] = reportWidgets;
         const groupedDataFor = (widget: DashboardWidgetConfig) => {
           const activeRule = resolveActiveRule(widget, defaultConfig?.rules);
           return activeRule
@@ -145,6 +145,18 @@ export const ReportRenderView: React.FC = () => {
           trendWidget.aggregation,
           trendRule
         );
+
+        // Sexta gráfica: mismos metros con regla activa que "Metros por Operario",
+        // combinados con changesCount (sum) por operario. Ordenada por metros descendente.
+        const metersChangesRule = resolveActiveRule(metersChangesOperatorWidget, defaultConfig?.rules);
+        const metersChangesOperatorData = buildCombinedTrendData(
+          lineRecords,
+          metersChangesOperatorWidget.groupBy || 'operator',
+          metersChangesOperatorWidget.valueField,
+          metersChangesOperatorWidget.secondaryValueField || 'changesCount',
+          metersChangesOperatorWidget.aggregation,
+          metersChangesRule
+        ).sort((a, b) => b.primary - a.primary);
 
         // Altura calculada para barras horizontales de operarios
         const operatorChartHeight = Math.max(260, operatorData.length * 30 + 40);
@@ -414,6 +426,70 @@ export const ReportRenderView: React.FC = () => {
                       />
                     </Bar>
                   </BarChart>
+                </div>
+              </div>
+
+              {/* Gráfica 6: Metros vs Cambios de pedido por Operario */}
+              <div
+                id={`chart-${group.id}-6`}
+                style={{
+                  width: 500,
+                  height: 320,
+                  backgroundColor: '#ffffff',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: 8,
+                  padding: '12px 16px',
+                  boxSizing: 'border-box',
+                }}
+              >
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#1e293b', marginBottom: 8 }}>
+                  Metros vs Cambios de pedido por Operario · {group.label}
+                </div>
+                <div style={{ width: 468, height: 260 }}>
+                  <ComposedChart
+                    width={468}
+                    height={260}
+                    data={metersChangesOperatorData}
+                    margin={{ top: 20, right: 16, left: 0, bottom: 30 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                    <XAxis
+                      dataKey="label"
+                      tick={{ fontSize: 10, fill: '#64748b' }}
+                      interval={0}
+                      angle={-30}
+                      textAnchor="end"
+                      height={58}
+                    />
+                    <YAxis yAxisId="left" tick={{ fontSize: 10, fill: '#64748b' }} />
+                    <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: '#f97316' }} />
+                    <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '4px' }} />
+                    <Bar
+                      yAxisId="left"
+                      dataKey="primary"
+                      name="Metros"
+                      fill="#0ea5e9"
+                      radius={[4, 4, 0, 0]}
+                      isAnimationActive={false}
+                    >
+                      <LabelList
+                        dataKey="primary"
+                        position="top"
+                        formatter={(val: any) => formatNumber(Number(val || 0))}
+                        style={{ fill: '#334155', fontSize: 9, fontWeight: 700 }}
+                      />
+                    </Bar>
+                    <Line
+                      yAxisId="right"
+                      type="monotone"
+                      dataKey="secondary"
+                      name="Cambios de pedido"
+                      stroke="#f97316"
+                      strokeWidth={2.5}
+                      dot={{ r: 3 }}
+                      isAnimationActive={false}
+                    />
+                  </ComposedChart>
                 </div>
               </div>
             </div>

@@ -32,7 +32,9 @@ type RuntimeViteModule = {
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+// PORT permite ejecutar el servidor en otro puerto (p. ej. el dry-run del
+// reporte semanal cuando el 3000 está ocupado); en producción queda el 3000.
+const PORT = Number(process.env.PORT) || 3000;
 const httpServer = http.createServer(app);
 const io = new Server(httpServer, {
   cors: { origin: '*' }

@@ -147,6 +147,8 @@ El informe se ejecuta desde un **Schedule Job externo de Dokploy**; la aplicaci�
 
 El periodo es la semana natural anterior completa (lunes a domingo). Para una previsualización sin envío: `npm run report:weekly -- --dry-run`.
 
+Cada línea (Impresión, Laminación y Rebobinado) incluye 6 gráficas, 18 PNG en total: Producción por Máquina, Producción por turno, Metros por Operario, Tendencia — Metros vs Cambios de pedido, Cambios de pedido por Operario y Metros vs Cambios de pedido por Operario (metros como barras con la misma regla activa del Dashboard Principal y `changesCount` sumado como línea sobre eje secundario).
+
 ---
 
 ## Instalación y ejecución local
