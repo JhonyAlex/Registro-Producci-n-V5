@@ -53,13 +53,14 @@ Los grupos de máquinas se toman de `shared/machineGroups.ts`.
 
 ## Gráficas enviadas
 
-Cada línea genera cinco gráficas, para un total de 15 imágenes inline CID:
+Cada línea genera seis gráficas, para un total de 18 imágenes inline CID:
 
 1. Producción por Máquina
 2. Producción por turno
 3. Metros por Operario
 4. Tendencia — Metros vs Cambios de pedido
 5. Cambios de pedido por Operario
+6. Metros vs Cambios de pedido por Operario
 
 La representación visual del email es estable. La configuración del Dashboard Principal solo aporta la regla semántica activa para la métrica equivalente mediante `groupBy + valueField`.
 
@@ -198,3 +199,10 @@ Ejemplo:
 - Dry-run real sobre clon de producción: 15/15 PNG, `report.html`, 277.590 bytes de gráficas
 - Envío real de validación a Gmail confirmado por el usuario
 - Resend ID de validación final: `7d952560-bdc9-4ff0-8f17-ba8bd4d280a0`
+
+## Evidencias de validación de la sexta gráfica
+
+- Commit: `b87dde3` — sexto gráfico "Metros vs Cambios de pedido por Operario" en las tres líneas
+- Tests: 44/44 OK
+- Build: OK
+- Dry-run sobre clon de producción (semana 2026-08-31 a 2026-09-06): 18/18 PNG, `report.html`; los metros de la sexta gráfica coinciden con "Metros por Operario" (misma regla activa heredada)
