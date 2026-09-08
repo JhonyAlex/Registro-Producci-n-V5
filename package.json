@@ -8,7 +8,8 @@
     "build": "vite build",
     "start": "npx tsx server.ts",
     "preview": "vite preview",
-    "test": "node --import tsx --test"
+    "test": "node --import tsx --test",
+    "email:test": "tsx scripts/sendTestEmail.ts"
   },
   "dependencies": {
     "@browserbasehq/sdk": "^2.10.0",
@@ -31,6 +32,7 @@
     "react-dom": "18.2.0",
     "react-router-dom": "^6.30.3",
     "recharts": "2.12.2",
+    "resend": "^6.26.0",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
     "xlsx": "latest"
