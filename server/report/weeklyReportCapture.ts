@@ -35,7 +35,7 @@ export async function captureWeeklyReportCharts(options: CaptureWeeklyReportOpti
 
     const charts: CapturedChart[] = [];
     for (const line of REPORT_LINES) {
-      for (const chartIndex of [1, 2, 3, 4, 5] as ReportChartIndex[]) {
+      for (const chartIndex of [1, 2, 3, 4, 5, 6] as ReportChartIndex[]) {
         const selector = `#chart-${line.id}-${chartIndex}`;
         const element = await page.$(selector);
         if (!element) throw new Error(`No se encontró el contenedor requerido ${selector}.`);
