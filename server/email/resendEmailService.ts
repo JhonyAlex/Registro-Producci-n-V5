@@ -27,8 +27,8 @@ export interface SendEmailResult {
 
 export const DEFAULT_EMAIL_CONFIG = {
   from: 'Producción Pigmea <produccion@notificaciones.pigmea.click>',
-  to: 'jaalvarez@pigmea.es',
-  replyTo: 'jaalvarez@pigmea.es',
+  to: 'jhonyalexalvarez@gmail.com',
+  replyTo: 'jhonyalexalvarez@gmail.com',
 } as const;
 
 export function getEmailConfig() {
