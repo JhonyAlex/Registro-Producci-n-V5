@@ -1,6 +1,6 @@
 import puppeteer from 'puppeteer-core';
 import { detectChromiumExecutable } from './chromiumDetector';
-import { REPORT_LINES, type CapturedChart, validateCapturedCharts } from './emailBuilder';
+import { REPORT_LINES, type CapturedChart, type ReportChartIndex, validateCapturedCharts } from './emailBuilder';
 import type { ReportDateRange } from './periodHelper';
 
 export interface CaptureWeeklyReportOptions {
@@ -35,7 +35,7 @@ export async function captureWeeklyReportCharts(options: CaptureWeeklyReportOpti
 
     const charts: CapturedChart[] = [];
     for (const line of REPORT_LINES) {
-      for (const chartIndex of [1, 2, 3, 4] as const) {
+      for (const chartIndex of [1, 2, 3, 4, 5] as ReportChartIndex[]) {
         const selector = `#chart-${line.id}-${chartIndex}`;
         const element = await page.$(selector);
         if (!element) throw new Error(`No se encontró el contenedor requerido ${selector}.`);

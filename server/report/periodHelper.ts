@@ -140,12 +140,44 @@ export function formatToSpanishDate(ymd: string): string {
   return `${day}/${month}/${year}`;
 }
 
+const SPANISH_MONTHS = [
+  'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+  'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
+] as const;
+
+export interface ReportWeekOfMonth {
+  week: number;
+  month: string;
+  year: number;
+}
+
+/**
+ * Devuelve la semana del mes que corresponde al final del periodo. El reporte
+ * siempre termina en domingo, por lo que no depende del mes del lunes inicial.
+ */
+export function getWeekOfMonth(endDate: string): ReportWeekOfMonth {
+  if (!isValidYmd(endDate)) {
+    throw new Error(`Fecha de fin inválida: '${endDate}'. Debe tener formato YYYY-MM-DD.`);
+  }
+  const [year, month, day] = endDate.split('-').map(Number);
+  return {
+    week: Math.ceil(day / 7),
+    month: SPANISH_MONTHS[month - 1],
+    year,
+  };
+}
+
+export function formatReportWeekLabel(endDate: string): string {
+  const { week, month, year } = getWeekOfMonth(endDate);
+  return `Semana ${week} de ${month} de ${year}`;
+}
+
 /**
  * Genera el asunto estándar del reporte:
- * "Registro Producción Pigmea V5 — DD/MM/YYYY al DD/MM/YYYY"
+ * "Registro Producción Pigmea V5 — Semana N de mes de YYYY — DD/MM/YYYY al DD/MM/YYYY"
  */
 export function formatReportSubject(startDate: string, endDate: string): string {
   const startDisplay = formatToSpanishDate(startDate);
   const endDisplay = formatToSpanishDate(endDate);
-  return `Registro Producción Pigmea V5 — ${startDisplay} al ${endDisplay}`;
+  return `Registro Producción Pigmea V5 — ${formatReportWeekLabel(endDate)} — ${startDisplay} al ${endDisplay}`;
 }

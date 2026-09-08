@@ -141,6 +141,14 @@
 
 ---
 
+## Informe semanal automatizado
+
+El informe se ejecuta desde un **Schedule Job externo de Dokploy**; la aplicación no registra ningún cron dentro de Node. Configurar el job con zona horaria `Europe/Madrid`, cron `0 8 * * 2` (martes a las 08:00) y comando `npm run report:weekly`.
+
+El periodo es la semana natural anterior completa (lunes a domingo). Para una previsualización sin envío: `npm run report:weekly -- --dry-run`.
+
+---
+
 ## Instalación y ejecución local
 
 ### Opción A — Sin Docker

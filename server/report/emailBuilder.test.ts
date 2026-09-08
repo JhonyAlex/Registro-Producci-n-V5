@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { buildWeeklyReportEmail, chartContentId, validateCapturedCharts, type CapturedChart } from './emailBuilder';
 
 const completeCharts = (): CapturedChart[] => ['impresion', 'laminacion', 'rebobinado'].flatMap((lineId) =>
-  [1, 2, 3, 4].map((chartIndex) => ({
+  [1, 2, 3, 4, 5].map((chartIndex) => ({
     lineId: lineId as CapturedChart['lineId'],
     chartIndex: chartIndex as CapturedChart['chartIndex'],
     content: Buffer.from(`${lineId}-${chartIndex}`),
@@ -11,14 +11,15 @@ const completeCharts = (): CapturedChart[] => ['impresion', 'laminacion', 'rebob
 );
 
 describe('emailBuilder', () => {
-  it('compone las doce imágenes CID en tablas compatibles con Outlook', () => {
+  it('compone las quince imágenes CID en tablas compatibles con Outlook y en orden fijo', () => {
     const email = buildWeeklyReportEmail({ from: '2026-08-31', to: '2026-09-06' }, completeCharts());
-    assert.equal(email.attachments.length, 12);
+    assert.equal(email.attachments.length, 15);
     assert.match(email.html, /<table role="presentation"/);
-    assert.match(email.html, /Buenos días, envío reporte de producción/);
-    assert.match(email.html, /Impresión:/);
-    assert.match(email.html, /Laminado:/);
-    assert.match(email.html, /Rebobinado:/);
+    assert.match(email.html, /Buenos días, envío reporte de producción correspondiente a la Semana 1 de septiembre de 2026 \(31\/08\/2026 al 06\/09\/2026\)\./);
+    assert.equal(email.subject, 'Registro Producción Pigmea V5 — Semana 1 de septiembre de 2026 — 31/08/2026 al 06/09/2026');
+    assert.ok(email.html.indexOf('Impresión:') < email.html.indexOf('Laminación:'));
+    assert.ok(email.html.indexOf('Laminación:') < email.html.indexOf('Rebobinado:'));
+    assert.match(email.html, /Cambios de pedido por Operario · Impresión/);
     for (const chart of completeCharts()) {
       const contentId = chartContentId(chart.lineId, chart.chartIndex);
       assert.match(email.html, new RegExp(`cid:${contentId}`));
@@ -27,7 +28,7 @@ describe('emailBuilder', () => {
   });
 
   it('rechaza capturas incompletas, duplicadas o vacías', () => {
-    assert.throws(() => validateCapturedCharts(completeCharts().slice(0, 11)), /exactamente 12/);
+    assert.throws(() => validateCapturedCharts(completeCharts().slice(0, 14)), /exactamente 15/);
     const duplicate = completeCharts();
     duplicate[11] = { ...duplicate[0] };
     assert.throws(() => validateCapturedCharts(duplicate), /duplicado/);

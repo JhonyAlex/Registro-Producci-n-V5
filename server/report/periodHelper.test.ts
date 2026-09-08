@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import {
   addDaysToYmd,
   formatReportSubject,
+  formatReportWeekLabel,
   formatToSpanishDate,
+  getWeekOfMonth,
   getMadridDateInfo,
   getPreviousWeekRange,
   isValidYmd,
@@ -117,15 +119,25 @@ describe('periodHelper - Cálculo temporal y rangos de reporte', () => {
     });
   });
 
-  describe('formatReportSubject y formatToSpanishDate', () => {
+  describe('semana del mes y presentación del reporte', () => {
     it('formatea fechas a DD/MM/YYYY', () => {
       assert.equal(formatToSpanishDate('2026-08-31'), '31/08/2026');
       assert.equal(formatToSpanishDate('2026-09-06'), '06/09/2026');
     });
 
-    it('genera el asunto con el formato exigido', () => {
+    it('determina la semana con el domingo final, incluso al cruzar de mes', () => {
+      assert.deepEqual(getWeekOfMonth('2026-09-06'), { week: 1, month: 'septiembre', year: 2026 });
+      assert.equal(formatReportWeekLabel('2026-09-06'), 'Semana 1 de septiembre de 2026');
+    });
+
+    it('mantiene el mes y año del domingo final al cruzar de año', () => {
+      assert.deepEqual(getWeekOfMonth('2026-01-04'), { week: 1, month: 'enero', year: 2026 });
+      assert.equal(formatReportWeekLabel('2026-01-04'), 'Semana 1 de enero de 2026');
+    });
+
+    it('genera el asunto con semana, mes y periodo exigidos', () => {
       const subject = formatReportSubject('2026-08-31', '2026-09-06');
-      assert.equal(subject, 'Registro Producción Pigmea V5 — 31/08/2026 al 06/09/2026');
+      assert.equal(subject, 'Registro Producción Pigmea V5 — Semana 1 de septiembre de 2026 — 31/08/2026 al 06/09/2026');
     });
   });
 });
