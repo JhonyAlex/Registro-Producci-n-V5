@@ -511,6 +511,7 @@ type UserStatus = typeof USER_STATUSES[number];
 const PERMISSION_KEYS = [
   'records.read',
   'records.write',
+  'records.update',
   'records.delete',
   'records.delete_all',
   'settings.read',
@@ -533,6 +534,7 @@ const DEFAULT_ROLE_PERMISSIONS: Record<AppRole, string[]> = {
   jefe_planta: [
     'records.read',
     'records.write',
+    'records.update',
     'records.delete',
     'records.delete_all',
     'settings.read',
@@ -549,8 +551,8 @@ const DEFAULT_ROLE_PERMISSIONS: Record<AppRole, string[]> = {
     'backup.import'
   ],
   supervisor: ['records.read', 'settings.read'],
-  jefe_turno: ['records.read', 'records.write', 'settings.read'],
-  operario: ['records.read', 'records.write', 'settings.read']
+  jefe_turno: ['records.read', 'records.write', 'records.update', 'settings.read'],
+  operario: ['records.read', 'records.write', 'records.update', 'settings.read']
 };
 
 const normalizeOptionalString = (value: any): string | null => {
@@ -1415,6 +1417,34 @@ export const requirePermission = (permissionKey: string) => {
       );
 
       if (result.rows[0]?.allowed !== true) {
+        return res.status(403).json({ error: 'Permiso denegado' });
+      }
+
+      next();
+    } catch (err) {
+      return res.status(500).json({ error: 'Error validando permisos' });
+    }
+  };
+};
+
+const userHasPermission = async (role: string, permissionKey: string) => {
+  if (role === 'admin') return true;
+  const permissions = await getRolePermissions(role);
+  return permissions.has(permissionKey);
+};
+
+export const requireAnyPermission = (permissionKeys: string[]) => {
+  return async (req, res, next) => {
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ error: 'No autorizado' });
+
+    if (user.role === 'admin') {
+      return next();
+    }
+
+    try {
+      const permissions = await getRolePermissions(user.role);
+      if (!permissionKeys.some((key) => permissions.has(key))) {
         return res.status(403).json({ error: 'Permiso denegado' });
       }
 
@@ -2330,7 +2360,7 @@ app.get('/api/records', authenticate, requirePermission('records.read'), require
   }
 });
 
-app.post('/api/records', authenticate, requirePermission('records.write'), requireDB, async (req, res) => {
+app.post('/api/records', authenticate, requireAnyPermission(['records.write', 'records.update']), requireDB, async (req, res) => {
   const user = (req as any).user;
   const {
     id,
@@ -2414,6 +2444,16 @@ app.post('/api/records', authenticate, requirePermission('records.write'), requi
       [id]
     );
     const existingRecord = existingRecordResult.rows[0] || null;
+
+    // Creating a record needs records.write; modifying an existing one needs records.update
+    const requiredRecordPermission = existingRecord ? 'records.update' : 'records.write';
+    if (!(await userHasPermission(user.role, requiredRecordPermission))) {
+      return res.status(403).json({
+        error: existingRecord
+          ? 'No tienes permiso para actualizar registros'
+          : 'No tienes permiso para crear registros'
+      });
+    }
 
     const resolvedOperatorResult = operatorUserId
       ? await pool.query('SELECT id, name FROM users WHERE id = $1 LIMIT 1', [operatorUserId])

@@ -15,6 +15,9 @@ interface ShiftFormProps {
   onRecordSaved: () => void;
   editingRecord?: ProductionRecord | null;
   onCancelEdit?: () => void;
+  onDeleteRecord?: (record: ProductionRecord) => void;
+  canUpdateRecords?: boolean;
+  canDeleteRecords?: boolean;
 }
 
 type FocusableFieldElement = HTMLInputElement | HTMLSelectElement;
@@ -30,7 +33,14 @@ const sanitizeSchemaVersion = (value: unknown): number => {
   return numeric;
 };
 
-const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onCancelEdit }) => {
+const ShiftForm: React.FC<ShiftFormProps> = ({
+  onRecordSaved,
+  editingRecord,
+  onCancelEdit,
+  onDeleteRecord,
+  canUpdateRecords = true,
+  canDeleteRecords = false
+}) => {
   const { user } = useAuth();
 
   const [formData, setFormData] = useState({
@@ -920,15 +930,28 @@ const ShiftForm: React.FC<ShiftFormProps> = ({ onRecordSaved, editingRecord, onC
               CANCELAR
             </button>
           )}
-          
-          <button
-            type="submit"
-            disabled={!isMachineSchemaReady}
-            className={`flex-1 ${editingRecord ? 'bg-orange-600 hover:bg-orange-700 shadow-orange-200' : 'bg-blue-600 hover:bg-blue-700 shadow-blue-200'} text-white font-bold py-4 px-6 rounded-xl shadow-lg transition-all flex items-center justify-center gap-3 active:scale-[0.98] touch-target text-lg`}
-          >
-            <Save className="w-6 h-6" />
-            {editingRecord ? 'ACTUALIZAR' : 'GUARDAR'}
-          </button>
+
+          {editingRecord && canDeleteRecords && onDeleteRecord && (
+            <button
+              type="button"
+              onClick={() => onDeleteRecord(editingRecord)}
+              className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold py-4 px-6 rounded-xl shadow-lg shadow-red-200 transition-all flex items-center justify-center gap-3 active:scale-[0.98] touch-target"
+            >
+              <Trash2 className="w-6 h-6" />
+              ELIMINAR
+            </button>
+          )}
+
+          {(!editingRecord || canUpdateRecords) && (
+            <button
+              type="submit"
+              disabled={!isMachineSchemaReady}
+              className={`flex-1 ${editingRecord ? 'bg-orange-600 hover:bg-orange-700 shadow-orange-200' : 'bg-blue-600 hover:bg-blue-700 shadow-blue-200'} text-white font-bold py-4 px-6 rounded-xl shadow-lg transition-all flex items-center justify-center gap-3 active:scale-[0.98] touch-target text-lg disabled:opacity-60 disabled:cursor-not-allowed`}
+            >
+              <Save className="w-6 h-6" />
+              {editingRecord ? 'ACTUALIZAR' : 'GUARDAR'}
+            </button>
+          )}
         </div>
       </form>
 

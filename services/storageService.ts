@@ -516,7 +516,7 @@ export const deleteRecord = async (id: string): Promise<void> => {
     });
   } catch (e) {
     console.error("Error deleting record:", e);
-    alert("Error al borrar. Verifique su conexión.");
+    throw e;
   }
 };
 

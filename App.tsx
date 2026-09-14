@@ -128,6 +128,7 @@ const AppContent: React.FC = () => {
     return Boolean(user?.permissions?.some((perm) => perm.key === permissionKey));
   };
   const canWriteRecords = hasPermission('records.write');
+  const canUpdateRecords = hasPermission('records.update');
   const canDeleteRecords = hasPermission('records.delete');
   const canDeleteAllRecords = hasPermission('records.delete_all');
   const canAccessUsers = (user?.role === 'admin' || user?.role === 'jefe_planta') && hasPermission('admin.users.read');
@@ -232,16 +233,18 @@ const AppContent: React.FC = () => {
 
   const allowedViews = useMemo<View[]>(() => {
     const views: View[] = ['dashboard', 'list', 'profile'];
-    if (canWriteRecords) views.unshift('entry');
+    if (canWriteRecords || canUpdateRecords) views.unshift('entry');
     if (canAccessUsers) views.push('admin');
     if (canAccessAudit) views.push('audit');
     if (canAccessFieldSchemas) views.push('fieldSchemas');
     if (canAccessDashboardManager) views.push('dashboardAdmin');
     if (canAccessPermissionsMatrix) views.push('permissions');
     return views;
-  }, [canWriteRecords, canAccessUsers, canAccessAudit, canAccessFieldSchemas, canAccessDashboardManager, canAccessPermissionsMatrix]);
+  }, [canWriteRecords, canUpdateRecords, canAccessUsers, canAccessAudit, canAccessFieldSchemas, canAccessDashboardManager, canAccessPermissionsMatrix]);
 
-  const defaultView = allowedViews.includes('entry') ? 'entry' : allowedViews[0] ?? 'profile';
+  const defaultView = canWriteRecords && allowedViews.includes('entry')
+    ? 'entry'
+    : allowedViews.find((view) => view !== 'entry') ?? 'profile';
 
   const currentView = useMemo<View>(() => {
     const routeView = getViewFromPath(location.pathname);
@@ -596,7 +599,7 @@ const AppContent: React.FC = () => {
   };
 
   const handleEdit = (record: ProductionRecord, source: EditSource) => {
-    if (!canWriteRecords) return;
+    if (!canUpdateRecords) return;
     setEditingRecord(record);
     setEditSource(source);
     navigate(VIEW_ROUTES.entry);
@@ -620,11 +623,16 @@ const AppContent: React.FC = () => {
     setShowDeleteModal(true);
   };
 
-  const initiateDeleteSingle = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation(); // Prevent row click
+  const initiateDeleteSingle = (id: string, e?: React.MouseEvent) => {
+    e?.stopPropagation(); // Prevent row click
     setDeleteMode('single');
     setRecordToDelete(id);
     setShowDeleteModal(true);
+  };
+
+  const handleDeleteFromForm = (record: ProductionRecord) => {
+    if (!canDeleteRecords) return;
+    initiateDeleteSingle(record.id);
   };
 
   const handleExportAndContinue = async () => {
@@ -637,13 +645,27 @@ const AppContent: React.FC = () => {
     setDeleteAllStep(2);
   };
 
-  const handleConfirmDelete = () => {
-    if (deleteMode === 'all') {
-      clearAllRecords();
-    } else if (deleteMode === 'single' && recordToDelete) {
-      deleteRecord(recordToDelete);
+  const handleConfirmDelete = async () => {
+    try {
+      if (deleteMode === 'all') {
+        await clearAllRecords();
+      } else if (deleteMode === 'single' && recordToDelete) {
+        const wasEditingDeletedRecord = editingRecord?.id === recordToDelete;
+        const previousEditSource = editSource;
+        await deleteRecord(recordToDelete);
+        if (wasEditingDeletedRecord) {
+          setEditingRecord(null);
+          setEditSource(null);
+          if (previousEditSource === 'history') {
+            navigate(VIEW_ROUTES.list);
+          }
+        }
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'No se pudo eliminar. Verifique su conexión.');
+    } finally {
+      closeDeleteModal();
     }
-    closeDeleteModal();
   };
 
   const closeDeleteModal = () => {
@@ -1260,11 +1282,21 @@ const AppContent: React.FC = () => {
                    <Cloud className="w-5 h-5 text-green-500" />
                 </div>
               </div>
-              <ShiftForm 
-                onRecordSaved={handleRecordSaved} 
-                editingRecord={editingRecord}
-                onCancelEdit={handleCancelEdit}
-              />
+              {!editingRecord && !canWriteRecords ? (
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 text-center text-slate-500">
+                  <p className="font-medium text-slate-700">No tienes permiso para crear registros nuevos.</p>
+                  <p className="text-sm mt-1">Puedes abrir un registro existente desde el historial para modificarlo.</p>
+                </div>
+              ) : (
+                <ShiftForm 
+                  onRecordSaved={handleRecordSaved} 
+                  editingRecord={editingRecord}
+                  onCancelEdit={handleCancelEdit}
+                  onDeleteRecord={canDeleteRecords ? handleDeleteFromForm : undefined}
+                  canUpdateRecords={canUpdateRecords}
+                  canDeleteRecords={canDeleteRecords}
+                />
+              )}
               
               {!editingRecord && (
                 <div className="mt-8 mb-20 xl:mb-0">
@@ -1318,7 +1350,7 @@ const AppContent: React.FC = () => {
                   records={dashboardRecords}
                   canManageDashboards={canAccessDashboardManager}
                   onOpenAdmin={canAccessDashboardManager ? () => changeView('dashboardAdmin') : undefined}
-                  onEditRecord={canWriteRecords ? (record) => handleEdit(record, 'history') : undefined}
+                  onEditRecord={canUpdateRecords ? (record) => handleEdit(record, 'history') : undefined}
                 />
               )}
             </div>
@@ -1375,15 +1407,15 @@ const AppContent: React.FC = () => {
                           </React.Fragment>
                         ))}
                         {renderSortableHeader('Comentarios', 'changesComment', 'hidden sm:table-cell')}
-                        {(canWriteRecords || canDeleteRecords) && <th className="px-6 py-4 text-center">Acciones</th>}
+                        {(canUpdateRecords || canDeleteRecords) && <th className="px-6 py-4 text-center">Acciones</th>}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {paginatedRecords.map((r) => (
                         <tr 
                           key={r.id} 
-                          onClick={canWriteRecords ? () => handleEdit(r, 'history') : undefined}
-                          className={`transition-colors group ${canWriteRecords ? 'cursor-pointer hover:bg-blue-50 active:bg-blue-100' : ''}`}
+                          onClick={canUpdateRecords ? () => handleEdit(r, 'history') : undefined}
+                          className={`transition-colors group ${canUpdateRecords ? 'cursor-pointer hover:bg-blue-50 active:bg-blue-100' : ''}`}
                         >
                           <td className="px-6 py-4 text-slate-600 whitespace-nowrap">
                             <div className="font-bold text-slate-800">
@@ -1418,10 +1450,10 @@ const AppContent: React.FC = () => {
                           <td className="px-6 py-4 text-slate-500 max-w-xs truncate hidden sm:table-cell" title={r.changesComment}>
                             {r.changesComment}
                           </td>
-                          {(canWriteRecords || canDeleteRecords) && (
+                          {(canUpdateRecords || canDeleteRecords) && (
                             <td className="px-6 py-4 text-center">
                               <div className="flex items-center justify-center gap-1">
-                                {canWriteRecords && (
+                                {canUpdateRecords && (
                                   <button 
                                     onClick={(e) => { e.stopPropagation(); handleEdit(r, 'history'); }}
                                     className="p-2 text-slate-300 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-all"

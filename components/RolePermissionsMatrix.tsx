@@ -9,7 +9,8 @@ interface MatrixResponse {
 
 const PERMISSION_LABELS: Record<string, string> = {
   'records.read': 'Ver registros',
-  'records.write': 'Crear y editar registros',
+  'records.write': 'Crear registros nuevos',
+  'records.update': 'Actualizar registros existentes',
   'records.delete': 'Eliminar un registro',
   'records.delete_all': 'Eliminar todos los registros',
   'settings.read': 'Ver comentarios y operarios',
